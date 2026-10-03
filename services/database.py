@@ -856,7 +856,10 @@ class DatabaseManager:
                                 "id": vid_id,
                                 "url": url,
                                 "title": title,
-                                "artist": artist if artist else "Unknown"
+                                "artist": artist if artist else "Unknown",
+                                # Pin the exact remote filename on disk so the
+                                # merged row resolves instead of dangling.
+                                "target_file": file,
                             })
                 
                 # Sync other tables
@@ -976,6 +979,7 @@ class DatabaseManager:
                                 "title": title,
                                 "artist": artist if artist else "Unknown",
                                 "is_podcast": True,
+                                "target_file": file,
                             })
                     
         except Exception as e:

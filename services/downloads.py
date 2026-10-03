@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -37,6 +38,10 @@ class DownloadManager:
         title = str(payload.get('title') or '')
         artist = str(payload.get('artist') or '')
         is_podcast = bool(payload.get('is_podcast'))
+        # Pull-requested exact disk filename (remote `file`); bare basename
+        # only, mirrors the traversal guard on the storage layer.
+        target_file = payload.get('target_file')
+        target_file = os.path.basename(str(target_file)) if target_file else None
 
         if not url:
             url = f"{title} {artist} audio".strip()
@@ -52,6 +57,7 @@ class DownloadManager:
             'title': title,
             'artist': artist,
             'is_podcast': is_podcast,
+            'target_file': target_file,
             'status': 'queued',
             'progress': 0,
             'error': None,
@@ -82,7 +88,8 @@ class DownloadManager:
             row = self._fetch_job(payload.get('job_id'))
             if row:
                 payload = {'url': row[0], 'title': row[1], 'artist': row[2],
-                           'is_podcast': bool(row[3]) if len(row) > 3 else False}
+                           'is_podcast': bool(row[3]) if len(row) > 3 else False,
+                           'target_file': row[4] if len(row) > 4 else None}
             else:
                 return False
         url = str(payload.get('url') or '').strip()
@@ -168,6 +175,7 @@ class DownloadManager:
                 progress_callback,
                 dest_path=settings.podcasts_path if job.get('is_podcast') else None,
                 is_podcast=bool(job.get('is_podcast')),
+                target_filename=job.get('target_file'),
             )
 
             if isinstance(result, dict) and result.get('status') == 'success':
@@ -219,10 +227,14 @@ class DownloadManager:
                     conn.execute("ALTER TABLE Download_Queue ADD COLUMN is_podcast INTEGER DEFAULT 0")
                 except Exception:
                     pass
+                try:
+                    conn.execute("ALTER TABLE Download_Queue ADD COLUMN target_file TEXT")
+                except Exception:
+                    pass
                 conn.execute(
-                    "INSERT INTO Download_Queue (qid, url, title, artist, status, progress, is_podcast) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO Download_Queue (qid, url, title, artist, status, progress, is_podcast, target_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (job['id'], job['url'], job['title'], job['artist'], job['status'], job['progress'],
-                     1 if job.get('is_podcast') else 0)
+                     1 if job.get('is_podcast') else 0, job.get('target_file'))
                 )
         except Exception as e:
             print(f" [Download] DB insert error: {e}")
@@ -247,8 +259,12 @@ class DownloadManager:
                     conn.execute("ALTER TABLE Download_Queue ADD COLUMN is_podcast INTEGER DEFAULT 0")
                 except Exception:
                     pass
+                try:
+                    conn.execute("ALTER TABLE Download_Queue ADD COLUMN target_file TEXT")
+                except Exception:
+                    pass
                 row = conn.execute(
-                    "SELECT url, title, artist, is_podcast FROM Download_Queue WHERE qid = ? ORDER BY id DESC LIMIT 1",
+                    "SELECT url, title, artist, is_podcast, target_file FROM Download_Queue WHERE qid = ? ORDER BY id DESC LIMIT 1",
                     (str(job_id),)
                 ).fetchone()
             return row

@@ -233,10 +233,17 @@ class DatabaseSync:
             remote_conn.commit()
 
     def _sync_song_playlist(self, sqlite_conn, remote_conn):
-        """Full replace of song-playlist associations."""
+        """Replace this library's song-playlist associations.
+
+        Scoped to our own playlist ids: the remote is shared (Hathor users
+        push here too), so a global wipe would delete other users' links.
+        """
         rows = sqlite_conn.execute("SELECT id, song_file, playlist_id, date_added FROM Song_Playlist").fetchall()
+        playlist_ids = [r[0] for r in sqlite_conn.execute("SELECT id FROM Playlists").fetchall()]
         with remote_conn.cursor() as cur:
-            cur.execute("DELETE FROM song_playlist")
+            if playlist_ids:
+                placeholders = ", ".join(["%s"] * len(playlist_ids))
+                cur.execute(f"DELETE FROM song_playlist WHERE playlist_id IN ({placeholders})", playlist_ids)
             if rows:
                 cur.executemany(
                     "INSERT INTO song_playlist (id, song_file, playlist_id, date_added) VALUES (%s, %s, %s, %s)",
@@ -266,13 +273,20 @@ class DatabaseSync:
         self._align_auto_increment(remote_conn, "podcast_tags")
 
     def _sync_podcast_tag_links(self, sqlite_conn, remote_conn):
-        """Full replace of podcast tag links (like _sync_song_playlist)."""
+        """Replace this library's podcast tag links (scoped to our own tag
+        ids — same shared-remote reason as _sync_song_playlist)."""
         try:
             rows = sqlite_conn.execute("SELECT id, podcast_file, tag_id FROM Podcast_Tag_Links").fetchall()
         except Exception:
             return
+        try:
+            tag_ids = [r[0] for r in sqlite_conn.execute("SELECT id FROM Podcast_Tags").fetchall()]
+        except Exception:
+            tag_ids = []
         with remote_conn.cursor() as cur:
-            cur.execute("DELETE FROM podcast_tag_links")
+            if tag_ids:
+                placeholders = ", ".join(["%s"] * len(tag_ids))
+                cur.execute(f"DELETE FROM podcast_tag_links WHERE tag_id IN ({placeholders})", tag_ids)
             if rows:
                 cur.executemany(
                     "INSERT INTO podcast_tag_links (id, podcast_file, tag_id) VALUES (%s, %s, %s)",

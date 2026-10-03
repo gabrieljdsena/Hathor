@@ -127,7 +127,28 @@ class MusicDownloader:
             name = name[:150].rstrip()
         return name or 'Unknown'
 
-    def download_song(self, search, progress_callback=None, dest_path=None, is_podcast=False):
+    @staticmethod
+    def _adopt_target_name(src_path, directory, target_filename):
+        """Move the finished download onto the exact pull-requested filename.
+
+        If the target already exists (raced with another device/download),
+        adopt it and drop the temp file instead of renaming past it.
+        """
+        dest = os.path.join(directory, target_filename)
+        if os.path.normpath(src_path).lower() == os.path.normpath(dest).lower():
+            return src_path
+        if os.path.exists(dest):
+            try:
+                os.remove(src_path)
+            except Exception:
+                pass
+            return dest
+        os.rename(src_path, dest)
+        print(f"File renamed to pull target: {target_filename}")
+        return dest
+
+    def download_song(self, search, progress_callback=None, dest_path=None, is_podcast=False,
+                        target_filename=None):
         self._check_update_ytdlp_once()
 
         # Resolve FFmpeg from PATH, the auto-downloaded copy, or the bundle --
@@ -145,6 +166,12 @@ class MusicDownloader:
         
         appdata_path = dest_path or settings.path
         os.makedirs(appdata_path, exist_ok=True)
+
+        # Pull downloads must land on the exact remote filename so the merged
+        # row resolves (otherwise the finished file gets a metadata-derived
+        # name, the pulled row dangles, and every pull re-downloads it).
+        # Bare basename only — callers pass traversal-guarded filenames.
+        target_filename = os.path.basename(str(target_filename or '')) if target_filename else None
         
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -204,17 +231,18 @@ class MusicDownloader:
                         'title': info.get('title', ''),
                         'artist': info.get('uploader', '')
                     }
-            
+
             if is_podcast:
-                # Podcasts: no tag writes, no rename — the yt-dlp filename
-                # (<id>_<YouTube-title>.mp3) is final, byte-identical to what
-                # the Android app produces for the same URL, so both libraries
-                # (and the mobile pull's exact-name podcast match) stay in sync.
+                # With no pull target the yt-dlp filename (<id>_<YouTube-title>.mp3)
+                # is final, byte-identical to what the Android app produces for
+                # the same URL, so both libraries stay in sync.
                 final_path = output_file
             else:
                 final_path = self.apply_metadata(output_file, metadata)
                 if not final_path:
                     raise Exception("Failed to apply metadata")
+            if target_filename:
+                final_path = self._adopt_target_name(final_path, appdata_path, target_filename)
             final_filename = os.path.basename(final_path)
             
             if progress_callback:
