@@ -14,6 +14,13 @@
                 </div>
             </div>
             <div class="ml-auto flex items-center gap-2">
+                <button id="pod-manage-tags" title="Manage tags"
+                    class="flex items-center justify-center w-11 h-11 rounded-full bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-all duration-300 active:scale-95 focus:outline-none cursor-pointer">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" />
+                    </svg>
+                </button>
                 <button id="pod-play-all" title="Play all"
                     class="flex items-center justify-center w-11 h-11 bg-orange-500 text-white rounded-full hover:bg-orange-400 transition-all duration-300 hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(249,115,22,0.3)] focus:outline-none cursor-pointer">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 ml-0.5">
@@ -50,6 +57,8 @@
         </div>
 
         <div class="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6">
+            <!-- Tag filter chips (hidden until tags exist) -->
+            <div id="pod-tags-row" class="hidden flex gap-2 overflow-x-auto pb-3"></div>
             <div id="podcasts-list" class="flex flex-col gap-1">
                 <div class="py-16 text-center text-zinc-500 text-sm animate-pulse">Loading your episodes…</div>
             </div>
@@ -104,6 +113,14 @@
         </svg>
         Edit Info
     </button>
+    <button id="podm-tags"
+        class="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-white/5 hover:text-white transition-colors flex items-center gap-2 cursor-pointer">
+        <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" />
+        </svg>
+        Tags…
+    </button>
     <button id="podm-delete"
         class="w-full text-left px-4 py-2 text-sm hover:bg-white/5 transition-colors flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer">
         <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -115,9 +132,61 @@
     </button>
 </div>
 
+<!-- Tag manager modal -->
+<div id="pod-tags-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="w-full max-w-md bg-zinc-900/90 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold text-zinc-100">Podcast tags</h2>
+            <button onclick="window._podCloseTagsModal()" title="Close"
+                class="p-2 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <div class="bg-white/5 border border-white/10 rounded-xl p-3 mb-4">
+            <p class="text-xs font-semibold text-orange-400 tracking-wide mb-2">NEW TAG</p>
+            <div class="flex gap-2">
+                <input type="text" id="pod-new-tag-name" placeholder="Name…" spellcheck="false"
+                    class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none">
+                <button onclick="window._podCreateTag()"
+                    class="px-4 py-2 bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium rounded-lg transition-all active:scale-95 shadow-lg shadow-orange-500/20 focus:outline-none cursor-pointer">Add</button>
+            </div>
+        </div>
+        <div id="pod-tags-list" class="flex flex-col gap-2 max-h-72 overflow-y-auto"></div>
+    </div>
+</div>
+
+<!-- Per-episode tag assignment modal -->
+<div id="pod-assign-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="w-full max-w-md bg-zinc-900/90 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl p-6">
+        <div class="flex items-center justify-between mb-1">
+            <h2 class="text-xl font-bold text-zinc-100">Tags</h2>
+            <button onclick="window._podCloseAssignModal()" title="Close"
+                class="p-2 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <p id="pod-assign-caption" class="text-xs text-zinc-500 truncate mb-4"></p>
+        <div id="pod-assign-pills" class="flex flex-wrap gap-2 mb-4"></div>
+        <div class="flex gap-2">
+            <input type="text" id="pod-assign-new-name" placeholder="New tag…" spellcheck="false"
+                class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none">
+            <button onclick="window._podAssignCreate()"
+                class="px-4 py-2 bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium rounded-lg transition-all active:scale-95 shadow-lg shadow-orange-500/20 focus:outline-none cursor-pointer">Add</button>
+        </div>
+    </div>
+</div>
+
 <script>
     window._podSongsData = [];
     window._podMenuFile = null;
+    window._podTagsData = [];
+    window._podTagMap = {};
+    window._podActiveTagId = null;
+    window._podAssignFile = null;
 
     function _podFormatDuration(totalSecs) {
         totalSecs = Math.floor(totalSecs || 0);
@@ -292,6 +361,8 @@
             if (song.Artist && song.Artist !== 'Unknown') parts.push(song.Artist);
             const dstr = _podFormatDate(song.DateDownload);
             if (dstr) parts.push(dstr);
+            const tagNames = _podTagNamesFor(song.File);
+            if (tagNames.length) parts.push(tagNames.join(', '));
             sub.textContent = parts.join(' • ');
             meta.appendChild(title);
             meta.appendChild(sub);
@@ -321,21 +392,103 @@
             list.appendChild(row);
         });
 
-        const searchInput = document.getElementById("pod_txt_search");
-        if (searchInput && searchInput.value.trim()) {
-            window._podApplySearch(searchInput.value.toLowerCase());
-        }
+        // Search + tag filter both apply here, so the visible rows (and the
+        // queue built from them) always reflect the active filter.
+        window._podApplyFilters();
         if (window.current_playing_song && typeof window.set_active_song_ui === 'function') {
             try { window.set_active_song_ui(window.current_playing_song); } catch (e) {}
         }
     };
 
-    window._podApplySearch = function (value) {
+    window._podApplySearch = function () {
+        window._podApplyFilters();
+    };
+
+    window._podApplyFilters = function () {
+        const input = document.getElementById("pod_txt_search");
+        const q = (input && input.value ? input.value.toLowerCase() : "").trim();
+        const active = window._podActiveTagId;
+        const map = window._podTagMap || {};
         document.querySelectorAll("#podcasts-list .podcast-row").forEach(row => {
             const s = row._songData || {};
             const hay = `${s.Title || ''} ${s.Artist || ''}`.toLowerCase();
-            row.style.display = hay.indexOf(value) > -1 ? "" : "none";
+            const qOk = !q || hay.indexOf(q) > -1;
+            const tOk = (active === null || active === undefined) ||
+                ((map[s.File] || []).indexOf(active) > -1);
+            row.style.display = (qOk && tOk) ? "" : "none";
         });
+    };
+
+    function _podTagNamesFor(file) {
+        const ids = (window._podTagMap || {})[file] || [];
+        if (!ids.length) return [];
+        const byId = {};
+        (window._podTagsData || []).forEach(t => { byId[t.id] = t.name; });
+        return ids.map(id => byId[id]).filter(Boolean);
+    }
+
+    function _podEsc(s) {
+        return String(s === null || s === undefined ? "" : s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    window._podRenderChips = function () {
+        const wrap = document.getElementById("pod-tags-row");
+        if (!wrap) return;
+        const tags = window._podTagsData || [];
+        const total = (window._podSongsData || []).length;
+        if (!tags.length) {
+            wrap.classList.add("hidden");
+            wrap.innerHTML = "";
+            return;
+        }
+        wrap.classList.remove("hidden");
+        wrap.innerHTML = "";
+        const mk = (label, active, onclick) => {
+            const b = document.createElement("button");
+            b.className = active
+                ? "flex-shrink-0 px-4 py-1.5 rounded-full text-xs font-medium bg-orange-500 text-white shadow-lg shadow-orange-500/20 transition-all cursor-pointer"
+                : "flex-shrink-0 px-4 py-1.5 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-all cursor-pointer";
+            b.textContent = label;
+            b.onclick = onclick;
+            return b;
+        };
+        const noneActive = window._podActiveTagId === null || window._podActiveTagId === undefined;
+        wrap.appendChild(mk(`All (${total})`, noneActive, () => {
+            window._podActiveTagId = null;
+            window._podRenderChips();
+            window._podApplyFilters();
+        }));
+        tags.forEach(t => {
+            wrap.appendChild(mk(`${t.name} (${t.episode_count || 0})`, window._podActiveTagId === t.id, () => {
+                window._podActiveTagId = (window._podActiveTagId === t.id) ? null : t.id;
+                window._podRenderChips();
+                window._podApplyFilters();
+            }));
+        });
+    };
+
+    window._podRefreshTags = async function () {
+        try {
+            const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+            if (!api) return;
+            if (typeof api.get_podcast_tags === "function") {
+                window._podTagsData = await api.get_podcast_tags() || [];
+            }
+            if (typeof api.get_podcast_tag_map === "function") {
+                window._podTagMap = await api.get_podcast_tag_map() || {};
+            }
+            // A deleted tag never sticks as a filter.
+            if (window._podActiveTagId !== null && window._podActiveTagId !== undefined) {
+                const stillThere = (window._podTagsData || []).some(t => t.id === window._podActiveTagId);
+                if (!stillThere) window._podActiveTagId = null;
+            }
+            window._podRenderChips();
+            if (typeof window._podRender === "function") window._podRender();
+        } catch (e) {
+            console.error("Failed to load podcast tags:", e);
+        }
     };
 
     window._podReload = async function () {
@@ -344,6 +497,7 @@
             if (!api || typeof api.get_podcasts !== 'function') return;
             window._podSongsData = await api.get_podcasts() || [];
             window._podRender();
+            if (typeof window._podRefreshTags === "function") window._podRefreshTags();
         } catch (e) {
             console.error("Failed to load podcasts:", e);
         }
@@ -409,8 +563,216 @@
         });
         byId('podm-getmeta', () => { const f = window._podMenuFile; if (f) _podGetMetadata(f); });
         byId('podm-edit', () => { const f = window._podMenuFile; if (f) _podEdit(f); });
+        byId('podm-tags', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) window._podOpenAssign(f); });
         byId('podm-delete', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) _podDelete(f); });
     })();
+
+    // ---- Podcast tag CRUD (manager modal + per-episode assignment) ----
+    function _podShowModal(id) {
+        const m = document.getElementById(id);
+        if (!m) return;
+        m.classList.remove("hidden");
+        m.classList.add("flex");
+    }
+
+    function _podHideModal(id) {
+        const m = document.getElementById(id);
+        if (!m) return;
+        m.classList.add("hidden");
+        m.classList.remove("flex");
+    }
+
+    function _podNotifyOk(msg) {
+        if (typeof Notyf !== 'undefined') {
+            new Notyf({ position: { x: 'right', y: 'bottom' } }).success(msg);
+        }
+    }
+
+    function _podNotifyErr(msg) {
+        if (typeof Notyf !== 'undefined') {
+            new Notyf({ position: { x: 'right', y: 'bottom' } }).error(msg);
+        } else {
+            alert(msg);
+        }
+    }
+
+    window._podCloseTagsModal = () => _podHideModal("pod-tags-modal");
+    window._podCloseAssignModal = () => { window._podAssignFile = null; _podHideModal("pod-assign-modal"); };
+
+    window._podOpenTagsModal = function () {
+        window._podRenderTagsList();
+        _podShowModal("pod-tags-modal");
+        setTimeout(() => { const i = document.getElementById("pod-new-tag-name"); if (i) i.focus(); }, 50);
+    };
+
+    window._podRenderTagsList = function () {
+        const list = document.getElementById("pod-tags-list");
+        if (!list) return;
+        const tags = window._podTagsData || [];
+        list.innerHTML = "";
+        if (!tags.length) {
+            list.innerHTML = `<p class="text-xs text-zinc-500">No tags yet — create one above, then assign it from an episode's Tags menu.</p>`;
+            return;
+        }
+        const editSvg = `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>`;
+        const delSvg = `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
+        tags.forEach(t => {
+            const count = t.episode_count || 0;
+            const initial = ((t.name || "?").trim().charAt(0) || "?").toUpperCase();
+            const row = document.createElement("div");
+            row.className = "flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-2.5";
+            row.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center flex-shrink-0">
+                    <span class="text-sm font-bold text-orange-400">${_podEsc(initial)}</span>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-zinc-100 truncate">${_podEsc(t.name)}</div>
+                    <div class="text-xs text-zinc-500">${count} episode${count === 1 ? "" : "s"}</div>
+                </div>
+                <button data-act="rename" title="Rename tag" class="p-2 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">${editSvg}</button>
+                <button data-act="delete" title="Delete tag" class="p-2 rounded-full text-red-400/70 hover:text-red-300 hover:bg-white/10 transition-all focus:outline-none cursor-pointer">${delSvg}</button>`;
+            row.querySelector('[data-act="rename"]').onclick = () => window._podRenameTag(t.id, t.name);
+            row.querySelector('[data-act="delete"]').onclick = () => window._podDeleteTag(t.id, t.name, count);
+            list.appendChild(row);
+        });
+    };
+
+    window._podCreateTag = async function () {
+        const input = document.getElementById("pod-new-tag-name");
+        const name = (input && input.value ? input.value : "").trim();
+        if (!name) return;
+        try {
+            const id = await window.pywebview.api.new_podcast_tag(name);
+            if (id !== -1 && id !== null && id !== undefined) {
+                if (input) input.value = "";
+                await window._podRefreshTags();
+                window._podRenderTagsList();
+                _podNotifyOk("Tag created");
+            } else {
+                _podNotifyErr("Name is blank or already used.");
+            }
+        } catch (e) {
+            console.error("Create tag failed:", e);
+        }
+    };
+
+    window._podRenameTag = async function (id, current) {
+        if (typeof Swal === "undefined") return;
+        const res = await Swal.fire({
+            title: "Rename tag",
+            input: "text",
+            inputValue: current || "",
+            showCancelButton: true,
+            confirmButtonText: "Save",
+            confirmButtonColor: "#f97316",
+            background: "#18181b",
+            color: "#f4f4f5",
+            inputValidator: (v) => ((!v || !v.trim()) ? "Name can't be blank." : undefined)
+        });
+        if (!res.isConfirmed) return;
+        try {
+            const ok = await window.pywebview.api.rename_podcast_tag(id, res.value.trim());
+            if (ok === true) {
+                await window._podRefreshTags();
+                window._podRenderTagsList();
+                _podNotifyOk("Tag renamed");
+            } else {
+                _podNotifyErr("Name is already used.");
+            }
+        } catch (e) {
+            console.error("Rename tag failed:", e);
+        }
+    };
+
+    window._podDeleteTag = async function (id, name, count) {
+        const confirmed = (typeof Swal !== "undefined")
+            ? (await Swal.fire({
+                title: "Delete tag?",
+                text: `"${name}" will be removed from ${count || 0} episode(s) and from the remote library.`,
+                icon: "warning",
+                showCancelButton: true,
+                confirmButtonText: "Yes, delete it",
+                confirmButtonColor: "#ef4444",
+                background: "#18181b",
+                color: "#f4f4f5"
+            })).isConfirmed
+            : confirm(`Delete tag "${name}"?`);
+        if (!confirmed) return;
+        try {
+            await window.pywebview.api.delete_podcast_tag(id);
+            await window._podRefreshTags();
+            window._podRenderTagsList();
+            _podNotifyOk("Tag deleted");
+        } catch (e) {
+            console.error("Delete tag failed:", e);
+        }
+    };
+
+    window._podOpenAssign = function (file) {
+        window._podAssignFile = file;
+        const song = _podSongByFile(file);
+        const cap = document.getElementById("pod-assign-caption");
+        if (cap) cap.textContent = (song && (song.Title || song.File)) || file;
+        window._podRenderAssignPills();
+        _podShowModal("pod-assign-modal");
+    };
+
+    window._podRenderAssignPills = function () {
+        const wrap = document.getElementById("pod-assign-pills");
+        if (!wrap) return;
+        wrap.innerHTML = "";
+        const tags = window._podTagsData || [];
+        const assigned = new Set(((window._podTagMap || {})[window._podAssignFile] || []));
+        if (!tags.length) {
+            wrap.innerHTML = `<p class="text-xs text-zinc-500">No tags yet — create one below, it assigns right away.</p>`;
+            return;
+        }
+        tags.forEach(t => {
+            const on = assigned.has(t.id);
+            const b = document.createElement("button");
+            b.className = on
+                ? "px-4 py-1.5 rounded-full text-xs font-medium bg-orange-500 text-white shadow-lg shadow-orange-500/20 transition-all cursor-pointer"
+                : "px-4 py-1.5 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-all cursor-pointer";
+            b.textContent = `${t.name} (${t.episode_count || 0})`;
+            b.onclick = async () => {
+                try {
+                    if (on) await window.pywebview.api.unassign_podcast_tag(window._podAssignFile, t.id);
+                    else await window.pywebview.api.assign_podcast_tag(window._podAssignFile, t.id);
+                    await window._podRefreshTags();
+                    window._podRenderAssignPills();
+                } catch (e) {
+                    console.error("Tag toggle failed:", e);
+                }
+            };
+            wrap.appendChild(b);
+        });
+    };
+
+    window._podAssignCreate = async function () {
+        const input = document.getElementById("pod-assign-new-name");
+        const name = (input && input.value ? input.value : "").trim();
+        if (!name || !window._podAssignFile) return;
+        try {
+            const id = await window.pywebview.api.new_podcast_tag(name);
+            if (id !== -1 && id !== null && id !== undefined) {
+                await window.pywebview.api.assign_podcast_tag(window._podAssignFile, id);
+                if (input) input.value = "";
+                await window._podRefreshTags();
+                window._podRenderAssignPills();
+                _podNotifyOk("Tag assigned");
+            } else {
+                _podNotifyErr("Name is blank or already used.");
+            }
+        } catch (e) {
+            console.error("Assign-create tag failed:", e);
+        }
+    };
+
+    document.getElementById('pod-manage-tags').addEventListener('click', () => window._podOpenTagsModal());
+    [["pod-tags-modal", "window._podCloseTagsModal"], ["pod-assign-modal", "window._podCloseAssignModal"]].forEach(([id]) => {
+        const m = document.getElementById(id);
+        if (m) m.addEventListener('click', (e) => { if (e.target === m) _podHideModal(id); });
+    });
 
     if (!window._podMenuEvents) {
         window._podMenuEvents = true;

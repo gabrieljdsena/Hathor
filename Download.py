@@ -205,9 +205,16 @@ class MusicDownloader:
                         'artist': info.get('uploader', '')
                     }
             
-            final_path = self.apply_metadata(output_file, metadata)
-            if not final_path:
-                raise Exception("Failed to apply metadata")
+            if is_podcast:
+                # Podcasts: no tag writes, no rename — the yt-dlp filename
+                # (<id>_<YouTube-title>.mp3) is final, byte-identical to what
+                # the Android app produces for the same URL, so both libraries
+                # (and the mobile pull's exact-name podcast match) stay in sync.
+                final_path = output_file
+            else:
+                final_path = self.apply_metadata(output_file, metadata)
+                if not final_path:
+                    raise Exception("Failed to apply metadata")
             final_filename = os.path.basename(final_path)
             
             if progress_callback:

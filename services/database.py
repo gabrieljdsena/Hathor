@@ -108,6 +108,110 @@ class DatabaseManager:
             print(f" [Python] Error updating song playlists: {str(e)}")
             return False
 
+    # ---- Podcast tags (same shape as Playlists + Song_Playlist) ----
+    def get_podcast_tags(self):
+        """All tags with live episode counts (files currently on disk)."""
+        try:
+            path = Path(settings.podcasts_path)
+            live = {f.name for f in path.iterdir() if f.is_file() and f.suffix.lower() == '.mp3'} if path.exists() else set()
+            with sqlite3.connect(self.db_path) as conn:
+                tags = [
+                    {"id": row[0], "name": row[1]}
+                    for row in conn.execute("SELECT id, name FROM Podcast_Tags ORDER BY name").fetchall()
+                ]
+                counts = {}
+                for file, tag_id in conn.execute("SELECT podcast_file, tag_id FROM Podcast_Tag_Links").fetchall():
+                    if file in live:
+                        counts[tag_id] = counts.get(tag_id, 0) + 1
+            for tag in tags:
+                tag["episode_count"] = counts.get(tag["id"], 0)
+            return tags
+        except Exception as e:
+            print(f" [Python] Error loading podcast tags: {str(e)}")
+            return []
+
+    def get_podcast_tag_map(self):
+        """Episode file -> [tag ids] for filtering + row display."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                out = {}
+                for file, tag_id in conn.execute("SELECT podcast_file, tag_id FROM Podcast_Tag_Links").fetchall():
+                    out.setdefault(file, []).append(tag_id)
+                return out
+        except Exception as e:
+            print(f" [Python] Error loading podcast tag map: {str(e)}")
+            return {}
+
+    def new_podcast_tag(self, name):
+        """Create a tag. Returns the id (existing id on duplicates, -1 on blank/failure)."""
+        clean = (name or "").strip()
+        if not clean:
+            return -1
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute("SELECT id FROM Podcast_Tags WHERE name = ?", (clean,)).fetchone()
+                if row:
+                    return row[0]
+                cur = conn.execute("INSERT INTO Podcast_Tags (name) VALUES (?)", (clean,))
+                return cur.lastrowid
+        except Exception as e:
+            print(f" [Python] Error creating podcast tag: {str(e)}")
+            return -1
+
+    def rename_podcast_tag(self, tag_id, name):
+        """Rename a tag. False on blank/duplicate names or failure."""
+        clean = (name or "").strip()
+        if not clean:
+            return False
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute("SELECT id FROM Podcast_Tags WHERE name = ?", (clean,)).fetchone()
+                if row and row[0] != int(tag_id):
+                    return False
+                conn.execute("UPDATE Podcast_Tags SET name = ? WHERE id = ?", (clean, tag_id))
+                return True
+        except Exception as e:
+            print(f" [Python] Error renaming podcast tag: {str(e)}")
+            return False
+
+    def delete_podcast_tag(self, tag_id):
+        """Delete a tag + its links (delete_playlist() equivalent)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM Podcast_Tag_Links WHERE tag_id = ?", (tag_id,))
+                conn.execute("DELETE FROM Podcast_Tags WHERE id = ?", (tag_id,))
+            self.record_deletion("podcast_tags", tag_id)
+            return True
+        except Exception as e:
+            print(f" [Python] Error deleting podcast tag: {str(e)}")
+            return False
+
+    def assign_podcast_tag(self, file, tag_id):
+        """Assign a tag to one episode (INSERT OR IGNORE)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO Podcast_Tag_Links (podcast_file, tag_id) VALUES (?, ?)",
+                    (file, tag_id),
+                )
+            return True
+        except Exception as e:
+            print(f" [Python] Error assigning podcast tag: {str(e)}")
+            return False
+
+    def unassign_podcast_tag(self, file, tag_id):
+        """Remove one episode's tag assignment."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "DELETE FROM Podcast_Tag_Links WHERE podcast_file = ? AND tag_id = ?",
+                    (file, tag_id),
+                )
+            return True
+        except Exception as e:
+            print(f" [Python] Error unassigning podcast tag: {str(e)}")
+            return False
+
     def get_playlist_songs(self, playlist_id):
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -700,6 +804,18 @@ class DatabaseManager:
                     remote_podcasts = cur.fetchall()
                 except Exception:
                     remote_podcasts = []
+
+                # podcast_tags / podcast_tag_links are newer still (same guard)
+                try:
+                    cur.execute("SELECT id, name FROM podcast_tags")
+                    remote_podcast_tags = cur.fetchall()
+                except Exception:
+                    remote_podcast_tags = []
+                try:
+                    cur.execute("SELECT id, podcast_file, tag_id FROM podcast_tag_links")
+                    remote_podcast_tag_links = cur.fetchall()
+                except Exception:
+                    remote_podcast_tag_links = []
             conn.close()
         except Exception as e:
             return f"Error connecting to remote DB: {e}"
@@ -780,6 +896,37 @@ class DatabaseManager:
                         ON CONFLICT(id) DO UPDATE SET
                             playlist_id = excluded.playlist_id,
                             date_played = excluded.date_played
+                    """, row)
+                # Podcast tags + links (upsert by id, like song_playlist: an
+                # empty snapshot never wipes local tags)
+                local_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Tags (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name varchar(255) NOT NULL UNIQUE
+                    )
+                """)
+                local_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Tag_Links (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        podcast_file varchar(255) NOT NULL,
+                        tag_id bigint NOT NULL
+                    )
+                """)
+                local_conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_podcast_tag_links_pair
+                    ON Podcast_Tag_Links(podcast_file, tag_id)
+                """)
+                for row in remote_podcast_tags:
+                    local_conn.execute("""
+                        INSERT INTO Podcast_Tags (id, name) VALUES (?, ?)
+                        ON CONFLICT(id) DO UPDATE SET name = excluded.name
+                    """, row)
+                for row in remote_podcast_tag_links:
+                    local_conn.execute("""
+                        INSERT INTO Podcast_Tag_Links (id, podcast_file, tag_id) VALUES (?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            podcast_file = excluded.podcast_file,
+                            tag_id = excluded.tag_id
                     """, row)
                 # Adopt the remote daily mix (same mix of the day on every device)
                 if remote_daily_mix:

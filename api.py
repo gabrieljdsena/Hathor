@@ -96,6 +96,23 @@ class Api:
                         artist varchar(255)
                     )
                 """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Tags (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name varchar(255) NOT NULL UNIQUE
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Tag_Links (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        podcast_file varchar(255) NOT NULL,
+                        tag_id bigint NOT NULL
+                    )
+                """)
+                conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_podcast_tag_links_pair
+                    ON Podcast_Tag_Links(podcast_file, tag_id)
+                """)
                 try:
                     conn.execute("ALTER TABLE Download_Queue ADD COLUMN is_podcast INTEGER DEFAULT 0")
                 except sqlite3.OperationalError:
@@ -303,6 +320,27 @@ class Api:
 
     def get_podcast_details(self, file):
         return self.db.get_podcast_details(file)
+
+    def get_podcast_tags(self):
+        return self.db.get_podcast_tags()
+
+    def get_podcast_tag_map(self):
+        return self.db.get_podcast_tag_map()
+
+    def new_podcast_tag(self, name):
+        return self.db.new_podcast_tag(name)
+
+    def rename_podcast_tag(self, tag_id, name):
+        return self.db.rename_podcast_tag(tag_id, name)
+
+    def delete_podcast_tag(self, tag_id):
+        return self.db.delete_podcast_tag(tag_id)
+
+    def assign_podcast_tag(self, file, tag_id):
+        return self.db.assign_podcast_tag(file, tag_id)
+
+    def unassign_podcast_tag(self, file, tag_id):
+        return self.db.unassign_podcast_tag(file, tag_id)
 
     def sync_local_podcasts_to_db(self):
         return self.db.sync_local_podcasts_to_db()

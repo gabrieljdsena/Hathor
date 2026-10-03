@@ -101,6 +101,23 @@ create table if not exists Daily_Mix(
     created_at datetime default CURRENT_TIMESTAMP
 );
 
+-- Podcast tags (same shape as Playlists + Song_Playlist).
+create table if not exists Podcast_Tags(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name varchar(255) not null unique
+);
+
+create table if not exists Podcast_Tag_Links(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    podcast_file varchar(255) not null,
+    tag_id bigint not null,
+    FOREIGN KEY (podcast_file) REFERENCES Podcasts(file),
+    FOREIGN KEY (tag_id) REFERENCES Podcast_Tags(id)
+);
+
+create unique index if not exists idx_podcast_tag_links_pair
+    on Podcast_Tag_Links(podcast_file, tag_id);
+
 
 INSERT OR IGNORE INTO Settings(id,current_song, limit_downloads, current_playlist, current_volume, standardize_volume, current_tab, window_width, window_height, background_path, songs_path, browser)
 values (1,null,null,null,null,null,null,null,null,null,null,null)

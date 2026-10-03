@@ -158,6 +158,7 @@ class MetadataManager:
                 os.remove(total_path)
                 try:
                     with sqlite3.connect(self.api.db_path) as conn:
+                        conn.execute("DELETE FROM Podcast_Tag_Links WHERE podcast_file = ?", (filename,))
                         conn.execute("DELETE FROM Podcasts WHERE file = ?", (filename,))
                     if getattr(self.api, 'db', None):
                         self.api.db.record_deletion("podcasts", filename)
