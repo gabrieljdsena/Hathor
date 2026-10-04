@@ -1,11 +1,11 @@
 # Hathor Web — Implementation Plan (C# + React + DDD + Dapper)
 
-**Stack:** C# ASP.NET Core 8 backend (DDD + REST + EF Core + Dapper) + React 18 + Vite + Tailwind frontend.
+**Stack:** C# ASP.NET Core 10 backend (DDD + REST + EF Core + Dapper) + React 18 + Vite + Tailwind frontend.
 **App name:** Hathor (matches desktop + mobile).
 **Sources of truth:**
 
-- Desktop: `Music Player/` — `api.py`, `services/` (`playback`, `metadata`, `database`, `lyrics`, `apple`, `downloads`, `windows_media`, `startup_maintenance`), `Download.py`, `sync.py`, `settings.py`, `database.sql`, `ui/index.html` + `ui/views/*` + `ui/modals/*`, `docs/*.md`
-- Mobile: `AndroidPlayer/` — `PLAN.md`, `FEATURE_PLAN.md`, `AppDatabase.kt` (Room), `QueueRepository.kt`, Compose screens, `PlayerService/PlayerManager`, `SyncWorker/PullWorker`, `RemoteConn/RemoteSync/RemoteUpload`
+- Desktop: `apps/desktop/` — `api.py`, `services/` (`playback`, `metadata`, `database`, `lyrics`, `apple`, `downloads`, `windows_media`, `startup_maintenance`), `Download.py`, `sync.py`, `settings.py`, `database.sql`, `ui/index.html` + `ui/views/*` + `ui/modals/*`, `docs/*.md`
+- Mobile: `apps/mobile/` — `PLAN.md`, `FEATURE_PLAN.md`, `AppDatabase.kt` (Room), `QueueRepository.kt`, Compose screens, `PlayerService/PlayerManager`, `SyncWorker/PullWorker`, `RemoteConn/RemoteSync/RemoteUpload`
 
 ---
 

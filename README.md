@@ -11,7 +11,7 @@ multi-device sync. One repo, three apps, one shared sync contract.
 ```text
 apps/
   desktop/  Windows desktop player — Python + pywebview + pygame (the original app)
-  web/      Self-hosted web app — ASP.NET Core 8 API + Worker + React/Vite frontend
+  web/      Self-hosted web app — ASP.NET Core 10 API + Worker + React/Vite frontend
   mobile/   Native Android app — Kotlin, on-device YouTube→MP3 + remote-DB sync
 packages/
   contracts/  Sync contract shared by all three apps (schema, export/import, tombstones)
