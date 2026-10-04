@@ -36,13 +36,12 @@ if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
 
     $jwt = [Environment]::GetEnvironmentVariable('JWT_KEY', 'User')
     if (-not $jwt) { $jwt = [Environment]::GetEnvironmentVariable('JWT_KEY', 'Process') }
-    if ($jwt) {
-        [Environment]::SetEnvironmentVariable('JWT_KEY', $jwt, 'Machine')
-        Write-Host "[ok] JWT_KEY pinned as machine env"
+    if (-not $jwt) {
+        $jwt = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
+        Write-Host "[ok] generated random JWT_KEY (old sessions/tokens are void)"
     }
-    else {
-        Write-Host "[warn] JWT_KEY not found - set it or login tokens will fail"
-    }
+    [Environment]::SetEnvironmentVariable('JWT_KEY', $jwt, 'Machine')
+    Write-Host "[ok] JWT_KEY pinned as machine env"
 
     $dbPassword = [Environment]::GetEnvironmentVariable('HATHOR_DB_PASSWORD', 'User')
     if (-not $dbPassword) { $dbPassword = [Environment]::GetEnvironmentVariable('HATHOR_DB_PASSWORD', 'Process') }
