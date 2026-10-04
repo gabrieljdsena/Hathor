@@ -15,6 +15,9 @@ export default function Download() {
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [batchBusy, setBatchBusy] = useState(false)
+  // In-flight submit URLs: blocks double-click double-submits, which the
+  // backend would otherwise persist as twin jobs ("Title (1).mp3").
+  const [busyUrls, setBusyUrls] = useState<ReadonlySet<string>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
@@ -54,12 +57,20 @@ export default function Download() {
   }
 
   const download = async (url: string, title: string) => {
+    if (busyUrls.has(url)) return
+    setBusyUrls((prev) => new Set(prev).add(url))
     try {
       await api.submitDownload(url, title, null, isPodcast)
       setNotice(isPodcast ? `Podcast queued: ${title}` : `Download queued: ${title}`)
       void queryClient.invalidateQueries({ queryKey: ['download-jobs'] })
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Download failed.')
+    } finally {
+      setBusyUrls((prev) => {
+        const next = new Set(prev)
+        next.delete(url)
+        return next
+      })
     }
   }
 
@@ -206,7 +217,7 @@ export default function Download() {
 
         <div className="mt-8 w-full flex flex-col gap-3 pb-6">
           {(results ?? []).map((r) => (
-            <ResultRow key={r.id} hit={r} onDownload={() => void download(`https://www.youtube.com/watch?v=${r.id}`, r.title)} onPreview={() => setPreviewId(r.id)} />
+            <ResultRow key={r.id} hit={r} busy={busyUrls.has(`https://www.youtube.com/watch?v=${r.id}`)} onDownload={() => void download(`https://www.youtube.com/watch?v=${r.id}`, r.title)} onPreview={() => setPreviewId(r.id)} />
           ))}
         </div>
 
@@ -230,7 +241,7 @@ export default function Download() {
   )
 }
 
-function ResultRow({ hit, onDownload, onPreview }: { hit: VideoHit; onDownload: () => void; onPreview: () => void }) {
+function ResultRow({ hit, busy, onDownload, onPreview }: { hit: VideoHit; busy: boolean; onDownload: () => void; onPreview: () => void }) {
   return (
     <div className="flex items-center gap-4 bg-white/[0.04] border border-white/[0.08] rounded-xl p-3 hover:bg-white/[0.08] transition-all duration-300">
       <div className="relative w-24 h-16 flex-shrink-0 group rounded-lg overflow-hidden cursor-pointer shadow-md" onClick={onPreview}>
@@ -251,8 +262,9 @@ function ResultRow({ hit, onDownload, onPreview }: { hit: VideoHit; onDownload: 
       </div>
       <button
         onClick={onDownload}
-        title="Download"
-        className="flex items-center justify-center w-10 h-10 rounded-full bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white transition-colors shadow-md cursor-pointer flex-shrink-0"
+        disabled={busy}
+        title={busy ? 'Queuing…' : 'Download'}
+        className="flex items-center justify-center w-10 h-10 rounded-full bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white disabled:opacity-50 transition-colors shadow-md cursor-pointer disabled:cursor-default flex-shrink-0"
       >
         <Icon name="download" className="w-5 h-5" />
       </button>

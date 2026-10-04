@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type DiscoverItem } from '../api/client'
 import CoverArt from '../components/ui/CoverArt'
@@ -106,6 +106,9 @@ export default function Discover() {
   const [notice, setNotice] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
+  // Sync ref mirror of pending: state updates batch, so two clicks in one
+  // tick would both submit without this guard.
+  const pendingRef = useRef<Set<string>>(new Set())
   const [previewing, setPreviewing] = useState<ReadonlySet<string>>(new Set())
   const [preview, setPreview] = useState<{ id: string; title: string; artist: string } | null>(null)
   const debounced = useDebouncedValue(search)
@@ -156,6 +159,8 @@ export default function Discover() {
 
   const download = async (item: DiscoverItem) => {
     const key = `${item.title} — ${item.artist}`
+    if (pendingRef.current.has(key)) return
+    pendingRef.current.add(key)
     setPending((prev) => new Set(prev).add(key))
     try {
       await api.submitDownload(`${item.title} ${item.artist} audio`, item.title, item.artist, false)
@@ -164,6 +169,7 @@ export default function Discover() {
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Download failed.')
     } finally {
+      pendingRef.current.delete(key)
       setPending((prev) => {
         const next = new Set(prev)
         next.delete(key)
