@@ -28,6 +28,19 @@ public interface IPlaylistReadModel
     Task<PlaylistDto?> GetAsync(Guid userId, long id, CancellationToken ct = default);
 }
 
+// Discover taste read-model port (Dapper): top artists by history plays,
+// owned title/artist pairs, and in-flight download pairs for dedupe
+// (packages/contracts/discover.md rules 1-2).
+public interface IDiscoverTasteReadModel
+{
+    Task<IReadOnlyList<(string Artist, long Plays)>> GetTopArtistsAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<(string Title, string Artist)>> GetLibraryPairsAsync(
+        Guid userId, CancellationToken ct = default);
+    Task<IReadOnlyList<(string Title, string Artist)>> GetActiveDownloadPairsAsync(
+        Guid userId, CancellationToken ct = default);
+}
+
 // Podcast-tag read-model port (Dapper): tags with live episode counts + file→ids map.
 public interface IPodcastTagReadModel
 {
@@ -168,6 +181,9 @@ public interface IITunesClient
     Task<ITunesHitDto?> SearchSingleAsync(string title, string? artist, CancellationToken ct = default);
     Task<IReadOnlyList<ITunesHitDto>> SearchMultiAsync(
         string title, string? artist, int limit, CancellationToken ct = default);
+    // Raw term search (entity=song): artist-discography expansion for Discover.
+    Task<IReadOnlyList<ITunesHitDto>> SearchTermAsync(
+        string term, int limit, CancellationToken ct = default);
     Task<byte[]?> FetchArtworkAsync(string artworkUrl, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetTrendingAsync(int limit, CancellationToken ct = default);
 }
