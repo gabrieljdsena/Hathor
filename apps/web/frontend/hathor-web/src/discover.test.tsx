@@ -100,6 +100,8 @@ describe('Discover view', () => {
     await screen.findByText('Midnight City')
 
     fireEvent.click(screen.getByText('Refresh'))
+    expect(screen.getByText('Refreshing suggestions…')).toBeInTheDocument()
+    expect(screen.getByText('Refreshing…')).toBeDisabled()
     expect(calls.some((c) => String(c.input).endsWith('/discover/refresh'))).toBe(true)
   })
 })
