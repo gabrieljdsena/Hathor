@@ -90,6 +90,7 @@ export default function Discover() {
   const [search, setSearch] = useState('')
   const [source, setSource] = useState<SourceFilter>('all')
   const [notice, setNotice] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
   const debounced = useDebouncedValue(search)
 
@@ -99,7 +100,9 @@ export default function Discover() {
     return () => window.clearTimeout(t)
   }, [notice])
 
-  const refresh = () =>
+  const refresh = () => {
+    if (refreshing) return
+    setRefreshing(true)
     void api
       .refreshDiscover()
       .then((d) => {
@@ -108,6 +111,10 @@ export default function Discover() {
       .catch((err: unknown) => {
         setNotice(err instanceof Error ? err.message : 'Refresh failed.')
       })
+      .finally(() => {
+        setRefreshing(false)
+      })
+  }
 
   const download = async (item: DiscoverItem) => {
     const key = `${item.title} — ${item.artist}`
@@ -163,10 +170,13 @@ export default function Discover() {
             {data && data.items.length > 0 && (
               <button
                 onClick={refresh}
-                title="Refresh suggestions"
-                className="text-xs text-zinc-500 hover:text-orange-400 uppercase tracking-widest transition-colors cursor-pointer"
+                disabled={refreshing}
+                aria-busy={refreshing}
+                title={refreshing ? 'Refreshing suggestions…' : 'Refresh suggestions'}
+                className="inline-flex items-center gap-2 text-xs text-zinc-500 hover:text-orange-400 disabled:text-zinc-600 uppercase tracking-widest transition-colors cursor-pointer disabled:cursor-default"
               >
-                Refresh
+                {refreshing && <span className="spinner-btn" aria-hidden="true" />}
+                {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
             )}
           </div>
@@ -192,6 +202,16 @@ export default function Discover() {
         {notice && (
           <div className="mt-4 text-sm text-zinc-300 bg-zinc-900/60 border border-white/10 rounded-xl px-4 py-2.5">
             {notice}
+          </div>
+        )}
+        {refreshing && (
+          <div
+            className="mt-4 flex items-center gap-2 text-sm text-zinc-400"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="spinner" aria-hidden="true" />
+            <span>Refreshing suggestions…</span>
           </div>
         )}
       </div>
