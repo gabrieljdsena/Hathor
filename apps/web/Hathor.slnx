@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Hathor.Api/Hathor.Api.csproj" />
+    <Project Path="src/Hathor.Application/Hathor.Application.csproj" />
+    <Project Path="src/Hathor.Domain/Hathor.Domain.csproj" />
+    <Project Path="src/Hathor.Infrastructure/Hathor.Infrastructure.csproj" />
+    <Project Path="src/Hathor.Migrations.MySql/Hathor.Migrations.MySql.csproj" />
+    <Project Path="src/Hathor.Migrations.Postgres/Hathor.Migrations.Postgres.csproj" />
+    <Project Path="src/Hathor.Worker/Hathor.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Hathor.Api.Tests/Hathor.Api.Tests.csproj" />
+    <Project Path="tests/Hathor.Application.Tests/Hathor.Application.Tests.csproj" />
+    <Project Path="tests/Hathor.Domain.Tests/Hathor.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,371 @@
+import { useEffect, useRef, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../api/client'
+import { engine } from '../audio/engine'
+import { formatTime, usePlayer } from '../store/player'
+import { ControlButton, PlayPauseButton } from './ui/buttons'
+import CoverArt from './ui/CoverArt'
+import Icon from './ui/icons'
+import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
+
+// Self-ticking progress row (engine media time; display-only).
+// One instance per layout (mobile stacked / desktop column).
+function ProgressSlider({ idPrefix }: { idPrefix: string }) {
+  const sliderRef = useRef<HTMLInputElement>(null)
+  const curRef = useRef<HTMLSpanElement>(null)
+  const totRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const slider = sliderRef.current
+      if (!slider) return
+      const dur = engine.duration()
+      const pos = engine.time()
+      if (dur > 0) slider.max = String(dur)
+      if (document.activeElement !== slider) slider.value = String(pos)
+      if (curRef.current) curRef.current.textContent = formatTime(pos)
+      if (totRef.current) totRef.current.textContent = formatTime(dur)
+      const max = Number.parseFloat(slider.max) || 100
+      const val = Number.parseFloat(slider.value) || 0
+      slider.style.setProperty('--range-percent', `${(val / max) * 100}%`)
+    }, 500)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <>
+      <span ref={curRef} className="text-xs text-zinc-500 font-medium font-mono">
+        0:00
+      </span>
+      <input
+        type="range"
+        id={`${idPrefix}-progressSlider`}
+        ref={sliderRef}
+        min="0"
+        step="0.1"
+        defaultValue="0"
+        onChange={(e) => {
+          const sec = Number.parseFloat(e.target.value)
+          engine.seek(sec) // cancels any fade; server estimate follows
+          void api.seek(sec).catch(() => {})
+        }}
+        className="w-full cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
+      />
+      <span ref={totRef} className="text-xs text-zinc-500 font-medium font-mono">
+        0:00
+      </span>
+    </>
+  )
+}
+
+// Bottom player bar cloned from Music Player/ui/index.html #controls
+// (h-28, orange top border, glass). Audio renders server state; crossfade
+// and gapless arrive in a later phase — manual next/prev stay instant.
+// Mobile stacks a compact transport row over a full-width progress slider
+// (repeat/shuffle/volume stay on sm+ where they fit).
+export default function PlayerBar({
+  onToggleQueue,
+  onToggleLyrics,
+  onOpenNowPlaying,
+  queueActive = false,
+  lyricsActive = false,
+}: {
+  onToggleQueue: () => void
+  onToggleLyrics: () => void
+  onOpenNowPlaying: () => void
+  queueActive?: boolean
+  lyricsActive?: boolean
+}) {
+  const state = usePlayer()
+  const navigate = useNavigate()
+  const songMenuRef = useRef<SongMenuHandle | null>(null)
+  const openSongMenu = (x: number, y: number) => songMenuRef.current?.openAt(x, y)
+  const goArtist = (e: React.MouseEvent, artist: string) => {
+    e.stopPropagation()
+    navigate(`/artists/${encodeURIComponent(artist)}`)
+  }
+  useEffect(() => {
+    void state.boot().catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // OS media integration (desktop SMTC overlay): lock-screen / headset
+  // metadata + play/pause/next/prev handlers. Cover falls back to the
+  // embedded art the server already attached to the current song.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const song = usePlayer.getState().currentSong
+    try {
+      navigator.mediaSession.metadata = song
+        ? new MediaMetadata({
+            title: song.title,
+            artist: song.artist,
+            album: song.album !== 'Unknown' ? song.album : undefined,
+            artwork: song.coverArt ? [{ src: song.coverArt }] : undefined,
+          })
+        : null
+    } catch {
+      /* artwork decoding must never break playback */
+    }
+  }, [state.currentSong])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const toggle = () => void usePlayer.getState().toggle()
+    const next = () =>
+      void api.next().then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio()
+      })
+    const prev = () =>
+      void api.prev().then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio()
+      })
+    try {
+      navigator.mediaSession.setActionHandler('play', toggle)
+      navigator.mediaSession.setActionHandler('pause', toggle)
+      navigator.mediaSession.setActionHandler('previoustrack', prev)
+      navigator.mediaSession.setActionHandler('nexttrack', next)
+    } catch {
+      /* unsupported actions are fine */
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    try {
+      navigator.mediaSession.playbackState = state.isPlaying ? 'playing' : 'paused'
+    } catch {
+      /* ignore */
+    }
+  }, [state.isPlaying])
+
+  const song = state.currentSong
+
+  const doNext = () =>
+    void api.next().then((s) => {
+      usePlayer.setState(s)
+      usePlayer.getState().syncAudio() // hard switch; cancels any fade
+    })
+  const doPrev = () =>
+    void api.prev().then((s) => {
+      usePlayer.setState(s)
+      usePlayer.getState().syncAudio() // hard switch; cancels any fade
+    })
+  const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
+  const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))
+  const doMute = () => {
+    if (state.volume > 0) {
+      engine.setVolume(0)
+      void api.volume(0).then((s) => usePlayer.setState({ volume: s.volume }))
+    } else {
+      engine.setVolume(1.0)
+      void api.volume(1.0).then((s) => usePlayer.setState({ volume: s.volume }))
+    }
+  }
+
+  return (
+    <div
+      id="controls"
+      className="fixed bottom-0 left-0 right-0 flex flex-col min-[1100px]:flex-row min-[1100px]:items-center min-[1100px]:justify-between gap-1 min-[1100px]:gap-0 border-t border-orange-500/10 bg-black/40 backdrop-blur-2xl px-3 min-[1100px]:px-6 py-2 min-[1100px]:py-0 min-[1100px]:h-28 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
+    >
+      {/* The AudioEngine owns its elements (double-buffered for crossfade);
+          UI polls engine time — no DOM <audio> needed here. */}
+      {/* Compact stacked layout (below 1100px): song + centered transport, progress below */}
+      <div className="grid min-[1100px]:hidden grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 min-w-0">
+        <div
+          className="flex items-center min-w-0 gap-2 cursor-pointer rounded-xl px-1 py-0.5 active:bg-white/5 transition-colors"
+          onClick={onOpenNowPlaying}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            openSongMenu(e.clientX, e.clientY)
+          }}
+          title="Open Now Playing"
+        >
+          <CoverArt
+            src={song?.coverArt}
+            file={song?.file}
+            isPodcast={song?.isPodcast}
+            alt={song?.title ?? ''}
+            className="w-10 h-10 rounded-lg flex-shrink-0"
+          />
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-zinc-100 truncate">{song?.title ?? 'Nothing playing'}</div>
+            {song && song.artist !== 'Unknown' ? (
+              <button
+                onClick={(e) => goArtist(e, song.artist)}
+                className="text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
+              >
+                {song.artist}
+              </button>
+            ) : (
+              <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-center gap-1">
+          <ControlButton icon="prev" title="Previous Song" iconClass="w-5 h-5" onClick={doPrev} />
+          <PlayPauseButton playing={state.isPlaying} id="playPauseBtn-mobile" small onClick={() => void state.toggle()} />
+          <ControlButton icon="next" title="Next Song" iconClass="w-5 h-5" onClick={doNext} />
+        </div>
+        <div className="flex items-center justify-end">
+          <button
+            onClick={onToggleQueue}
+            title="Toggle Queue"
+            className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${
+              queueActive ? 'text-orange-400' : 'text-zinc-400 active:text-white'
+            }`}
+          >
+            <Icon name="queue" className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+      {/* Compact stacked layout (below 1100px): full-width progress + volume */}
+      <div className="flex min-[1100px]:hidden w-full items-center gap-2">
+        <ProgressSlider idPrefix="m" />
+      </div>
+      <div className="flex min-[1100px]:hidden w-full items-center gap-2">
+        <button
+          onClick={doMute}
+          title="Mute / unmute"
+          className="cursor-pointer text-zinc-400 active:text-white transition-colors p-1 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0"
+        >
+          <Icon
+            name={state.volume === 0 ? 'volumeMuted' : state.volume < 0.5 ? 'volumeLow' : 'volume'}
+            className="w-4 h-4"
+          />
+        </button>
+        <input
+          type="range"
+          aria-label="Volume"
+          min="0"
+          max="1"
+          step="0.01"
+          value={state.volume}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.target.value)
+            engine.setVolume(v)
+            void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
+          }}
+          style={{ '--range-percent': `${Math.round(state.volume * 100)}%` } as CSSProperties}
+          className="flex-1 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
+        />
+      </div>
+
+      {/* Desktop: song card */}
+      <div
+        className="hidden min-[1100px]:flex flex-1 items-center min-w-0 gap-3 cursor-pointer rounded-xl px-2 py-1 -ml-2 hover:bg-white/5 transition-colors"
+        onClick={onOpenNowPlaying}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          openSongMenu(e.clientX, e.clientY)
+        }}
+        title="Open Now Playing"
+      >
+        <CoverArt
+          src={song?.coverArt}
+          file={song?.file}
+          isPodcast={song?.isPodcast}
+          alt={song?.title ?? ''}
+          className="w-14 h-14 rounded-lg flex-shrink-0"
+        />
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-zinc-100 truncate">{song?.title ?? 'Nothing playing'}</div>
+          {song && song.artist !== 'Unknown' ? (
+            <button
+              onClick={(e) => goArtist(e, song.artist)}
+              className="text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
+            >
+              {song.artist}
+            </button>
+          ) : (
+            <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
+          )}
+        </div>
+      </div>
+      {song && (
+        <SongMenu
+          ref={(h) => {
+            songMenuRef.current = h
+          }}
+          song={song}
+          sourceType={state.source?.type ?? 'all_songs'}
+          hideButton
+        />
+      )}
+
+      {/* Desktop: transport + progress */}
+      <div className="hidden min-[1100px]:flex flex-col items-center justify-center flex-[2] max-w-3xl gap-2">
+        <div className="flex flex-row items-center justify-center gap-6 sm:gap-8 w-full">
+          <ControlButton
+            icon="repeat"
+            title="Toggle Repeat"
+            active={state.repeat}
+            iconClass="w-5 h-5"
+            onClick={doRepeat}
+          />
+          <ControlButton icon="prev" title="Previous Song" onClick={doPrev} />
+          <PlayPauseButton playing={state.isPlaying} onClick={() => void state.toggle()} />
+          <ControlButton icon="next" title="Next Song" onClick={doNext} />
+          <ControlButton
+            icon="shuffle"
+            title="Toggle Shuffle"
+            active={state.shuffle}
+            onClick={doShuffle}
+          />
+        </div>
+        <div className="w-full flex items-center gap-3">
+          <ProgressSlider idPrefix="d" />
+        </div>
+      </div>
+
+      {/* Desktop: lyrics / queue / volume */}
+      <div className="hidden min-[1100px]:flex flex-1 items-center justify-end gap-2 min-w-0">
+        <button
+          onClick={onToggleLyrics}
+          title="Toggle Lyrics"
+          className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
+            lyricsActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Icon name="musicNote" className="w-5 h-5" />
+        </button>
+        <button
+          onClick={onToggleQueue}
+          title="Toggle Queue"
+          className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
+            queueActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Icon name="queue" className="w-5 h-5" />
+        </button>
+        <button
+          onClick={doMute}
+          title="Mute / unmute"
+          className="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none"
+        >
+          <Icon
+            name={state.volume === 0 ? 'volumeMuted' : state.volume < 0.5 ? 'volumeLow' : 'volume'}
+            className="w-5 h-5"
+          />
+        </button>
+        <input
+          type="range"
+          id="volumeSlider"
+          min="0"
+          max="1"
+          step="0.01"
+          value={state.volume}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.target.value)
+            engine.setVolume(v) // instant local feedback; server confirms
+            void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
+          }}
+          style={{ '--range-percent': `${Math.round(state.volume * 100)}%` } as CSSProperties}
+          className="w-20 sm:w-28 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
+        />
+      </div>
+    </div>
+  )
+}

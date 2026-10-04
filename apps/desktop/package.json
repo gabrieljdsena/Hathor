@@ -4,7 +4,7 @@
     "notyf": "^3.10.0",
     "sweetalert2": "^11.26.24"
   },
-  "name": "music-player",
+  "name": "hathor-desktop",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",

@@ -1,0 +1,76 @@
+services:
+  # Local database (replaces the old SQLite file): the API's primary store.
+  localdb:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LOCALDB_PASSWORD:-hathor}
+      POSTGRES_DB: hathor
+    volumes:
+      - localdbdata:/var/lib/postgresql/data
+    # Host port 5433 avoids clashing with a natively installed Postgres on
+    # 5432; containers reach this DB as `localdb:5432`.
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hathor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    # TiDB-compatible wire protocol; swap image for TiDB if desired.
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-hathor}
+      MYSQL_DATABASE: ${DB_NAME:-hathor}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: src/Hathor.Api/Dockerfile
+    environment:
+      JWT_KEY: ${JWT_KEY:?set JWT_KEY in .env}
+      Jwt__Issuer: hathor
+      Jwt__Audience: hathor-clients
+      Database__Provider: postgres
+      Database__ConnectionString: "Host=localdb;Port=5432;Database=hathor;Username=postgres;Password=${LOCALDB_PASSWORD:-hathor}"
+      Database__StorageRoot: /data/library
+      # Shared lab Postgres hosting the `logs` table (myhomelab /logs reads
+      # application='hathor' rows). host.docker.internal reaches the host's
+      # native Postgres from the container. Password via LAB_DB_PASSWORD in
+      # .env (or Logging__Password); empty = PG sink stays a no-op while
+      # console/file logging keeps working.
+      Logging__ConnectionString: "Host=host.docker.internal;Port=5432;Database=myhomelab;Username=postgres;Password=${LAB_DB_PASSWORD:-}"
+      Downloads__MaxConcurrency: 3
+      Cors__AllowedOrigins__0: http://localhost:8080
+    volumes:
+      - library:/data
+    ports:
+      - "5041:8080"
+    depends_on:
+      localdb:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/hathor-web/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  localdbdata:
+  dbdata:
+  library:

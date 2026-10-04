@@ -1,9 +1,36 @@
-ffmpeg/
-node_modules/
-__pycache__/
-music_player.db
+# Secrets — never commit
 .env
+appsettings.Secrets.json
+*.pfx
+*.pem
+CA.pem
+
+# Databases / local media
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+hathor.log
+data/
+logs/
+
+# Python (desktop)
+__pycache__/
 dist/
 build/
-CA.pem
-hathor.log
+ffmpeg/
+tools/
+**/tools/ffmpeg.exe
+
+# Node (desktop ui + web frontend)
+node_modules/
+frontend/hathor-web/dist/
+frontend/hathor-web/shots/
+frontend/hathor-web/test-results/
+frontend/hathor-web/playwright-report/
+
+# .NET (web)
+bin/
+obj/
+.vs/
+*.user

@@ -1,0 +1,27 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# Databases + local media (dev artifacts from smoke tests)
+*.db
+*.db-*
+data/
+logs/
+
+# Frontend
+frontend/hathor-web/node_modules/
+frontend/hathor-web/dist/
+frontend/hathor-web/shots/
+frontend/hathor-web/test-results/
+frontend/hathor-web/playwright-report/
+
+# Env / secrets
+.env
+*.pfx
+appsettings.Secrets.json
+
+# Local tool binaries (FFmpeg etc. downloaded at dev/runtime, >100MB — never commit)
+tools/
+**/tools/ffmpeg.exe

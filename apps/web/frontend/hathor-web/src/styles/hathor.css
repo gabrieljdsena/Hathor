@@ -1,0 +1,256 @@
+@import "tailwindcss";
+
+/* Verbatim copy of Music Player/ui/css.css (scrollbar, visualizer,
+   range slider, .active-nav) so the web app is visually identical. */
+:root {
+    --controller-height: 112px;
+    /* h-28 = 7rem = 112px */
+}
+
+.main-content-area {
+    height: calc(100vh - var(--controller-height));
+}
+
+/* Modern Dark Mode Scrollbar */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+    /* zinc-700 thumb, transparent track */
+}
+
+/* WebKit Browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #3f3f46;
+    /* zinc-700 */
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: #52525b;
+    /* zinc-600 */
+}
+
+/* Mini Audio Visualizer */
+@keyframes visualizer-bounce {
+
+    0%,
+    100% {
+        transform: scaleY(0.3);
+    }
+
+    50% {
+        transform: scaleY(1);
+    }
+}
+
+.visualizer-bar {
+    width: 3px;
+    height: 16px;
+    background-color: #f97316;
+    /* Tailwind orange-500 */
+    border-radius: 9999px;
+    animation: visualizer-bounce 1s infinite ease-in-out;
+    transform-origin: bottom;
+}
+
+body.lyrics-active #search-header {
+    display: none !important;
+}
+
+.visualizer-bar:nth-child(1) {
+    animation-duration: 0.5s;
+}
+
+.visualizer-bar:nth-child(2) {
+    animation-duration: 0.7s;
+    animation-delay: 0.1s;
+}
+
+.visualizer-bar:nth-child(3) {
+    animation-duration: 0.6s;
+    animation-delay: 0.4s;
+}
+
+.visualizer-bar:nth-child(4) {
+    animation-duration: 0.8s;
+    animation-delay: 0.2s;
+}
+
+/* ── Modern Range Slider ── */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    --range-percent: 0%;
+    background: linear-gradient(to right, #f97316 var(--range-percent), #27272a var(--range-percent));
+    height: 4px;
+    border-radius: 9999px;
+    cursor: pointer;
+    outline: none;
+    border: none;
+    box-shadow: none;
+    transition: background 0.15s ease;
+}
+
+input[type="range"]:hover {
+    background: linear-gradient(to right, #fb923c var(--range-percent), #3f3f46 var(--range-percent));
+}
+
+input[type="range"]:focus {
+    outline: none;
+    box-shadow: none;
+}
+
+/* Track */
+input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: transparent;
+    border: none;
+    outline: none;
+    box-shadow: none;
+}
+
+/* Thumb */
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #f97316;
+    /* orange-500 */
+    border: none;
+    outline: none;
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
+    margin-top: -4px;
+    /* Center on the track: (trackH - thumbH) / 2 */
+    transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.15s;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+    transform: scale(1.25);
+    background: #fb923c;
+    /* orange-400 */
+    box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
+}
+
+input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.1);
+    background: #ea580c;
+    /* orange-600 */
+    box-shadow: 0 0 12px rgba(249, 115, 22, 0.6);
+}
+
+/* Firefox fallback */
+input[type="range"]::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: #27272a;
+    border: none;
+    outline: none;
+}
+
+input[type="range"]::-moz-range-progress {
+    height: 4px;
+    border-radius: 9999px;
+    background: #f97316;
+}
+
+input[type="range"]:hover::-moz-range-progress {
+    background: #fb923c;
+}
+
+input[type="range"]:active::-moz-range-progress {
+    background: #ea580c;
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #f97316;
+    border: none;
+    outline: none;
+    box-shadow: none;
+}
+
+input[type="range"]:hover::-moz-range-thumb {
+    background: #fb923c;
+    box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
+}
+
+/* Sidebar active state */
+.active-nav {
+    background-color: rgba(249, 115, 22, 0.1) !important;
+    /* matches bg-orange-500/10 */
+    color: white !important;
+}
+
+.active-nav .nav-indicator {
+    transform: scaleY(1) !important;
+}
+
+.active-nav svg {
+    color: rgb(251, 146, 60) !important;
+    /* matches text-orange-400 */
+    transform: scale(1.1) !important;
+}
+
+/* Hoisted verbatim from ui/views/download_songs.html (was inline <style>):
+   simple spinner, no external dependency. */
+.spinner {
+    border: 3px solid rgba(255,255,255,0.2);
+    border-top: 3px solid #f97316; /* orange-500 */
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Inline button spinner (API latency feedback). Ring uses currentColor so
+   it adapts to orange/ghost/white buttons; sized in em to match the label. */
+.spinner-btn {
+    width: 1em;
+    height: 1em;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+/* Hoisted verbatim from ui/views/settings.html (was inline <style>):
+   themed toggle switch (matches orange gradient buttons/logo). */
+.xf-switch {
+    width: 40px; height: 22px; border-radius: 9999px; flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative; cursor: pointer; padding: 0;
+    transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+}
+.xf-switch:hover { border-color: rgba(249, 115, 22, 0.4); }
+.xf-switch .xf-knob {
+    position: absolute; top: 50%; transform: translateY(-50%); left: 3px;
+    width: 16px; height: 16px; border-radius: 9999px; background: #71717a;
+    transition: left 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s;
+}
+.xf-switch[data-on="1"] {
+    background: linear-gradient(to right, #fb923c, #ea580c);
+    border-color: rgba(249, 115, 22, 0.5);
+    box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
+}
+.xf-switch[data-on="1"] .xf-knob { left: 21px; background: #fff; }
