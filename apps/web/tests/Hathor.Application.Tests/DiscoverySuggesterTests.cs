@@ -89,6 +89,19 @@ public sealed class DiscoverySuggesterTests
     }
 
     [Fact]
+    public async Task SuggestAsync_DisablesThinking_AndCapsTokens()
+    {
+        // Reasoning models burn the budget on thinking traces and return
+        // empty content (verified live against llama-server).
+        var handler = new CapturingHandler(ChatJson);
+        await Suggester(handler).SuggestAsync([("M83", 7)], 10, CancellationToken.None);
+
+        var body = await handler.Seen!.Content!.ReadAsStringAsync();
+        body.Should().Contain("\"enable_thinking\":false");
+        body.Should().Contain("\"max_tokens\":1000");
+    }
+
+    [Fact]
     public async Task SuggestAsync_GarbageReply_YieldsEmpty()
     {
         var result = await Suggester(new FakeHandler("not json at all {{{"))

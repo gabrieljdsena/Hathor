@@ -68,13 +68,17 @@ share this wire shape and these rules.
   "LlmEnabled": true,
   "Endpoint": "http://localhost:1234/v1",
   "Model": "qwen3.5-4b-uncensored",
-  "LlmTimeoutSec": 30
+  "LlmTimeoutSec": 30,
+  "LlmMaxTokens": 1000
 }
 ```
 
 - `Endpoint` is the llama.cpp server base URL (`/chat/completions` is
   appended). Any OpenAI-compatible endpoint works (`response_format:
   json_object`).
+- Requests carry `chat_template_kwargs: {enable_thinking: false}` plus a token
+  cap: reasoning models otherwise burn the whole budget on thinking traces
+  and return empty content (verified live against llama-server).
 - `Model` is the server model alias. Empty disables LLM suggestions (with a
   log warning) — Discover runs iTunes-only.
 - Any LLM failure (down, timeout, bad reply) silently yields zero suggestions;
