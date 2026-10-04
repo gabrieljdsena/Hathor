@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import Shell from './components/Shell'
 import ApiKeys from './views/ApiKeys'
+import Discover from './views/Discover'
 import History from './views/History'
 import Home from './views/Home'
 import Download from './views/Download'
@@ -38,6 +39,7 @@ export default function App() {
         <Route index element={<Home />} />
         <Route path="songs" element={<Songs />} />
         <Route path="download" element={<Download />} />
+        <Route path="discover" element={<Discover />} />
         <Route path="podcasts" element={<Podcasts />} />
         <Route path="mix" element={<Mix />} />
         <Route path="history" element={<History />} />

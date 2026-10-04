@@ -170,6 +170,23 @@ export interface DailyMix {
   cached: boolean
 }
 
+export interface DiscoverItem {
+  title: string
+  artist: string
+  album: string
+  year: string
+  genre: string
+  artworkUrl: string
+  source: 'artist' | 'chart' | 'llm'
+  score: number
+}
+
+export interface Discover {
+  date: string
+  items: DiscoverItem[]
+  cached: boolean
+}
+
 export interface VideoHit {
   id: string
   title: string
@@ -413,6 +430,10 @@ export const api = {
   // daily mix
   dailyMix: () => request<DailyMix>('/daily-mix'),
   regenerateMix: () => request<DailyMix>('/daily-mix/regenerate', { method: 'POST' }),
+
+  // discover (out-of-library recommendations, packages/contracts/discover.md)
+  discover: () => request<Discover>('/discover'),
+  refreshDiscover: () => request<Discover>('/discover/refresh', { method: 'POST' }),
 
   // ingest
   youtubeSearch: (q: string, limit = 5) =>
