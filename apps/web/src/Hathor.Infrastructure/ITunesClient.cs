@@ -35,6 +35,12 @@ public sealed class ITunesClientImpl(IHttpClientFactory httpFactory, ILogger<ITu
         return SearchAsync(query, limit, ct);
     }
 
+    public Task<IReadOnlyList<ITunesHitDto>> SearchTermAsync(
+        string term, int limit, CancellationToken ct = default) =>
+        string.IsNullOrWhiteSpace(term)
+            ? Task.FromResult<IReadOnlyList<ITunesHitDto>>([])
+            : SearchAsync(term.Trim(), limit, ct);
+
     public async Task<byte[]?> FetchArtworkAsync(string artworkUrl, CancellationToken ct = default)
     {
         try

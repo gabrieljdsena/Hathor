@@ -94,6 +94,23 @@ public sealed record DailyMixDto(
     IReadOnlyList<SongDto> Songs,
     bool Cached);
 
+// Discover items (packages/contracts/discover.md): out-of-library
+// recommendations. Source is artist|chart|llm, score is 0..1 descending.
+public sealed record DiscoverItemDto(
+    string Title,
+    string Artist,
+    string Album,
+    string Year,
+    string Genre,
+    string ArtworkUrl,
+    string Source,
+    double Score);
+
+public sealed record DiscoverDto(
+    string Date,
+    IReadOnlyList<DiscoverItemDto> Items,
+    bool Cached);
+
 // YouTube search hits (desktop search_yt: id/title/uploader/duration/thumbnail).
 public sealed record VideoHitDto(
     string Id,
