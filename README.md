@@ -69,19 +69,22 @@ Parity spec: `apps/web/IMPLEMENTATION_PLAN.md`.
 
 ### 3. Mobile — `apps/mobile/`
 
-Native Kotlin Android app. Phase 1 proves a real on-device YouTube→MP3
-download (`youtubedl-android` + bundled FFmpeg, no storage permission needed);
-later phases add the sync tab (pull from the same remote MySQL/TiDB the
-desktop pushes to), playlists, and full library parity.
+Native Kotlin Android client (Compose + Media3, app name Hathor) with the
+same library, downloads, playlists and sync as desktop: on-device
+YouTube→MP3 via real yt-dlp, foreground playback service, separate podcast
+library, and pull-sync from the shared MySQL/TiDB remote.
 
-- `app/src/main/.../engine/DownloadEngine.kt` — desktop `Download.py` semantics on-device
-- `playback/PlayerManager.kt`, `PlayerService.kt` — ExoPlayer playback + queue
-- `ui/` — Compose screens (Home, Library, Daily Mix, Download, Playlists, History, Now Playing)
-- Sync uses the same `packages/contracts` rules (tombstones, incremental history)
+- `engine/DownloadEngine.kt` — YouTube → MP3 downloads on-device
+- `playback/` — `PlayerService`, `PlayerManager`, previews
+- `ui/` — Home, All Songs, Daily Mix, Download, Podcasts, Playlists, History, Settings
+- Sync follows `packages/contracts` (same tables as desktop, Room cache offline)
 
 ```powershell
-# open apps/mobile in Android Studio, let Gradle sync, Run on a phone/emulator
+# open apps/mobile in Android Studio, add local.properties (sdk.dir + DB_*), Run
 ```
+
+Full docs: `apps/mobile/README.md`. `PLAN.md` / `FEATURE_PLAN.md` are the
+original build plans, kept for reference.
 
 Status/plan: `apps/mobile/README.md`, `apps/mobile/PLAN.md`, `apps/mobile/FEATURE_PLAN.md`.
 
