@@ -1,0 +1,6 @@
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- Zinc-950 (HathorColors.Background): the orange Ht mark needs a dark
+        field — the old orange gradient would swallow it. -->
+    <solid android:color="#FF09090B" />
+</shape>

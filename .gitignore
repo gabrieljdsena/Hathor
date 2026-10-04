@@ -34,3 +34,17 @@ bin/
 obj/
 .vs/
 *.user
+
+# Android (apps/mobile) — never commit secrets or build outputs
+local.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.apk
+*.aab
+.gradle/
+.idea/
+build/
+**/build/
+captures/
