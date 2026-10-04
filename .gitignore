@@ -35,6 +35,10 @@ obj/
 .vs/
 *.user
 
+# Deploy outputs (compiled publish + copied SPA — rebuilt by scripts/build.ps1)
+artifacts/
+**/wwwroot/
+
 # Android (apps/mobile) — never commit secrets or build outputs
 local.properties
 *.jks
