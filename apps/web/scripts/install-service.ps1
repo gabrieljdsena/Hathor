@@ -63,12 +63,18 @@ else {
 }
 
 # LAN access: the service binds 0.0.0.0, but Windows Firewall drops inbound
-# LAN traffic by default. Idempotent — refreshes the rule on every install.
+# LAN traffic by default. Profile Any (same as the MyHomeLab 443/8080 rules):
+# the host's interfaces run Public, so a Private-only rule would not apply.
+# Idempotent — refreshes the rule on every install.
 if (-not (Get-NetFirewallRule -DisplayName 'Hathor' -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName 'Hathor' -Direction Inbound `
-        -Protocol TCP -LocalPort $Port -Action Allow -Profile Private | Out-Null
+        -Protocol TCP -LocalPort $Port -Action Allow -Profile Any | Out-Null
 }
-Write-Host "[ok] firewall open for TCP $Port (Private/LAN)"
+else {
+    Set-NetFirewallRule -DisplayName 'Hathor' -Protocol TCP -LocalPort $Port `
+        -Action Allow -Profile Any
+}
+Write-Host "[ok] firewall open for TCP $Port (any profile)"
 
 Start-Service $ServiceName -ErrorAction SilentlyContinue
 Write-Host "[ok] service '$ServiceName' started"
