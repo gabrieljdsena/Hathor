@@ -125,6 +125,12 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
     public async Task<ActionResult<PlayerStateDto>> GetQueue(CancellationToken ct) =>
         Ok(await mediator.Send(new GetPlayerStateQuery(UserId), ct));
 
+    [HttpGet("queue/page")]
+    [Authorize(Policy = ScopeAuthorization.PlayerRead)]
+    public async Task<ActionResult<QueuePageDto>> GetQueuePage(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default) =>
+        Ok(await mediator.Send(new GetQueuePageQuery(UserId, page, pageSize), ct));
+
     [HttpPut("queue")]
     [Authorize(Policy = ScopeAuthorization.PlayerControl)]
     public async Task<ActionResult<PlayerStateDto>> ReplaceQueue(

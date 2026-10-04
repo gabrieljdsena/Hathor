@@ -28,7 +28,8 @@ public sealed record PlayerStateDto(
     IReadOnlyList<SongDto> Queue,
     QueueSourceDto? Source,
     bool IsCustomQueue,
-    bool FirstPlay);
+    bool FirstPlay,
+    int QueueTotal = 0);
 
 public sealed record NowPlayingDto(
     string? Title,

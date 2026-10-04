@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type LyricsHit } from '../api/client'
 import { usePlayer } from '../store/player'
@@ -89,8 +89,17 @@ export default function LyricsSheet({
     open,
   )
 
+  // Short content hash for the romanization key: the raw synced/plain
+  // payloads can be kilobytes, and query keys are serialized + retained.
+  const lyricsHash = useMemo(() => {
+    const text = `${lyrics?.synced?.length ?? 0}:${lyrics?.plain?.length ?? 0}:${lyrics?.synced?.slice(0, 64) ?? ''}${lyrics?.plain?.slice(0, 64) ?? ''}`
+    let h = 0
+    for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0
+    return h.toString(36)
+  }, [lyrics?.synced, lyrics?.plain])
+
   const { data: romanized } = useQuery({
-    queryKey: ['lyrics-roman', song?.file, lyrics?.synced, lyrics?.plain],
+    queryKey: ['lyrics-roman', song?.file, lyricsHash],
     queryFn: async () => {
       const [s, p] = await Promise.all([
         lyrics?.synced ? api.romanize(lyrics.synced, true).then((r) => r.text) : null,

@@ -5,6 +5,7 @@ export interface SortColumn<TKey extends string> {
   key: TKey
   label: string
   align?: 'left' | 'right'
+  hideOnMobile?: boolean
 }
 
 export default function SortableHeader<TKey extends string>({
@@ -30,7 +31,7 @@ export default function SortableHeader<TKey extends string>({
           onClick={() => onSort(col.key)}
           className={`hover:text-zinc-300 transition-colors select-none flex items-center gap-1 cursor-pointer ${
             col.align === 'right' ? 'justify-end text-right' : ''
-          }`}
+          }${col.hideOnMobile ? ' hidden sm:flex' : ''}`}
         >
           {col.label}{' '}
           <span className="text-orange-400 text-[10px]">{sort === col.key ? (dir === 'asc' ? '▲' : '▼') : ''}</span>

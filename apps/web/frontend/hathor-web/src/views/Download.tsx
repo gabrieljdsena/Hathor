@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type VideoHit } from '../api/client'
+import { api, type DownloadJob, type VideoHit } from '../api/client'
 import Icon from '../components/ui/icons'
 import Modal from '../components/ui/Modal'
 import { formatDuration } from '../lyrics'
@@ -22,7 +22,15 @@ export default function Download() {
   const { data: jobs } = useQuery({
     queryKey: ['download-jobs'],
     queryFn: () => api.downloadJobs(8),
-    refetchInterval: 2500,
+    // Poll only while something is in flight — an idle Download page
+    // issues zero requests instead of one every 2.5s forever.
+    refetchInterval: (query) => {
+      const list = (query.state.data ?? []) as DownloadJob[]
+      const active = list.some(
+        (j) => j.status !== 'completed' && j.status !== 'failed' && j.status !== 'cancelled',
+      )
+      return active ? 2500 : false
+    },
   })
 
   useEffect(() => {

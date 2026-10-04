@@ -75,6 +75,15 @@ describe('SongRow', () => {
     expect(screen.getByText('Artist').tagName).toBe('BUTTON')
     expect(screen.getByText('Album').tagName).toBe('BUTTON')
   })
+
+  it('shows the formatted added date, or a dash without one', () => {
+    const { rerender } = render(
+      <SongRow song={{ ...song, dateDownload: '2026-10-04T12:00:00Z' }} active={false} onPlay={() => {}} />,
+    )
+    expect(screen.getByText(/2026/)).toBeInTheDocument()
+    rerender(<SongRow song={{ ...song, dateDownload: null }} active={false} onPlay={() => {}} />)
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
 })
 
 describe('TagPills', () => {  const tags = [

@@ -119,7 +119,8 @@ describe('StripCard context menu', () => {
   })
 })
 
-describe('menu bus (single open menu)', () => {  it('a new claim closes the previous menu', () => {
+describe('menu bus (single open menu)', () => {
+  it('a new claim closes the previous menu', () => {
     const seen: Array<string | null> = []
     const unsub = subscribeMenu((id) => seen.push(id))
     claimMenu('a')
@@ -244,5 +245,44 @@ describe('Remove from playlist', () => {
     expect(row).not.toBeNull()
     fireEvent.contextMenu(row!, { clientX: 100, clientY: 200 })
     expect(screen.queryByText('Remove from playlist')).not.toBeInTheDocument()
+  })
+})
+
+describe('LibraryTable Added column', () => {
+  const dated: Song[] = [
+    { ...songs[0], file: 'new.mp3', title: 'New Song', dateDownload: '2026-10-04T12:00:00Z' },
+    { ...songs[0], file: 'old.mp3', title: 'Old Song', dateDownload: '2024-05-01T12:00:00Z' },
+  ]
+
+  function renderDated() {
+    const client = new QueryClient()
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LibraryTable songs={dated} isLoading={false} source={{ type: 'all_songs', id: null }} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+  }
+
+  function visibleTitles() {
+    return screen
+      .getAllByText(/^(New Song|Old Song)$/)
+      .map((el) => el.textContent)
+  }
+
+  it('shows the Added header and sorts oldest-first on click', () => {
+    renderDated()
+    expect(visibleTitles()).toEqual(['New Song', 'Old Song'])
+    fireEvent.click(screen.getByText('Added'))
+    expect(visibleTitles()).toEqual(['Old Song', 'New Song'])
+  })
+
+  it('toggles to newest-first on second click', () => {
+    renderDated()
+    const header = screen.getByText('Added')
+    fireEvent.click(header)
+    fireEvent.click(header)
+    expect(visibleTitles()).toEqual(['New Song', 'Old Song'])
   })
 })

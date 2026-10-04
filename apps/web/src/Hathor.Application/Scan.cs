@@ -26,12 +26,16 @@ public sealed class ScanSongsHandler(
             var row = await records.GetAsync(cmd.UserId, file, ct);
             if (row is null)
             {
-                await records.EnsureAsync(cmd.UserId, file, meta.Title, ct);
+                await records.UpsertMetadataAsync(cmd.UserId, file, meta.Title, meta.Artist,
+                    meta.Album, meta.Year, meta.Genre, meta.Duration, ct);
                 added++;
             }
-            else if (row.Title != meta.Title || row.Artist != meta.Artist)
+            else if (row.Title != meta.Title || row.Artist != meta.Artist ||
+                row.Album != meta.Album || row.Year != meta.Year ||
+                row.Genre != meta.Genre || row.DurationSecs != meta.Duration)
             {
-                await records.UpdateTitleArtistAsync(cmd.UserId, file, meta.Title, meta.Artist, ct);
+                await records.UpsertMetadataAsync(cmd.UserId, file, meta.Title, meta.Artist,
+                    meta.Album, meta.Year, meta.Genre, meta.Duration, ct);
                 updated++;
             }
         }

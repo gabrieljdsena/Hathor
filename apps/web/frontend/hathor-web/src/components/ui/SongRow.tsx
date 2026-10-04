@@ -3,10 +3,18 @@ import type { Song } from '../../api/client'
 import { formatTime } from '../../store/player'
 import CoverArt from './CoverArt'
 
-// Standard 4-column song row (desktop table pattern): title+artist / album /
-// duration + trailing actions slot (⋮ menu lands here in Phase 2).
-// Active (playing) row gets the orange ring; click plays the song.
-export const SONG_ROW_GRID = 'grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_auto]'
+// Standard song row (desktop table pattern): title+artist / album /
+// duration / date added + trailing actions slot. The date column hides on
+// narrow screens (grid drops to 4 columns to match).
+export const SONG_ROW_GRID =
+  'grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_auto] sm:grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_150px_auto]'
+
+export function formatAddedDate(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 export function VisualizerBars() {
   return (
@@ -88,6 +96,9 @@ export default function SongRow({
         <div className="text-sm text-zinc-400 truncate">{song.album}</div>
       )}
       <div className="text-sm text-zinc-500 text-right font-mono">{formatTime(song.duration)}</div>
+      <div className="hidden sm:block text-sm text-zinc-500 text-right truncate">
+        {formatAddedDate(song.dateDownload)}
+      </div>
       <div className="flex justify-end items-center gap-0.5 min-w-8">{actions}</div>
     </div>
   )
