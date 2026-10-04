@@ -104,4 +104,27 @@ describe('Discover view', () => {
     expect(screen.getByText('Refreshing…')).toBeDisabled()
     expect(calls.some((c) => String(c.input).endsWith('/discover/refresh'))).toBe(true)
   })
+
+  it('opens a YouTube preview for a suggestion', async () => {
+    stubFetch((input) =>
+      String(input).includes('/youtube/search')
+        ? [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
+        : payload,
+    )
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
+    const frame = await screen.findByTitle('YouTube video player')
+    expect(frame.getAttribute('src')).toBe('https://www.youtube.com/embed/vid123?autoplay=1')
+  })
+
+  it('shows a notice when no preview exists', async () => {
+    stubFetch((input) => (String(input).includes('/youtube/search') ? [] : payload))
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
+    expect(await screen.findByText('No YouTube preview found for Midnight City.')).toBeInTheDocument()
+  })
 })
