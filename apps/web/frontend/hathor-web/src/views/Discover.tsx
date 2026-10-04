@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type DiscoverItem } from '../api/client'
 import CoverArt from '../components/ui/CoverArt'
+import ConfirmModal from '../components/ui/ConfirmModal'
 import Icon from '../components/ui/icons'
 import Modal from '../components/ui/Modal'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
@@ -109,6 +110,8 @@ export default function Discover() {
   // Sync ref mirror of pending: state updates batch, so two clicks in one
   // tick would both submit without this guard.
   const pendingRef = useRef<Set<string>>(new Set())
+  // Pending already-owned confirm.
+  const [confirm, setConfirm] = useState<DiscoverItem | null>(null)
   const [previewing, setPreviewing] = useState<ReadonlySet<string>>(new Set())
   const [preview, setPreview] = useState<{ id: string; title: string; artist: string } | null>(null)
   const debounced = useDebouncedValue(search)
@@ -157,11 +160,8 @@ export default function Discover() {
     }
   }
 
-  const download = async (item: DiscoverItem) => {
+  const requestDownload = async (item: DiscoverItem) => {
     const key = `${item.title} — ${item.artist}`
-    if (pendingRef.current.has(key)) return
-    pendingRef.current.add(key)
-    setPending((prev) => new Set(prev).add(key))
     try {
       await api.submitDownload(`${item.title} ${item.artist} audio`, item.title, item.artist, false)
       setNotice(`Download queued: ${item.title}`)
@@ -176,6 +176,33 @@ export default function Discover() {
         return next
       })
     }
+  }
+
+  // Ownership guard: owned titles ask first instead of silently producing
+  // "Title (1).mp3" twins.
+  const download = async (item: DiscoverItem) => {
+    const key = `${item.title} — ${item.artist}`
+    if (pendingRef.current.has(key)) return
+    pendingRef.current.add(key)
+    setPending((prev) => new Set(prev).add(key))
+    const check = await api.checkDownload(item.title, item.artist).catch(() => null)
+    if (check?.owned) {
+      setConfirm(item)
+      return
+    }
+    await requestDownload(item)
+  }
+
+  const cancelConfirm = () => {
+    if (!confirm) return
+    const key = `${confirm.title} — ${confirm.artist}`
+    setConfirm(null)
+    pendingRef.current.delete(key)
+    setPending((prev) => {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
   }
 
   const items = (data?.items ?? []).filter(
@@ -306,6 +333,24 @@ export default function Discover() {
           </div>
         )}
       </Modal>
+
+      <ConfirmModal
+        open={confirm !== null}
+        onCancel={cancelConfirm}
+        onConfirm={() => {
+          if (!confirm) return
+          const item = confirm
+          setConfirm(null)
+          void requestDownload(item)
+        }}
+        title="Already in your library"
+        message={
+          confirm
+            ? `"${confirm.title}" by ${confirm.artist} is already in your library. Download it again anyway?`
+            : ''
+        }
+        confirmLabel="Download anyway"
+      />
     </div>
   )
 }

@@ -141,6 +141,9 @@ public sealed record ITunesHitDto(
     string Genre,
     string ArtworkUrl);
 
+// Download ownership pre-check (already-in-library confirm).
+public sealed record OwnedCheckDto(bool Owned, string? File);
+
 // lrclib candidates (desktop search_lyrics suggestions, max 10 deduped).
 public sealed record LyricsHitDto(
     long Id,

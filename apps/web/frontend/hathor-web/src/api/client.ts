@@ -439,6 +439,11 @@ export const api = {
   // ingest
   youtubeSearch: (q: string, limit = 5) =>
     request<VideoHit[]>(`/youtube/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  // Already-in-library pre-check (normalized title+artist, live files only).
+  checkDownload: (title: string, artist: string | null) =>
+    request<{ owned: boolean; file: string | null }>(
+      `/downloads/check?title=${encodeURIComponent(title)}${artist ? `&artist=${encodeURIComponent(artist)}` : ''}`,
+    ),
   submitDownload: (url: string, title: string, artist: string | null, isPodcast: boolean) =>
     request<{ qid: string }>('/downloads', {
       method: 'POST',

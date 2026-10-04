@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type DownloadJob, type VideoHit } from '../api/client'
 import Icon from '../components/ui/icons'
+import ConfirmModal from '../components/ui/ConfirmModal'
 import Modal from '../components/ui/Modal'
 import { formatDuration } from '../lyrics'
 
@@ -18,6 +19,13 @@ export default function Download() {
   // In-flight submit URLs: blocks double-click double-submits, which the
   // backend would otherwise persist as twin jobs ("Title (1).mp3").
   const [busyUrls, setBusyUrls] = useState<ReadonlySet<string>>(new Set())
+  // Pending already-owned confirm (url/title/artist + owned filename).
+  const [confirm, setConfirm] = useState<{
+    url: string
+    title: string
+    artist: string | null
+    file: string | null
+  } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
@@ -56,9 +64,7 @@ export default function Download() {
     }
   }
 
-  const download = async (url: string, title: string) => {
-    if (busyUrls.has(url)) return
-    setBusyUrls((prev) => new Set(prev).add(url))
+  const requestDownload = async (url: string, title: string) => {
     try {
       await api.submitDownload(url, title, null, isPodcast)
       setNotice(isPodcast ? `Podcast queued: ${title}` : `Download queued: ${title}`)
@@ -66,6 +72,31 @@ export default function Download() {
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Download failed.')
     } finally {
+      setBusyUrls((prev) => {
+        const next = new Set(prev)
+        next.delete(url)
+        return next
+      })
+    }
+  }
+
+  // Ownership guard: titles matching the live library ask first instead of
+  // silently producing "Title (1).mp3" twins.
+  const download = async (url: string, title: string, artist: string | null) => {
+    if (busyUrls.has(url)) return
+    setBusyUrls((prev) => new Set(prev).add(url))
+    const check = await api.checkDownload(title, artist).catch(() => null)
+    if (check?.owned) {
+      setConfirm({ url, title, artist, file: check.file })
+      return
+    }
+    await requestDownload(url, title)
+  }
+
+  const cancelConfirm = () => {
+    if (confirm) {
+      const url = confirm.url
+      setConfirm(null)
       setBusyUrls((prev) => {
         const next = new Set(prev)
         next.delete(url)
@@ -144,7 +175,7 @@ export default function Download() {
           </button>
           {isUrl && (
             <button
-              onClick={() => void download(query.trim(), query.trim())}
+              onClick={() => void download(query.trim(), query.trim(), null)}
               className="flex-1 rounded-2xl font-semibold text-orange-400 text-lg py-4 transition-all duration-300 active:scale-[0.98] hover:-translate-y-1 bg-white/[0.06] border border-orange-500/30 hover:border-orange-500 flex items-center justify-center gap-3 cursor-pointer whitespace-nowrap"
             >
               <Icon name="download" className="w-5 h-5" />
@@ -217,7 +248,7 @@ export default function Download() {
 
         <div className="mt-8 w-full flex flex-col gap-3 pb-6">
           {(results ?? []).map((r) => (
-            <ResultRow key={r.id} hit={r} busy={busyUrls.has(`https://www.youtube.com/watch?v=${r.id}`)} onDownload={() => void download(`https://www.youtube.com/watch?v=${r.id}`, r.title)} onPreview={() => setPreviewId(r.id)} />
+            <ResultRow key={r.id} hit={r} busy={busyUrls.has(`https://www.youtube.com/watch?v=${r.id}`)} onDownload={() => void download(`https://www.youtube.com/watch?v=${r.id}`, r.title, r.uploader)} onPreview={() => setPreviewId(r.id)} />
           ))}
         </div>
 
@@ -237,6 +268,24 @@ export default function Download() {
           </div>
         )}
       </Modal>
+
+      <ConfirmModal
+        open={confirm !== null}
+        onCancel={cancelConfirm}
+        onConfirm={() => {
+          if (!confirm) return
+          const { url, title } = confirm
+          setConfirm(null)
+          void requestDownload(url, title)
+        }}
+        title="Already in your library"
+        message={
+          confirm
+            ? `"${confirm.title}" is already in your library${confirm.file ? ` (${confirm.file})` : ''}. Download it again anyway?`
+            : ''
+        }
+        confirmLabel="Download anyway"
+      />
     </div>
   )
 }
