@@ -68,7 +68,7 @@ share this wire shape and these rules.
   "LlmEnabled": true,
   "Endpoint": "http://localhost:1234/v1",
   "Model": "qwen3.5-4b-uncensored",
-  "LlmTimeoutSec": 30,
+  "LlmTimeoutSec": 90,
   "LlmMaxTokens": 1000
 }
 ```

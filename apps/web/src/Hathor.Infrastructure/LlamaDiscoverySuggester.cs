@@ -16,7 +16,7 @@ public sealed class DiscoveryLlmOptions
     public bool LlmEnabled { get; set; } = true;
     public string Endpoint { get; set; } = "http://localhost:1234/v1";
     public string Model { get; set; } = "qwen3.5-4b-uncensored";
-    public int LlmTimeoutSec { get; set; } = 30;
+    public int LlmTimeoutSec { get; set; } = 90;
     public int LlmMaxTokens { get; set; } = 1000;
 }
 

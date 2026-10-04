@@ -53,7 +53,8 @@ public sealed class DapperDiscoverTasteReadModel(
     public async Task<IReadOnlyList<(string Title, string Artist)>> GetActiveDownloadPairsAsync(
         Guid userId, CancellationToken ct = default)
     {
-        var t = factory.Quote("DownloadJobs");
+        // EF maps DownloadJob to Download_Queue (desktop table name) — not "DownloadJobs".
+        var t = factory.Quote("Download_Queue");
         var sql = $"SELECT {factory.Quote("Title")}, {factory.Quote("Artist")} FROM {t} " +
             $"WHERE {factory.UserIdPredicate()} " +
             $"AND {factory.Quote("Status")} IN ('queued', 'downloading', 'processing')";
