@@ -47,10 +47,14 @@ share this wire shape and these rules.
 1. **Taste profile** = top artists by `Music_History` play counts joined to
    `Songs` for artist names (`Unknown`/blank excluded). Same ranking query
    family as the Daily Mix (`GROUP BY … ORDER BY cnt DESC`).
-2. **Never recommend the owned library**: drop candidates fuzzy-matching any
+2. **Never recommend the owned library**: drop candidates matching any
    `Songs` title+artist pair, and anything in-flight in the download queue
-   (`queued`/`downloading`/`processing`). Normalization: lowercase, trim,
-   strip `(…)`/`[…]` segments, collapse whitespace.
+   (`queued`/`downloading`/`processing`). Normalization: lowercase, strip
+   `(…)`/`[…]` segments, strip `feat.`/`featuring` tails and ` - <edition>`
+   suffixes (`Single`, `Remastered…`, `Live…`), drop punctuation, collapse
+   whitespace. The same key also dedupes **within one response**, so a song
+   suggested by two sources (artist expansion + chart + LLM) appears once —
+   first occurrence wins.
 3. **Diversity cap**: max 2 items per artist, max 30 items total.
 4. **Empty history** still returns chart picks (never 500, never empty-shaped:
    `{date, items, cached}` always).

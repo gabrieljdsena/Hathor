@@ -40,6 +40,64 @@ public sealed class DiscoverRankerTests
     }
 
     [Fact]
+    public void Rank_DedupesSameSong_FromTwoSources()
+    {
+        var taste = new List<(string, long)> { ("M83", 7) };
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Midnight City", "M83", DiscoverSources.Artist),
+            Cand("Midnight City", "M83", DiscoverSources.Chart),
+            Cand("Midnight City", "M83", DiscoverSources.Llm),
+        };
+
+        var ranked = DiscoverRanker.Rank(taste, candidates, [], []);
+
+        ranked.Should().HaveCount(1);
+        ranked[0].Source.Should().Be(DiscoverSources.Artist);
+    }
+
+    [Theory]
+    [InlineData("Midnight City - Single", "Midnight City")]
+    [InlineData("Song - Remastered 2015", "Song")]
+    [InlineData("Don't Stop Believin'", "Dont Stop Believin")]
+    [InlineData("Song feat. Guest", "Song")]
+    [InlineData("Song featuring Guest", "Song")]
+    [InlineData("R&B Nights", "RB Nights")]
+    public void Rank_DropsOwnedLibrary_AcrossTitleVariants(string candidate, string owned)
+    {
+        var taste = new List<(string, long)> { ("A", 5) };
+        var candidates = new List<DiscoverCandidate> { Cand(candidate, "A") };
+        var library = new List<(string, string)> { (owned, "A") };
+
+        DiscoverRanker.Rank(taste, candidates, library, []).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Rank_KeepsDistinctTitles_Apart()
+    {
+        var taste = new List<(string, long)> { ("A", 5), ("B", 4), ("C", 3) };
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Time", "A"),
+            Cand("Times", "B"),
+            Cand("Song 2", "C"),
+        };
+
+        DiscoverRanker.Rank(taste, candidates, [], []).Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void Rank_DoesNotStripBareFt_WithoutDot()
+    {
+        // "50 Ft Queenie" must survive: only feat./ft./featuring collapse.
+        var taste = new List<(string, long)> { ("PJ Harvey", 5) };
+        var candidates = new List<DiscoverCandidate> { Cand("50 Ft Queenie", "PJ Harvey") };
+        var library = new List<(string, string)> { ("50 Queenie", "PJ Harvey") };
+
+        DiscoverRanker.Rank(taste, candidates, library, []).Should().HaveCount(1);
+    }
+
+    [Fact]
     public void Rank_DropsInFlightDownloads()
     {
         var taste = new List<(string, long)> { ("M83", 7) };
