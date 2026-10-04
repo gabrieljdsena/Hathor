@@ -1,52 +1,91 @@
-# AndroidPlayer — Phase 1 (engine-proving APK)
+# Hathor — Android app
 
-Native Kotlin app. Phase 1 goal: **prove a real YouTube → MP3 download on-device**
-using `youtubedl-android` (real yt-dlp) + its bundled `:ffmpeg` artifact. No sync,
-no playlists yet — those land only after this APK produces an actual `.mp3`.
+> Part of the [Hathor monorepo](../../README.md) (`apps/mobile`). Desktop: `../desktop/`, web: `../web/`.
 
-## What was scaffolded
+Native Android client for Hathor: the same music library, downloads, playlists,
+history and sync as the desktop app, rebuilt with Kotlin, Jetpack Compose and
+Media3. The visual system matches desktop and web — near-black `zinc-950`
+background, glass surfaces, orange accent.
 
-- `settings.gradle.kts` / `build.gradle.kts` / `gradle.properties`
-- `gradle/libs.versions.toml` — `youtubedlAndroid = "0.18.1"`
-  (`io.github.junkfood02.youtubedl-android:library` + `:ffmpeg`, Maven Central —
-  coordinates verified against upstream README + Maven Central)
-- `app/` module: `minSdk 24`, `targetSdk/compileSdk 34`, ABIs `arm64-v8a + x86_64`,
-  `extractNativeLibs=true`, `INTERNET` permission
-- `PlayerApp` — inits `YoutubeDL` + `FFmpeg` once, exposes Ready/Failed state
-- `engine/DownloadEngine` — desktop `Download.py` semantics:
-  `-f bestaudio/best -x --audio-format mp3 -o <app-music-dir>/%(title)s.%(ext)s`,
-  progress + logcat-visible log, returns the real output `File` (size > 0 = pass)
-- `MainActivity` — one-screen test: paste URL → Download → progress bar → OK/FAILED + log
+## What it does
 
-Output goes to the app-specific Music dir (`getExternalFilesDir(MUSIC)/AndroidPlayer`),
-so no storage permission / SAF is needed for Phase 1. (SAF picker = Phase 3.)
+- **Library** — Home dashboard, All Songs list with search and sort, Daily Mix,
+  artist/album views, per-song menu (play, queue, edit, playlists, delete)
+- **Playback** — foreground `PlayerService` (media-playback type) with queue,
+  shuffle/repeat and a Now Playing sheet; audio previews via `PreviewPlayer`
+- **YouTube downloads** — on-device YouTube → 320kbps MP3 using the real yt-dlp
+  engine (`youtubedl-android` + its bundled FFmpeg), with a job list showing
+  per-download progress, retry and cancel
+- **Podcasts** — separate podcast library with its own storage folder
+- **Playlists & history** — playlist CRUD, played/download history tabs
+- **Remote sync** — pulls the library from the same MySQL/TiDB database the
+  desktop app pushes to, so the phone mirrors the PC collection
 
-## How to build (this machine has no Android SDK yet)
+## Requirements
 
-This PC currently has: Java 17 ✓, Android SDK ✗, Android Studio ✗, Gradle ✗.
+- **Android Studio** (brings the Android SDK + Gradle) — or a standalone
+  SDK with `sdk.dir` set (see below)
+- Java 17, Android SDK platform 34
+- A physical arm64 phone or an x86_64 emulator (`minSdk 24`, ABIs
+  `arm64-v8a` + `x86_64`)
+- No storage permission needed: files live in the app-specific Music
+  directory
 
-1. Install **Android Studio** (it brings the SDK + Gradle automatically):
-   https://developer.android.com/studio
-2. Open this folder (`C:\Users\gabriel\Desktop\idk\AndroidPlayer`) in Android Studio.
-3. Let it sync Gradle, then **Run ▶** on a phone (arm64) or emulator (x86_64).
-4. Paste your known-good test URL, tap **Download as MP3**.
-5. **Pass =** `OK: …/AndroidPlayer/<title>.mp3 (<N> bytes)`. The file is playable
-   from the device's file manager / Studio Device Explorer.
+## Run it
 
-## Still needed from you
+1. Open this folder (`apps/mobile`) in Android Studio and let Gradle sync.
+2. Create a `local.properties` file next to `settings.gradle.kts` (never
+   committed — see `.gitignore`):
 
-- ~~The **one known-good YouTube test URL**~~ — provided, pre-filled in the app.
-- **Phase 2 (Sync tab) needs your remote DB fields.** Add to `local.properties`
-  (same values as your desktop `.env`, never committed):
-  ```
-  sdk.dir=C:\\Android\\Sdk
-  DB_HOST=<your tidb/mysql host>
-  DB_PORT=4000
-  DB_USER=<user>
-  DB_PASSWORD=<password>
-  DB_NAME=<database>
-  ```
-  Then rebuild + reinstall. Empty `DB_HOST` = sync shows the same
-  "No remote DB configured" message as desktop. Tap **Sync from remote DB**:
-  pass = real song count appears, missing files download with per-song status,
-  summary reads `Synced N new entries… OK: x, failed: y`.
+   ```properties
+   sdk.dir=C:\\Android\\Sdk
+   DB_HOST=<your tidb/mysql host>
+   DB_PORT=4000
+   DB_USER=<user>
+   DB_PASSWORD=<password>
+   DB_NAME=<database>
+   ```
+
+   Same values as the desktop `.env`. Leaving `DB_HOST` empty disables sync —
+   the app runs fully offline with local downloads and playback.
+3. **Run ▶** on a phone or emulator.
+
+## Project structure
+
+```text
+apps/mobile/
+  settings.gradle.kts / build.gradle.kts / gradle.properties
+  gradle/libs.versions.toml          dependency catalog
+  app/
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.3.0-hathor
+    src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
+    src/main/java/com/musicplayer/android/
+      MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
+      engine/DownloadEngine.kt       YouTube → MP3 download engine (yt-dlp options mirror desktop Download.py)
+      playback/                      PlayerService, PlayerManager, PlaybackSource, PreviewPlayer
+      ui/                            Compose screens: Home, Library/AllSongs, DailyMix, Download,
+                                     Podcasts, Playlists, History, Settings, NowPlayingSheet,
+                                     SongRow, VisualizerBars
+      ui/shell/HathorShell.kt        navigation rail + destinations (Home, Download, Podcasts,
+                                     Playlists, History, Settings; All Songs / Daily Mix under Home)
+      ui/theme/                      Hathor colors, typography, motion (desktop visual tokens)
+```
+
+## How sync works
+
+The app talks directly to the remote MySQL/TiDB database (Connector/J) using
+the same table and column names as the desktop `database.sql`, and keeps a
+local Room copy for offline use. Background sync is scheduled with WorkManager.
+Credentials are baked in from `local.properties` at build time via
+`BuildConfig` fields — they never appear in source. Tombstone deletions,
+incremental history and newest-wins mixes follow `packages/contracts`
+(`../../packages/contracts/`).
+
+## Current status
+
+The Compose UI, navigation shell, theme, download engine and playback service
+are in the repo. The `data` package (Room database, repositories, sync
+workers referenced by the screens) has not landed yet, so the project does
+not compile on a fresh checkout — that layer is the next piece to push.
+`PLAN.md` and `FEATURE_PLAN.md` in this folder are the original build plans
+kept for reference; this README describes the app itself.
