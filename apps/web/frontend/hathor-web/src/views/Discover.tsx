@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type DiscoverItem } from '../api/client'
 import CoverArt from '../components/ui/CoverArt'
 import Icon from '../components/ui/icons'
+import Modal from '../components/ui/Modal'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
@@ -38,11 +39,15 @@ function matches(item: DiscoverItem, query: string) {
 function DiscoverCard({
   item,
   pending,
+  previewPending,
   onDownload,
+  onPreview,
 }: {
   item: DiscoverItem
   pending: boolean
+  previewPending: boolean
   onDownload: () => void
+  onPreview: () => void
 }) {
   return (
     <div className="group relative rounded-2xl overflow-hidden bg-zinc-900/40 border border-white/5 hover:border-orange-500/40 transition-all duration-300">
@@ -61,6 +66,15 @@ function DiscoverCard({
             {SOURCE_LABEL[item.source] ?? item.source}
           </span>
         </div>
+        <button
+          onClick={onPreview}
+          disabled={previewPending}
+          title={previewPending ? 'Finding preview…' : `Preview ${item.title} on YouTube`}
+          aria-label={`Preview ${item.title} by ${item.artist}`}
+          className="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 hover:bg-orange-500 disabled:bg-zinc-700 flex items-center justify-center text-white backdrop-blur-md transition-all duration-300 cursor-pointer disabled:cursor-default"
+        >
+          <Icon name="play" className="w-4 h-4 ml-0.5" />
+        </button>
         <button
           onClick={onDownload}
           disabled={pending}
@@ -92,6 +106,8 @@ export default function Discover() {
   const [notice, setNotice] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
+  const [previewing, setPreviewing] = useState<ReadonlySet<string>>(new Set())
+  const [preview, setPreview] = useState<{ id: string; title: string; artist: string } | null>(null)
   const debounced = useDebouncedValue(search)
 
   useEffect(() => {
@@ -114,6 +130,28 @@ export default function Discover() {
       .finally(() => {
         setRefreshing(false)
       })
+  }
+
+  const previewItem = async (item: DiscoverItem) => {
+    const key = `${item.title} — ${item.artist}`
+    setPreviewing((prev) => new Set(prev).add(key))
+    try {
+      const hits = await api.youtubeSearch(`${item.title} ${item.artist}`, 1)
+      const hit = hits[0]
+      if (!hit) {
+        setNotice(`No YouTube preview found for ${item.title}.`)
+        return
+      }
+      setPreview({ id: hit.id, title: item.title, artist: item.artist })
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Preview failed.')
+    } finally {
+      setPreviewing((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }
   }
 
   const download = async (item: DiscoverItem) => {
@@ -235,12 +273,33 @@ export default function Discover() {
                 key={`${item.title} — ${item.artist}`}
                 item={item}
                 pending={pending.has(`${item.title} — ${item.artist}`)}
+                previewPending={previewing.has(`${item.title} — ${item.artist}`)}
                 onDownload={() => void download(item)}
+                onPreview={() => void previewItem(item)}
               />
             ))}
           </div>
         </div>
       )}
+
+      <Modal
+        open={preview !== null}
+        onClose={() => setPreview(null)}
+        title={preview ? `Preview: ${preview.title}` : 'Preview'}
+        wide
+      >
+        {preview && (
+          <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+            <iframe
+              className="absolute top-0 left-0 w-full h-full rounded-lg"
+              src={`https://www.youtube.com/embed/${preview.id}?autoplay=1`}
+              title="YouTube video player"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
