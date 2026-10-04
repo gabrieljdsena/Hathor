@@ -17,6 +17,7 @@ public sealed class DiscoveryLlmOptions
     public string Endpoint { get; set; } = "http://localhost:1234/v1";
     public string Model { get; set; } = "qwen3.5-4b-uncensored";
     public int LlmTimeoutSec { get; set; } = 30;
+    public int LlmMaxTokens { get; set; } = 1000;
 }
 
 public sealed class LlamaDiscoverySuggester(
@@ -49,7 +50,13 @@ public sealed class LlamaDiscoverySuggester(
                 model = options.Model,
                 temperature = 0.7,
                 stream = false,
+                max_tokens = Math.Clamp(options.LlmMaxTokens, 100, 4000),
                 response_format = new { type = "json_object" },
+                // Reasoning models (Qwen3 hybrids) spend the whole budget on
+                // thinking traces and return empty content — verified live
+                // against llama-server. Disable thinking per request; the
+                // server flag alone does not suppress it.
+                chat_template_kwargs = new { enable_thinking = false },
                 messages = new object[]
                 {
                     new
