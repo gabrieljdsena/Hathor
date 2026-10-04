@@ -31,6 +31,15 @@ public sealed class DiscoverServiceTests
         return (t, Substitute.For<IITunesClient>());
     }
 
+    private static IDiscoverySuggester NoLlm()
+    {
+        var s = Substitute.For<IDiscoverySuggester>();
+        s.SuggestAsync(Arg.Any<IReadOnlyList<(string Artist, long Plays)>>(),
+                Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        return s;
+    }
+
     [Fact]
     public async Task GetAsync_ExpandsTopArtists_FilteringOtherArtists()
     {
@@ -44,7 +53,7 @@ public sealed class DiscoverServiceTests
         itunes.GetTrendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns([]);
 
-        var dto = await new DiscoverService(taste, itunes)
+        var dto = await new DiscoverService(taste, itunes, NoLlm())
             .GetAsync(userId, CancellationToken.None);
 
         dto.Items.Should().HaveCount(1);
@@ -63,7 +72,7 @@ public sealed class DiscoverServiceTests
         itunes.SearchSingleAsync("Chart Song Artist", null, Arg.Any<CancellationToken>())
             .Returns(Hit("Chart Song", "Artist"));
 
-        var dto = await new DiscoverService(taste, itunes)
+        var dto = await new DiscoverService(taste, itunes, NoLlm())
             .GetAsync(userId, CancellationToken.None);
 
         dto.Items.Should().HaveCount(1);
@@ -82,7 +91,7 @@ public sealed class DiscoverServiceTests
         itunes.GetTrendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns([]);
 
-        var dto = await new DiscoverService(taste, itunes)
+        var dto = await new DiscoverService(taste, itunes, NoLlm())
             .GetAsync(userId, CancellationToken.None);
 
         dto.Items.Should().BeEmpty();
@@ -97,7 +106,7 @@ public sealed class DiscoverServiceTests
             .Returns([Hit("Midnight City", "M83")]);
         itunes.GetTrendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns([]);
-        var service = new DiscoverService(taste, itunes);
+        var service = new DiscoverService(taste, itunes, NoLlm());
 
         var first = await service.GetAsync(userId, CancellationToken.None);
         var second = await service.GetAsync(userId, CancellationToken.None);
@@ -107,5 +116,51 @@ public sealed class DiscoverServiceTests
         second.Items.Should().HaveCount(1);
         await itunes.Received(1).SearchTermAsync(
             "M83", Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAsync_LlmSuggestionVerified_AppearsAsLlm()
+    {
+        var userId = NewUserId();
+        var (taste, itunes) = Fakes(userId, [("M83", 7)]);
+        itunes.SearchTermAsync("M83", Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        itunes.GetTrendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        var llm = Substitute.For<IDiscoverySuggester>();
+        llm.SuggestAsync(Arg.Any<IReadOnlyList<(string Artist, long Plays)>>(),
+                Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([("Outro", "M83")]);
+        itunes.SearchSingleAsync("Outro", "M83", Arg.Any<CancellationToken>())
+            .Returns(Hit("Outro", "M83"));
+
+        var dto = await new DiscoverService(taste, itunes, llm)
+            .GetAsync(userId, CancellationToken.None);
+
+        dto.Items.Should().HaveCount(1);
+        dto.Items[0].Source.Should().Be(DiscoverSources.Llm);
+    }
+
+    [Fact]
+    public async Task GetAsync_LlmSuggestionUnverified_IsDropped()
+    {
+        var userId = NewUserId();
+        var (taste, itunes) = Fakes(userId, [("M83", 7)]);
+        itunes.SearchTermAsync("M83", Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        itunes.GetTrendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        var llm = Substitute.For<IDiscoverySuggester>();
+        llm.SuggestAsync(Arg.Any<IReadOnlyList<(string Artist, long Plays)>>(),
+                Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns([("Song That Does Not Exist", "Imaginary Band")]);
+        itunes.SearchSingleAsync(
+                "Song That Does Not Exist", "Imaginary Band", Arg.Any<CancellationToken>())
+            .Returns((ITunesHitDto?)null);
+
+        var dto = await new DiscoverService(taste, itunes, llm)
+            .GetAsync(userId, CancellationToken.None);
+
+        dto.Items.Should().BeEmpty();
     }
 }
