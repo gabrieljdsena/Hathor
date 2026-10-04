@@ -20,6 +20,11 @@ public sealed class DownloadQueueService(
     ILogger<DownloadQueueService> log) : IDownloadQueue, IDisposable
 {
     private readonly SemaphoreSlim _pumpLock = new(1, 1);
+    // Serializes resolve + in-flight check + insert in SubmitAsync: without
+    // it two rapid submits (double-click, retry) both pass the
+    // ActiveByUrlAsync check before either inserts, producing twin jobs
+    // that land as "Title.mp3" + "Title (1).mp3" seconds apart.
+    private readonly SemaphoreSlim _submitLock = new(1, 1);
     private readonly ConcurrentDictionary<string, (Guid UserId, CancellationTokenSource Cts)> _running = new();
     private readonly HashSet<string> _userCancelled = [];
     private readonly object _cancelLock = new();
@@ -39,45 +44,53 @@ public sealed class DownloadQueueService(
 
         var target = url.Trim();
         string resolvedTitle = title;
-        if (!IsDownloadableUrl(target))
+        await _submitLock.WaitAsync(ct);
+        try
         {
-            var query = string.IsNullOrWhiteSpace(target)
-                ? $"{title} {artist} audio".Trim()
-                : target;
-            if (string.IsNullOrWhiteSpace(query))
-                throw new InvalidOperationException("Download failed: empty search or url");
-            var hits = await engine.SearchAsync(query, 1, ct);
-            var hit = hits.FirstOrDefault()
-                ?? throw new InvalidOperationException($"No results found for: {query}");
-            target = $"https://www.youtube.com/watch?v={hit.Id}";
-            if (string.IsNullOrWhiteSpace(resolvedTitle) || resolvedTitle == url)
-                resolvedTitle = hit.Title;
-            artist ??= hit.Uploader;
+            if (!IsDownloadableUrl(target))
+            {
+                var query = string.IsNullOrWhiteSpace(target)
+                    ? $"{title} {artist} audio".Trim()
+                    : target;
+                if (string.IsNullOrWhiteSpace(query))
+                    throw new InvalidOperationException("Download failed: empty search or url");
+                var hits = await engine.SearchAsync(query, 1, ct);
+                var hit = hits.FirstOrDefault()
+                    ?? throw new InvalidOperationException($"No results found for: {query}");
+                target = $"https://www.youtube.com/watch?v={hit.Id}";
+                if (string.IsNullOrWhiteSpace(resolvedTitle) || resolvedTitle == url)
+                    resolvedTitle = hit.Title;
+                artist ??= hit.Uploader;
+            }
+
+            // Dedupe in-flight URLs; completed jobs do NOT block re-downloads.
+            var existing = await jobs.ActiveByUrlAsync(userId, target, ct);
+            if (existing is not null) return existing.Qid;
+
+            var job = new Domain.Entities.DownloadJob
+            {
+                UserId = userId,
+                Qid = Guid.NewGuid().ToString("N"),
+                Url = target,
+                Title = string.IsNullOrWhiteSpace(resolvedTitle) ? target : resolvedTitle,
+                Artist = artist,
+                Status = "queued",
+                IsPodcast = isPodcast,
+                TargetFile = string.IsNullOrWhiteSpace(targetFile)
+                    ? null
+                    : Path.GetFileName(targetFile.Trim()),
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow,
+            };
+            await jobs.AddAsync(job, ct);
+            await jobs.SaveChangesAsync(ct);
+            Kick();
+            return job.Qid;
         }
-
-        // Dedupe in-flight URLs; completed jobs do NOT block re-downloads.
-        var existing = await jobs.ActiveByUrlAsync(userId, target, ct);
-        if (existing is not null) return existing.Qid;
-
-        var job = new Domain.Entities.DownloadJob
+        finally
         {
-            UserId = userId,
-            Qid = Guid.NewGuid().ToString("N"),
-            Url = target,
-            Title = string.IsNullOrWhiteSpace(resolvedTitle) ? target : resolvedTitle,
-            Artist = artist,
-            Status = "queued",
-            IsPodcast = isPodcast,
-            TargetFile = string.IsNullOrWhiteSpace(targetFile)
-                ? null
-                : Path.GetFileName(targetFile.Trim()),
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow,
-        };
-        await jobs.AddAsync(job, ct);
-        await jobs.SaveChangesAsync(ct);
-        Kick();
-        return job.Qid;
+            _submitLock.Release();
+        }
     }
 
     public async Task<bool> RetryAsync(Guid userId, string qid, CancellationToken ct = default)
@@ -377,6 +390,7 @@ public sealed class DownloadQueueService(
     {
         _disposed = true;
         _pumpLock.Dispose();
+        _submitLock.Dispose();
         foreach (var (_, run) in _running) try { run.Cts.Cancel(); } catch { }
     }
 }

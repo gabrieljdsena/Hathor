@@ -90,6 +90,20 @@ describe('Discover view', () => {
     expect(String(post?.init?.body)).toContain('M83')
   })
 
+  it('ignores a same-tick double click on download', async () => {
+    const calls = stubFetch((input) =>
+      String(input).endsWith('/downloads') ? { qid: 'abc' } : payload,
+    )
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    const button = screen.getByLabelText('Download Midnight City by M83')
+    fireEvent.click(button)
+    fireEvent.click(button)
+    await screen.findByText('Download queued: Midnight City')
+    expect(calls.filter((c) => String(c.input).endsWith('/downloads'))).toHaveLength(1)
+  })
+
   it('refreshes suggestions on demand', async () => {
     const calls = stubFetch((input) =>
       String(input).endsWith('/discover/refresh')
