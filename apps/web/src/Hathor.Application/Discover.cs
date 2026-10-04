@@ -55,25 +55,29 @@ public sealed class DiscoverService(
     {
         var topArtists = await taste.GetTopArtistsAsync(userId, TopArtists, ct);
 
-        var candidates = new List<DiscoverCandidate>();
-        foreach (var (artist, _) in topArtists)
+        // Fan-out in parallel (per-artist expansion + chart resolution):
+        // sequential HTTP was the bulk of endpoint latency.
+        var artistBatches = await Task.WhenAll(topArtists.Select(async a =>
         {
-            var hits = await itunes.SearchTermAsync(artist, PerArtistLimit, ct);
-            candidates.AddRange(hits
-                .Where(h => DiscoverRanker.IsSameArtist(h.Artist, artist))
+            var hits = await itunes.SearchTermAsync(a.Artist, PerArtistLimit, ct);
+            return hits
+                .Where(h => DiscoverRanker.IsSameArtist(h.Artist, a.Artist))
                 .Select(h => new DiscoverCandidate(
                     h.Title, h.Artist, h.Album, h.Year, h.Genre, h.ArtworkUrl,
-                    DiscoverSources.Artist)));
-        }
+                    DiscoverSources.Artist))
+                .ToList();
+        }));
+        var candidates = artistBatches.SelectMany(b => b).ToList();
 
-        foreach (var entry in await itunes.GetTrendingAsync(TrendingLimit, ct))
+        var trending = await itunes.GetTrendingAsync(TrendingLimit, ct);
+        var chartBatches = await Task.WhenAll(trending.Select(async entry =>
         {
             var resolved = await itunes.SearchSingleAsync(entry, null, ct);
-            if (resolved is not null)
-                candidates.Add(new DiscoverCandidate(
-                    resolved.Title, resolved.Artist, resolved.Album, resolved.Year,
-                    resolved.Genre, resolved.ArtworkUrl, DiscoverSources.Chart));
-        }
+            return resolved is null ? null : new DiscoverCandidate(
+                resolved.Title, resolved.Artist, resolved.Album, resolved.Year,
+                resolved.Genre, resolved.ArtworkUrl, DiscoverSources.Chart);
+        }));
+        candidates.AddRange(chartBatches.Where(c => c is not null)!);
 
         // Local-LLM expansion (contract rule 5): suggestions are unverified
         // until iTunes resolves them — hallucinations are dropped here.
