@@ -16,6 +16,10 @@ public interface ISongReadModel
     // Exact-metadata matches, desktop-sorted (artist view: Album+Title, album view: Artist+Title).
     Task<IReadOnlyList<string>> GetArtistsAsync(Guid userId, CancellationToken ct = default);
     Task<IReadOnlyList<SongDto>> GetSongsByArtistAsync(Guid userId, string artist, CancellationToken ct = default);
+    // Owned file for a title/artist pair (normalized MediaKeys match),
+    // or null — drives the "already in your library?" download confirm.
+    Task<string?> FindFileByMetadataAsync(Guid userId, string title, string? artist,
+        CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetAlbumsAsync(Guid userId, CancellationToken ct = default);
     Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(Guid userId, string album, CancellationToken ct = default);
 }

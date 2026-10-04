@@ -141,4 +141,39 @@ describe('Discover view', () => {
     fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
     expect(await screen.findByText('No YouTube preview found for Midnight City.')).toBeInTheDocument()
   })
+
+  it('asks before downloading an owned song, submits on confirm', async () => {
+    const calls = stubFetch((input) => {
+      if (String(input).includes('/downloads/check')) return { owned: true, file: 'Midnight City.mp3' }
+      if (String(input).endsWith('/downloads')) return { qid: 'abc' }
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Already in your library')).toBeInTheDocument()
+    expect(calls.some((c) => String(c.input).endsWith('/downloads'))).toBe(false)
+
+    fireEvent.click(screen.getByText('Download anyway'))
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+    expect(calls.some((c) => String(c.input).endsWith('/downloads'))).toBe(true)
+  })
+
+  it('cancelling the owned-song confirm submits nothing', async () => {
+    const calls = stubFetch((input) => {
+      if (String(input).includes('/downloads/check')) return { owned: true, file: 'Midnight City.mp3' }
+      if (String(input).endsWith('/downloads')) return { qid: 'abc' }
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Already in your library')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Cancel'))
+    expect(calls.some((c) => String(c.input).endsWith('/downloads'))).toBe(false)
+    expect(screen.queryByText('Already in your library')).not.toBeInTheDocument()
+  })
 })

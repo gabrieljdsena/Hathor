@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace Hathor.Domain.Services;
 
 // Out-of-library ranking (packages/contracts/discover.md): pure, no I/O.
@@ -66,10 +64,10 @@ public static partial class DiscoverRanker
             // first occurrence wins, the rest are repeats.
             if (!emitted.Add(Key(c.Title, c.Artist)))
                 continue;
-            perArtist.TryGetValue(Normalize(c.Artist), out var used);
+            perArtist.TryGetValue(MediaKeys.Normalize(c.Artist), out var used);
             if (used >= MaxPerArtist)
                 continue;
-            perArtist[Normalize(c.Artist)] = used + 1;
+            perArtist[MediaKeys.Normalize(c.Artist)] = used + 1;
 
             var aff = affinity.TryGetValue(c.Artist, out var w) ? w : 0.0;
             var score = 0.7 * aff + 0.3 * SourceWeight(c.Source);
@@ -86,7 +84,7 @@ public static partial class DiscoverRanker
     }
 
     public static bool IsSameArtist(string candidateArtist, string tasteArtist) =>
-        Normalize(candidateArtist) == Normalize(tasteArtist);
+        MediaKeys.IsSameArtist(candidateArtist, tasteArtist);
 
     private static double SourceWeight(string source) => source switch
     {
@@ -95,59 +93,7 @@ public static partial class DiscoverRanker
         _ => 0.5,
     };
 
+    // Shared library identity (MediaKeys): variants converge on both sides.
     private static string Key(string title, string artist) =>
-        Normalize(title) + "\u0001" + Normalize(artist);
-
-    // Contract normalization (discover.md rule 2): lowercase, strip
-    // (...) / [...] segments, strip feat./featuring tails and
-    // " - <edition>" suffixes ("Song - Single"), drop punctuation,
-    // collapse space. Applied to both sides, so variants converge.
-    private static string Normalize(string value)
-    {
-        var s = (value ?? "").ToLowerInvariant();
-        s = ParensRegex().Replace(s, "");
-        s = BracketsRegex().Replace(s, "");
-        s = FeaturingRegex().Replace(s, "");
-        while (StripEditionSuffix(ref s)) { }
-        s = JunkCharsRegex().Replace(s, "");
-        return string.Join(' ', s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-    }
-
-    private static readonly string[] EditionPrefixes =
-    [
-        "single", "ep", "remaster", "remastered", "deluxe", "live", "acoustic", "demo",
-        "radio edit", "reprise", "reissue", "expanded", "bonus", "mono",
-        "stereo", "topic", "explicit",
-    ];
-
-    private static bool StripEditionSuffix(ref string s)
-    {
-        var idx = s.LastIndexOf(" - ", StringComparison.Ordinal);
-        if (idx < 0) return false;
-        var tail = s[(idx + 3)..].Trim();
-        foreach (var prefix in EditionPrefixes)
-        {
-            if (tail.Equals(prefix, StringComparison.Ordinal) ||
-                tail.StartsWith(prefix + " ", StringComparison.Ordinal))
-            {
-                s = s[..idx].TrimEnd();
-                return true;
-            }
-        }
-        return false;
-    }
-
-    [GeneratedRegex(@"\([^)]*\)")]
-    private static partial Regex ParensRegex();
-    [GeneratedRegex(@"\[([^\]]*)\]")]
-    private static partial Regex BracketsRegex();
-    // Bare feat tails outside parens ("Song feat. X", "Song featuring Y").
-    // Requires the dot or the full word — "50 Ft Queenie" must survive.
-    // (No trailing \b: after "feat." comes a space, which is no boundary.)
-    [GeneratedRegex(@"\b(feat\.|ft\.|featuring).*$")]
-    private static partial Regex FeaturingRegex();
-    // Punctuation that splits variants ("Don't" vs "Dont", "R&B" vs "RB").
-    // Applied after casing/segments so both sides converge identically.
-    [GeneratedRegex(@"[^a-z0-9 ]")]
-    private static partial Regex JunkCharsRegex();
+        MediaKeys.Key(title, artist);
 }

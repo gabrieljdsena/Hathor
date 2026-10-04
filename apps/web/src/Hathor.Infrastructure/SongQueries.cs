@@ -331,6 +331,27 @@ public sealed class DapperSongReadModel(
             .ToList();
     }
 
+    public async Task<string?> FindFileByMetadataAsync(Guid userId, string title, string? artist,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        var want = MediaKeys.Key(title, artist ?? "");
+        var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
+            $"{factory.Quote("Artist")} FROM {factory.Quote("Songs")} " +
+            $"WHERE {factory.UserIdPredicate()}";
+        using var conn = factory.Create();
+        var rows = await conn.QueryAsync<(string File, string Title, string? Artist)>(
+            new CommandDefinition(sql,
+                new { UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId) },
+                cancellationToken: ct));
+        var live = storage.ListSongFiles(userId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return rows
+            .Where(r => live.Contains(r.File))
+            .Where(r => MediaKeys.Key(r.Title, r.Artist ?? "") == want)
+            .Select(r => r.File)
+            .FirstOrDefault();
+    }
+
     public async Task<IReadOnlyList<string>> GetAlbumsAsync(Guid userId, CancellationToken ct = default)
     {
         var sql = $"SELECT DISTINCT {factory.Quote("Album")} " +

@@ -23,6 +23,14 @@ public sealed class DownloadsController(IMediator mediator) : ControllerBase
     public async Task<ActionResult<int>> ActiveCount(CancellationToken ct) =>
         Ok(await mediator.Send(new ActiveDownloadCountQuery(CurrentUserId()), ct));
 
+    // Ownership pre-check for the "already in your library?" confirm
+    // (normalized title+artist match, live files only).
+    [HttpGet("check")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public async Task<ActionResult<OwnedCheckDto>> Check(
+        [FromQuery] string title, [FromQuery] string? artist, CancellationToken ct) =>
+        Ok(await mediator.Send(new CheckDownloadQuery(CurrentUserId(), title ?? "", artist), ct));
+
     [HttpGet("{qid}")]
     [Authorize(Policy = ScopeAuthorization.DownloadsRead)]
     public async Task<ActionResult<DownloadJobDto>> Get(string qid, CancellationToken ct)
