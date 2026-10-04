@@ -142,7 +142,9 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Application.Ports.IPlaylistReadModel, Library.DapperPlaylistReadModel>();
         services.AddScoped<Application.Ports.IPodcastTagReadModel, Library.DapperPodcastTagReadModel>();
         services.AddScoped<Application.Ports.IHistoryReadModel, Library.DapperHistoryReadModel>();
+        services.AddScoped<Application.Ports.IDiscoverTasteReadModel, Library.DapperDiscoverTasteReadModel>();
         services.AddScoped<Application.Mix.DailyMixService>();
+        services.AddScoped<Application.Discover.DiscoverService>();
         services.AddScoped<Application.Ports.ILibraryStorage>(_ => new Library.LocalLibraryStorage(
             storageRoot,
             config.GetValue("Library:SongsPath", ""),

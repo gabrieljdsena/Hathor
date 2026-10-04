@@ -21,6 +21,7 @@ public sealed class ExternalApiSurfaceTests : IAsyncLifetime
     [Theory]
     [InlineData("/api/v1/songs")]
     [InlineData("/api/v1/songs/count")]
+    [InlineData("/api/v1/discover")]
     [InlineData("/api/v1/player/state")]
     [InlineData("/api/v1/player/now-playing")]
     public async Task ProtectedEndpoints_RequireAuth(string url)
