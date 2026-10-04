@@ -347,3 +347,31 @@ public sealed class EfDailyMixRepository(HathorDbContext db) : IDailyMixReposito
 
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }
+
+public sealed class EfDiscoverCacheRepository(HathorDbContext db) : IDiscoverCacheRepository
+{
+    public Task<DiscoverCache?> GetAsync(Guid userId, string date, CancellationToken ct = default) =>
+        db.DiscoverCaches.FirstOrDefaultAsync(m => m.UserId == userId && m.Date == date, ct);
+
+    public async Task SaveAsync(Guid userId, string date, string itemsJson, CancellationToken ct = default)
+    {
+        var existing = await GetAsync(userId, date, ct);
+        if (existing is null)
+            await db.DiscoverCaches.AddAsync(new DiscoverCache
+            {
+                UserId = userId,
+                Date = date,
+                ItemsJson = itemsJson,
+                CreatedAtUtc = DateTime.UtcNow,
+            }, ct);
+        else
+            existing.ItemsJson = itemsJson;
+    }
+
+    public Task PruneOthersAsync(Guid userId, string today, CancellationToken ct = default) =>
+        db.DiscoverCaches
+            .Where(m => m.UserId == userId && m.Date != today)
+            .ExecuteDeleteAsync(ct);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
+}

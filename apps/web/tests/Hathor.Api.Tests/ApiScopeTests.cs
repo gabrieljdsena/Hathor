@@ -88,6 +88,8 @@ public sealed class ApiScopeTests : IAsyncLifetime
         (await SendAsync(HttpMethod.Patch, "/api/v1/songs/nope.mp3", key, new { Title = "x" }))
             .Should().Be(HttpStatusCode.NotFound);
         (await GetAsync("/api/v1/songs?page=1&pageSize=1", key)).Should().Be(HttpStatusCode.OK);
+        (await SendAsync(HttpMethod.Post, "/api/v1/discover/refresh", key, new { }))
+            .Should().Be(HttpStatusCode.OK);
         (await SendAsync(HttpMethod.Post, "/api/v1/playlists", key, new { Title = "Nope" }))
             .Should().Be(HttpStatusCode.Forbidden);
         (await SendAsync(HttpMethod.Post, "/api/v1/player/next", key, new { }))

@@ -5,8 +5,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Hathor.Infrastructure.Enrichment;
 
-// Local-LLM taste expansion (contract rule 5): asks an Ollama server (or any
-// OpenAI-compatible /v1 endpoint, e.g. llama.cpp server) for songs a fan of
+// Local-LLM taste expansion (contract rule 5): asks the local llama.cpp
+// server (or any OpenAI-compatible /v1 endpoint) for songs a fan of
 // the taste profile would like, in JSON mode. Output is raw title/artist
 // pairs — DiscoverService iTunes-verifies each before display, so
 // hallucinations never reach the user. Any failure (down, timeout, bad
@@ -14,15 +14,15 @@ namespace Hathor.Infrastructure.Enrichment;
 public sealed class DiscoveryLlmOptions
 {
     public bool LlmEnabled { get; set; } = true;
-    public string Endpoint { get; set; } = "http://localhost:11434/v1";
-    public string Model { get; set; } = "";
+    public string Endpoint { get; set; } = "http://localhost:1234/v1";
+    public string Model { get; set; } = "qwen3.5-4b-uncensored";
     public int LlmTimeoutSec { get; set; } = 30;
 }
 
-public sealed class OllamaDiscoverySuggester(
+public sealed class LlamaDiscoverySuggester(
     IHttpClientFactory httpFactory,
     DiscoveryLlmOptions options,
-    ILogger<OllamaDiscoverySuggester> log) : IDiscoverySuggester
+    ILogger<LlamaDiscoverySuggester> log) : IDiscoverySuggester
 {
     public async Task<IReadOnlyList<(string Title, string Artist)>> SuggestAsync(
         IReadOnlyList<(string Artist, long Plays)> taste, int maxSuggestions,

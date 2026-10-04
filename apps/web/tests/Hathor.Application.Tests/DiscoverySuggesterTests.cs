@@ -11,12 +11,12 @@ public sealed class DiscoverySuggesterTests
     private const string ChatJson =
         """{"choices": [{"message": {"content": "{\"suggestions\": [{\"title\": \"Midnight City\", \"artist\": \"M83\"}, {\"title\": \"\", \"artist\": \"Nope\"}, {\"title\": \"Outro\", \"artist\": \"M83\"}]}"}}]}""";
 
-    private static OllamaDiscoverySuggester Suggester(
+    private static LlamaDiscoverySuggester Suggester(
         HttpMessageHandler handler, DiscoveryLlmOptions? options = null) =>
         new(
             FakeFactory(handler),
             options ?? new DiscoveryLlmOptions { Model = "test-model" },
-            Substitute.For<ILogger<OllamaDiscoverySuggester>>());
+            Substitute.For<ILogger<LlamaDiscoverySuggester>>());
 
     private static IHttpClientFactory FakeFactory(HttpMessageHandler handler)
     {
@@ -84,7 +84,7 @@ public sealed class DiscoverySuggesterTests
 
         handler.Seen.Should().NotBeNull();
         handler.Seen!.RequestUri!.ToString().Should().Be(
-            "http://localhost:11434/v1/chat/completions");
+            "http://localhost:1234/v1/chat/completions");
         handler.Seen.Method.Should().Be(HttpMethod.Post);
     }
 
@@ -110,10 +110,10 @@ public sealed class DiscoverySuggesterTests
     public async Task SuggestAsync_Disabled_MakesNoHttpCall()
     {
         var factory = Substitute.For<IHttpClientFactory>();
-        var suggester = new OllamaDiscoverySuggester(
+        var suggester = new LlamaDiscoverySuggester(
             factory,
             new DiscoveryLlmOptions { LlmEnabled = false, Model = "test-model" },
-            Substitute.For<ILogger<OllamaDiscoverySuggester>>());
+            Substitute.For<ILogger<LlamaDiscoverySuggester>>());
 
         var result = await suggester.SuggestAsync([("M83", 7)], 10, CancellationToken.None);
 
@@ -125,10 +125,10 @@ public sealed class DiscoverySuggesterTests
     public async Task SuggestAsync_EmptyModel_MakesNoHttpCall()
     {
         var factory = Substitute.For<IHttpClientFactory>();
-        var suggester = new OllamaDiscoverySuggester(
+        var suggester = new LlamaDiscoverySuggester(
             factory,
             new DiscoveryLlmOptions { Model = "" },
-            Substitute.For<ILogger<OllamaDiscoverySuggester>>());
+            Substitute.For<ILogger<LlamaDiscoverySuggester>>());
 
         var result = await suggester.SuggestAsync([("M83", 7)], 10, CancellationToken.None);
 
@@ -140,10 +140,10 @@ public sealed class DiscoverySuggesterTests
     public async Task SuggestAsync_EmptyTaste_MakesNoHttpCall()
     {
         var factory = Substitute.For<IHttpClientFactory>();
-        var suggester = new OllamaDiscoverySuggester(
+        var suggester = new LlamaDiscoverySuggester(
             factory,
             new DiscoveryLlmOptions { Model = "test-model" },
-            Substitute.For<ILogger<OllamaDiscoverySuggester>>());
+            Substitute.For<ILogger<LlamaDiscoverySuggester>>());
 
         var result = await suggester.SuggestAsync([], 10, CancellationToken.None);
 
