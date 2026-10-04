@@ -326,7 +326,7 @@ public static class InfrastructureServiceExtensions
             var designModel = GetDesignModel(db);
             var modelTables = designModel?.GetEntityTypes()
                     .Select(e => e.GetTableName())
-                    .Where(t => t is not null)
+                    .OfType<string>()
                     .ToHashSet(StringComparer.OrdinalIgnoreCase)
                 ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (!modelTables.Any(existing.Contains)) return; // fresh database

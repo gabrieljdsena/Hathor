@@ -92,6 +92,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   source: null,
   isCustomQueue: false,
   firstPlay: true,
+  queueTotal: 0,
 
   refresh: async () => {
     const state = await api.playerState()

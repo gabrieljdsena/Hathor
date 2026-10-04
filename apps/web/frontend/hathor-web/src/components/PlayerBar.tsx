@@ -32,6 +32,11 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
     return () => clearInterval(id)
   }, [])
 
+  const commitSeek = () => {
+    const slider = sliderRef.current
+    if (slider) void api.seek(Number.parseFloat(slider.value)).catch(() => {})
+  }
+
   return (
     <>
       <span ref={curRef} className="text-xs text-zinc-500 font-medium font-mono">
@@ -45,16 +50,55 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
         step="0.1"
         defaultValue="0"
         onChange={(e) => {
-          const sec = Number.parseFloat(e.target.value)
-          engine.seek(sec) // cancels any fade; server estimate follows
-          void api.seek(sec).catch(() => {})
+          // Live local scrub only (cancels any fade); the server estimate
+          // follows once on release so a drag doesn't fan out seeks.
+          engine.seek(Number.parseFloat(e.target.value))
         }}
+        onPointerUp={commitSeek}
+        onKeyUp={commitSeek}
         className="w-full cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
       />
       <span ref={totRef} className="text-xs text-zinc-500 font-medium font-mono">
         0:00
       </span>
     </>
+  )
+}
+
+// Shared volume slider (mobile + desktop): instant local gain, debounced
+// server confirm so a drag sends one request, not dozens.
+export function VolumeSlider({ volume, className, id }: { volume: number; className: string; id?: string }) {
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(
+    () => () => {
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+    },
+    [],
+  )
+  return (
+    <input
+      type="range"
+      id={id}
+      aria-label="Volume"
+      min="0"
+      max="1"
+      step="0.01"
+      value={volume}
+      onChange={(e) => {
+        const v = Number.parseFloat(e.target.value)
+        engine.setVolume(v) // instant local feedback
+        usePlayer.setState({ volume: v })
+        if (timer.current !== undefined) window.clearTimeout(timer.current)
+        timer.current = window.setTimeout(() => {
+          void api
+            .volume(v)
+            .then((s) => usePlayer.setState({ volume: s.volume }))
+            .catch(() => {})
+        }, 300)
+      }}
+      style={{ '--range-percent': `${Math.round(volume * 100)}%` } as CSSProperties}
+      className={className}
+    />
   )
 }
 
@@ -76,7 +120,17 @@ export default function PlayerBar({
   queueActive?: boolean
   lyricsActive?: boolean
 }) {
-  const state = usePlayer()
+  // Granular subscriptions: the 500ms progress ticker writes store state
+  // elsewhere, so subscribing field-by-field keeps the bar from re-rendering
+  // on every unrelated change (queue edits, position polls).
+  const currentSong = usePlayer((s) => s.currentSong)
+  const isPlaying = usePlayer((s) => s.isPlaying)
+  const volume = usePlayer((s) => s.volume)
+  const shuffle = usePlayer((s) => s.shuffle)
+  const repeat = usePlayer((s) => s.repeat)
+  const source = usePlayer((s) => s.source)
+  const toggle = usePlayer((s) => s.toggle)
+  const boot = usePlayer((s) => s.boot)
   const navigate = useNavigate()
   const songMenuRef = useRef<SongMenuHandle | null>(null)
   const openSongMenu = (x: number, y: number) => songMenuRef.current?.openAt(x, y)
@@ -85,7 +139,7 @@ export default function PlayerBar({
     navigate(`/artists/${encodeURIComponent(artist)}`)
   }
   useEffect(() => {
-    void state.boot().catch(() => {})
+    void boot().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -107,7 +161,7 @@ export default function PlayerBar({
     } catch {
       /* artwork decoding must never break playback */
     }
-  }, [state.currentSong])
+  }, [currentSong])
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
@@ -135,13 +189,13 @@ export default function PlayerBar({
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     try {
-      navigator.mediaSession.playbackState = state.isPlaying ? 'playing' : 'paused'
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
     } catch {
       /* ignore */
     }
-  }, [state.isPlaying])
+  }, [isPlaying])
 
-  const song = state.currentSong
+  const song = currentSong
 
   const doNext = () =>
     void api.next().then((s) => {
@@ -156,7 +210,7 @@ export default function PlayerBar({
   const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
   const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))
   const doMute = () => {
-    if (state.volume > 0) {
+    if (volume > 0) {
       engine.setVolume(0)
       void api.volume(0).then((s) => usePlayer.setState({ volume: s.volume }))
     } else {
@@ -206,7 +260,7 @@ export default function PlayerBar({
         </div>
         <div className="flex items-center justify-center gap-1">
           <ControlButton icon="prev" title="Previous Song" iconClass="w-5 h-5" onClick={doPrev} />
-          <PlayPauseButton playing={state.isPlaying} id="playPauseBtn-mobile" small onClick={() => void state.toggle()} />
+          <PlayPauseButton playing={isPlaying} id="playPauseBtn-mobile" small onClick={() => void toggle()} />
           <ControlButton icon="next" title="Next Song" iconClass="w-5 h-5" onClick={doNext} />
         </div>
         <div className="flex items-center justify-end">
@@ -232,23 +286,12 @@ export default function PlayerBar({
           className="cursor-pointer text-zinc-400 active:text-white transition-colors p-1 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0"
         >
           <Icon
-            name={state.volume === 0 ? 'volumeMuted' : state.volume < 0.5 ? 'volumeLow' : 'volume'}
+            name={volume === 0 ? 'volumeMuted' : volume < 0.5 ? 'volumeLow' : 'volume'}
             className="w-4 h-4"
           />
         </button>
-        <input
-          type="range"
-          aria-label="Volume"
-          min="0"
-          max="1"
-          step="0.01"
-          value={state.volume}
-          onChange={(e) => {
-            const v = Number.parseFloat(e.target.value)
-            engine.setVolume(v)
-            void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
-          }}
-          style={{ '--range-percent': `${Math.round(state.volume * 100)}%` } as CSSProperties}
+        <VolumeSlider
+          volume={volume}
           className="flex-1 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
         />
       </div>
@@ -290,7 +333,7 @@ export default function PlayerBar({
             songMenuRef.current = h
           }}
           song={song}
-          sourceType={state.source?.type ?? 'all_songs'}
+          sourceType={source?.type ?? 'all_songs'}
           hideButton
         />
       )}
@@ -301,17 +344,17 @@ export default function PlayerBar({
           <ControlButton
             icon="repeat"
             title="Toggle Repeat"
-            active={state.repeat}
+            active={repeat}
             iconClass="w-5 h-5"
             onClick={doRepeat}
           />
           <ControlButton icon="prev" title="Previous Song" onClick={doPrev} />
-          <PlayPauseButton playing={state.isPlaying} onClick={() => void state.toggle()} />
+          <PlayPauseButton playing={isPlaying} onClick={() => void toggle()} />
           <ControlButton icon="next" title="Next Song" onClick={doNext} />
           <ControlButton
             icon="shuffle"
             title="Toggle Shuffle"
-            active={state.shuffle}
+            active={shuffle}
             onClick={doShuffle}
           />
         </div>
@@ -346,23 +389,13 @@ export default function PlayerBar({
           className="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none"
         >
           <Icon
-            name={state.volume === 0 ? 'volumeMuted' : state.volume < 0.5 ? 'volumeLow' : 'volume'}
+            name={volume === 0 ? 'volumeMuted' : volume < 0.5 ? 'volumeLow' : 'volume'}
             className="w-5 h-5"
           />
         </button>
-        <input
-          type="range"
+        <VolumeSlider
+          volume={volume}
           id="volumeSlider"
-          min="0"
-          max="1"
-          step="0.01"
-          value={state.volume}
-          onChange={(e) => {
-            const v = Number.parseFloat(e.target.value)
-            engine.setVolume(v) // instant local feedback; server confirms
-            void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
-          }}
-          style={{ '--range-percent': `${Math.round(state.volume * 100)}%` } as CSSProperties}
           className="w-20 sm:w-28 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
         />
       </div>

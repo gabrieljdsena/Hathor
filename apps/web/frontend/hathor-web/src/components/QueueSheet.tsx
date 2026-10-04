@@ -1,21 +1,41 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type PlayerState } from '../api/client'
 import { usePlayer } from '../store/player'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
+import Pagination from './ui/Pagination'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Up Next queue panel (desktop #queue-sidebar): jump-to-position,
 // drag-to-reorder, remove entries, move up/down, clear. Server owns queue
 // order; every op refreshes the store so bar + sheet converge.
+// Rows render paged (the store keeps the full list so jump/reorder/drop
+// stay global); the pager follows the current song across page changes.
 // Left-click jumps, right-click opens the song menu.
+export const QUEUE_PAGE_SIZE = 50
+
 export default function QueueSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queue = usePlayer((s) => s.queue)
+  const queueTotal = usePlayer((s) => s.queueTotal)
   const currentFile = usePlayer((s) => s.currentSong?.file)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
+  const [page, setPage] = useState(1)
   const dragged = useRef(false)
   const menuRefs = useRef(new Map<string, SongMenuHandle | null>())
+  const seenFile = useRef<string | null | undefined>(undefined)
+
+  const totalPages = Math.max(1, Math.ceil(queue.length / QUEUE_PAGE_SIZE))
+  const safePage = Math.min(Math.max(1, page), totalPages)
+
+  // Follow the current song when it moves (track change, jump, reorder).
+  useEffect(() => {
+    if (currentFile === seenFile.current) return
+    seenFile.current = currentFile ?? null
+    if (!currentFile) return
+    const idx = queue.findIndex((s) => s.file === currentFile)
+    if (idx >= 0) setPage(Math.floor(idx / QUEUE_PAGE_SIZE) + 1)
+  }, [currentFile, queue])
 
   const mutate = (p: Promise<PlayerState>) =>
     void p.then((s) => usePlayer.setState(s)).catch(() => {})
@@ -29,7 +49,11 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
       <div className="p-5 border-b border-white/5 flex items-center justify-between">
         <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
           <Icon name="queue" className="w-4 h-4 text-orange-400" />
-          Up Next
+          Up Next{(queueTotal > 0 ? queueTotal : queue.length) > 0 && (
+            <span className="text-xs font-medium text-zinc-500">
+              {queueTotal > 0 ? queueTotal : queue.length}
+            </span>
+          )}
         </h2>
         <div className="flex items-center gap-2">
           {queue.length > 0 && (
@@ -52,7 +76,12 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
       <div className="p-3 overflow-y-auto flex-1">
         <div id="queue-body" className="flex flex-col gap-1">
           {queue.length === 0 && <p className="text-sm text-zinc-500 text-center py-8">Queue is empty</p>}
-          {queue.map((song, i) => (
+          {queue
+            .slice((safePage - 1) * QUEUE_PAGE_SIZE, safePage * QUEUE_PAGE_SIZE)
+            .map((song, li) => {
+              // Global index: jump/reorder/remove/drop all address the full queue.
+              const i = (safePage - 1) * QUEUE_PAGE_SIZE + li
+              return (
             <div
               key={`${song.file}-${i}`}
               draggable
@@ -150,9 +179,15 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
                 </button>
               </div>
             </div>
-          ))}
+              )
+            })}
         </div>
       </div>
+      {queue.length > QUEUE_PAGE_SIZE && (
+        <div className="p-3 border-t border-white/5">
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+        </div>
+      )}
     </div>
   )
 }

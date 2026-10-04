@@ -1,10 +1,10 @@
-import { useState, type CSSProperties } from 'react'
+import { useState } from 'react'
 import { api } from '../api/client'
-import { engine } from '../audio/engine'
 import { usePlayer } from '../store/player'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { ControlButton } from './ui/buttons'
+import { VolumeSlider } from './PlayerBar'
 import SyncedLyrics, { useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
 
 // Fullscreen Now Playing overlay (desktop Now Playing view): large art,
@@ -108,21 +108,7 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
             </button>
             <ControlButton icon="next" title="Next" onClick={step('next')} />
           </div>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            aria-label="Volume"
-            onChange={(e) => {
-              const v = Number.parseFloat(e.target.value)
-              engine.setVolume(v)
-              void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
-            }}
-            style={{ '--range-percent': `${Math.round(volume * 100)}%` } as CSSProperties}
-            className="w-56 cursor-pointer outline-none"
-          />
+          <VolumeSlider volume={volume} className="w-56 cursor-pointer outline-none" />
         </div>
       )}
     </div>

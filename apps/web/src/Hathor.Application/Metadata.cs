@@ -58,7 +58,8 @@ public sealed class UpdateSongMetadataHandler(
 
         var updated = await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);
         if (updated is not null)
-            await records.UpdateTitleArtistAsync(cmd.UserId, cmd.File, updated.Title, updated.Artist, ct);
+            await records.UpsertMetadataAsync(cmd.UserId, cmd.File, updated.Title, updated.Artist,
+                updated.Album, updated.Year, updated.Genre, updated.Duration, ct);
         await records.SaveChangesAsync(ct);
 
         updated ??= await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);

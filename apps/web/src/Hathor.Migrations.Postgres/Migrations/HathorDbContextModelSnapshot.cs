@@ -419,6 +419,9 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("Album")
+                        .HasColumnType("text");
+
                     b.Property<string>("Artist")
                         .HasColumnType("text");
 
@@ -428,10 +431,19 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.Property<string>("DownloadedLink")
                         .HasColumnType("text");
 
+                    b.Property<double>("DurationSecs")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Genre")
+                        .HasColumnType("text");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Year")
+                        .HasColumnType("text");
 
                     b.HasKey("UserId", "File");
 
