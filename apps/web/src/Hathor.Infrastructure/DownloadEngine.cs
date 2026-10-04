@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using YoutubeExplode;
@@ -12,24 +13,43 @@ namespace Hathor.Infrastructure.Ingest;
 // YoutubeExplode search + audio download, FFmpeg MP3 transcode.
 // FFmpeg resolution: FFmpeg:Path config → PATH. (Auto-download ships with
 // the maintenance phase; until then a missing binary fails jobs loudly.)
-public sealed class YoutubeExplodeEngine(IConfiguration config, ILogger<YoutubeExplodeEngine> log) : IDownloadEngine
+public sealed class YoutubeExplodeEngine(
+    IConfiguration config,
+    ILogger<YoutubeExplodeEngine> log,
+    IMemoryCache cache) : IDownloadEngine
 {
     private readonly YoutubeClient _youtube = new();
     private string? _ffmpeg;
     private bool _ffmpegProbed;
+    private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(10);
 
     public async Task<IReadOnlyList<VideoHitDto>> SearchAsync(
         string query, int limit, CancellationToken ct = default)
     {
+        var clamped = Math.Clamp(limit, 1, 25);
+        var key = $"ytsearch:{query.Trim().ToLowerInvariant()}:{clamped}";
+        if (cache.TryGetValue(key, out IReadOnlyList<VideoHitDto>? cached) && cached is not null)
+            return cached;
         try
         {
-            var results = await _youtube.Search.GetVideosAsync(query, ct);
-            return results.Take(Math.Clamp(limit, 1, 25)).Select(v => new VideoHitDto(
-                v.Id.Value,
-                v.Title,
-                v.Author.ChannelTitle,
-                v.Duration?.TotalSeconds ?? 0,
-                v.Thumbnails.TryGetWithHighestResolution()?.Url ?? "")).ToList();
+            // YoutubeExplode yields paged batches: take only what was asked
+            // for and stop (breaking disposes the enumerator, so no further
+            // pages are fetched). Awaiting the whole sequence instead pulls
+            // hundreds of videos (~25s) for 5 displayed hits.
+            var hits = new List<VideoHitDto>(clamped);
+            await foreach (var v in _youtube.Search.GetVideosAsync(query, ct).WithCancellation(ct))
+            {
+                hits.Add(new VideoHitDto(
+                    v.Id.Value,
+                    v.Title,
+                    v.Author.ChannelTitle,
+                    v.Duration?.TotalSeconds ?? 0,
+                    v.Thumbnails.TryGetWithHighestResolution()?.Url ?? ""));
+                if (hits.Count >= clamped) break;
+            }
+            cache.Set(key, (IReadOnlyList<VideoHitDto>)hits,
+                new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = SearchCacheTtl });
+            return hits;
         }
         catch (Exception ex)
         {

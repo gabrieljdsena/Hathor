@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Song } from '../api/client'
 import { usePlayer } from '../store/player'
@@ -71,12 +71,18 @@ export default function Podcasts() {
     void queryClient.invalidateQueries()
   }
 
-  // Typo-tolerant client filter (same fuzzy rules as the song search).
-  const visible = (episodes ?? []).filter((s) => {
-    const qOk = debounced.trim().length === 0 || fuzzyFields([s.title, s.artist], debounced)
-    const tOk = activeTag === null || (tagMap?.[s.file] ?? []).includes(activeTag)
-    return qOk && tOk
-  })
+  // Typo-tolerant client filter (same fuzzy rules as the song search),
+  // memoized: tag lookups + fuzzy pass rerun only when inputs change.
+  const tagById = useMemo(() => new Map((tags ?? []).map((t) => [t.id, t.name])), [tags])
+  const visible = useMemo(
+    () =>
+      (episodes ?? []).filter((s) => {
+        const qOk = debounced.trim().length === 0 || fuzzyFields([s.title, s.artist], debounced)
+        const tOk = activeTag === null || (tagMap?.[s.file] ?? []).includes(activeTag)
+        return qOk && tOk
+      }),
+    [episodes, debounced, activeTag, tagMap],
+  )
 
   const playEpisode = (song: Song) => {
     const ep = { ...song, isPodcast: true }
@@ -93,8 +99,7 @@ export default function Podcasts() {
 
   const tagNames = (file: string) => {
     const ids = tagMap?.[file] ?? []
-    const byId = new Map((tags ?? []).map((t) => [t.id, t.name]))
-    return ids.map((id) => byId.get(id)).filter((n): n is string => !!n)
+    return ids.map((id) => tagById.get(id)).filter((n): n is string => !!n)
   }
 
   return (

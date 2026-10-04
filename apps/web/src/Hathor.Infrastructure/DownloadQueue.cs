@@ -169,6 +169,7 @@ public sealed class DownloadQueueService(
         var podcasts = scope.ServiceProvider.GetRequiredService<IPodcastRecordRepository>();
         var writer = scope.ServiceProvider.GetRequiredService<IMetadataWriter>();
         var storage = scope.ServiceProvider.GetRequiredService<ILibraryStorage>();
+        var metaReader = scope.ServiceProvider.GetRequiredService<Library.SongMetadataReader>();
         var itunes = scope.ServiceProvider.GetRequiredService<IITunesClient>();
         var hub = scope.ServiceProvider.GetRequiredService<IPlaybackHub>();
 
@@ -307,7 +308,12 @@ public sealed class DownloadQueueService(
                     try { File.Delete(tmpMp3); } catch { }
                 else
                     File.Move(tmpMp3, finalPath);
-                await records.UpsertDownloadedAsync(userId, name, info.PageUrl, finalTitle, finalArtist);
+                // Materialize the finished file's tags so lists/search never
+                // open it (single read, then DB only).
+                var finished = metaReader.Read(userId, name, includeCover: false);
+                await records.UpsertDownloadedAsync(userId, name, info.PageUrl,
+                    finished.Title, finished.Artist, finished.Album,
+                    finished.Year, finished.Genre, finished.Duration);
                 await records.SaveChangesAsync();
             }
 

@@ -4,6 +4,7 @@ using Hathor.Infrastructure.Ef;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Hathor.Migrations.MySql.Migrations
 {
     [DbContext(typeof(HathorDbContext))]
-    partial class HathorDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004211614_SongMetadataColumns")]
+    partial class SongMetadataColumns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -79,26 +82,6 @@ namespace Hathor.Migrations.MySql.Migrations
                     b.HasKey("UserId", "MixDate");
 
                     b.ToTable("Daily_Mix", (string)null);
-                });
-
-            modelBuilder.Entity("Hathor.Domain.Entities.DiscoverCache", b =>
-                {
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<string>("Date")
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("ItemsJson")
-                        .IsRequired()
-                        .HasColumnType("longtext");
-
-                    b.HasKey("UserId", "Date");
-
-                    b.ToTable("Discover_Cache", (string)null);
                 });
 
             modelBuilder.Entity("Hathor.Domain.Entities.DownloadJob", b =>

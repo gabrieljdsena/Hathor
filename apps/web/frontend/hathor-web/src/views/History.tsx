@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api, type HistoryItem } from '../api/client'
 import { usePlayer } from '../store/player'
 import CoverArt from '../components/ui/CoverArt'
 import Icon from '../components/ui/icons'
+import Pagination from '../components/ui/Pagination'
 import SongMenu, { type SongMenuHandle } from '../components/ui/SongMenu'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
@@ -27,10 +28,19 @@ export default function History() {
   const isPlaying = usePlayer((s) => s.isPlaying)
   const navigate = useNavigate()
 
-  const query =
-    tab === 'download'
-      ? useQuery({ queryKey: ['history-download', page], queryFn: () => api.downloadHistory(page, 10) })
-      : useQuery({ queryKey: ['history-played', page], queryFn: () => api.playedHistory(page, 10) })
+  // Both queries are declared unconditionally (rules-of-hooks: a tab
+  // switch must not change hook order) with only the active tab enabled.
+  const downloads = useQuery({
+    queryKey: ['history-download', page],
+    queryFn: () => api.downloadHistory(page, 10),
+    enabled: tab === 'download',
+  })
+  const played = useQuery({
+    queryKey: ['history-played', page],
+    queryFn: () => api.playedHistory(page, 10),
+    enabled: tab === 'played',
+  })
+  const query = tab === 'download' ? downloads : played
 
   const switchTab = (t: Tab) => {
     setTab(t)
@@ -55,6 +65,16 @@ export default function History() {
   }
   const menuRefs = useRef(new Map<string, SongMenuHandle | null>())
   const rowKey = (item: HistoryItem) => `${item.song.file}-${item.datePlayed ?? item.dateDownload}`
+
+  // Drop menu handles for rows that paged/tabbed away (same unbounded-Map
+  // guard as the library table).
+  const items = query.data?.items
+  useEffect(() => {
+    const alive = new Set((items ?? []).map(rowKey))
+    for (const key of menuRefs.current.keys()) {
+      if (!alive.has(key)) menuRefs.current.delete(key)
+    }
+  }, [items])
   const openMenu = (item: HistoryItem, x: number, y: number) =>
     menuRefs.current.get(rowKey(item))?.openAt(x, y)
 
@@ -159,24 +179,12 @@ export default function History() {
         )}
 
         {(query.data?.totalPages ?? 1) > 1 && (
-          <div className="flex items-center justify-center gap-4 mt-8">
-            <button
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white transition-colors hover:bg-white/10 disabled:opacity-50 cursor-pointer"
-            >
-              Previous
-            </button>
-            <span className="text-zinc-400 text-sm">
-              Page {query.data?.currentPage} of {query.data?.totalPages}
-            </span>
-            <button
-              disabled={page >= (query.data?.totalPages ?? 1)}
-              onClick={() => setPage((p) => p + 1)}
-              className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white transition-colors hover:bg-white/10 disabled:opacity-50 cursor-pointer"
-            >
-              Next
-            </button>
+          <div className="mt-8">
+            <Pagination
+              page={query.data?.currentPage ?? page}
+              totalPages={query.data?.totalPages ?? 1}
+              onChange={setPage}
+            />
           </div>
         )}
       </div>

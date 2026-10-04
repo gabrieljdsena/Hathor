@@ -200,7 +200,6 @@ export class AudioEngine {
       this.a.el.volume = this.volume
       this.b.el.volume = this.volume
     }
-    this.startTimer()
   }
 
   load(track: EngineTrack | null, autoplay: boolean) {
@@ -210,6 +209,7 @@ export class AudioEngine {
       this.active.el.pause()
       this.active.el.src = ''
       this.active.file = null
+      this.stopTimer()
       return
     }
     if (this.active.file !== track.file) {
@@ -226,6 +226,7 @@ export class AudioEngine {
 
   play() {
     this.ensureContext()
+    this.startTimer()
     // Resuming a paused fade shifts its start so progress freezes cleanly.
     if (this.fading && this.fading.pauseBeganAt !== null) {
       this.fading.start += this.deps.now() - this.fading.pauseBeganAt
@@ -342,7 +343,21 @@ export class AudioEngine {
     }, TICK_MS)
   }
 
+  private stopTimer() {
+    if (this.timer !== null) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+  }
+
   private tick() {
+    // Fully idle (nothing loaded, no fade): park the ticker instead of
+    // spinning every 250ms for the lifetime of the page. play()/load()
+    // restart it on demand.
+    if (!this.fading && !this.active.file) {
+      this.stopTimer()
+      return
+    }
     if (!this.active.el || this.active.el.paused) {
       // Paused (or nothing loaded): freeze fade progress. While a fade is
       // paused only the *incoming* may still be running (autoplay race) —

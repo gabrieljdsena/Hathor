@@ -233,6 +233,7 @@ export interface PlayerState {
   source: QueueSource | null
   isCustomQueue: boolean
   firstPlay: boolean
+  queueTotal: number
 }
 
 function authHeaders(): HeadersInit {

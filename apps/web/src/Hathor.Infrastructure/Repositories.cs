@@ -258,24 +258,38 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
             }, ct);
     }
 
-    public async Task UpdateTitleArtistAsync(
-        Guid userId, string file, string title, string artist, CancellationToken ct = default)
+    public async Task UpsertMetadataAsync(Guid userId, string file, string title,
+        string? artist, string? album, string? year, string? genre, double durationSecs,
+        CancellationToken ct = default)
     {
         var song = await GetAsync(userId, file, ct);
         if (song is null)
         {
-            await EnsureAsync(userId, file, title, ct);
-            song = await GetAsync(userId, file, ct);
+            await db.Songs.AddAsync(new Song
+            {
+                UserId = userId,
+                File = file,
+                Title = title,
+                DateDownloadUtc = DateTime.UtcNow,
+                Artist = artist,
+                Album = album,
+                Year = year,
+                Genre = genre,
+                DurationSecs = durationSecs,
+            }, ct);
+            return;
         }
-        if (song is not null)
-        {
-            song.Title = title;
-            song.Artist = artist;
-        }
+        song.Title = title;
+        song.Artist = artist;
+        song.Album = album;
+        song.Year = year;
+        song.Genre = genre;
+        song.DurationSecs = durationSecs;
     }
 
     public async Task UpsertDownloadedAsync(Guid userId, string file, string? link,
-        string title, string? artist, CancellationToken ct = default)
+        string title, string? artist, string? album, string? year, string? genre,
+        double durationSecs, CancellationToken ct = default)
     {
         var song = await GetAsync(userId, file, ct);
         if (song is null)
@@ -288,6 +302,10 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
                 Title = title,
                 DateDownloadUtc = DateTime.UtcNow,
                 Artist = artist,
+                Album = album,
+                Year = year,
+                Genre = genre,
+                DurationSecs = durationSecs,
             }, ct);
         }
         else
@@ -295,6 +313,10 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
             song.DownloadedLink = link;
             song.Title = title;
             song.Artist = artist;
+            song.Album = album;
+            song.Year = year;
+            song.Genre = genre;
+            song.DurationSecs = durationSecs;
             song.DateDownloadUtc = DateTime.UtcNow;
         }
     }

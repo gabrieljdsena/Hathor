@@ -268,6 +268,31 @@ public sealed record RemoveFromQueueCommand(Guid UserId, int Index) : IRequest<P
 public sealed record ReorderQueueCommand(Guid UserId, int OldIndex, int NewIndex) : IRequest<PlayerStateDto>;
 public sealed record JumpQueueCommand(Guid UserId, int Index) : IRequest<PlayerStateDto>;
 
+// GET /player/queue/page: windowed queue resolve for huge queues (the full
+// Queue field stays intact for existing clients; this is additive).
+public sealed record GetQueuePageQuery(Guid UserId, int Page = 1, int PageSize = 50)
+    : IRequest<QueuePageDto>;
+
+public sealed record QueuePageDto(IReadOnlyList<SongDto> Items, int Total, int Page, int PageSize);
+
+public sealed class GetQueuePageHandler(
+    IPlaybackStateRepository playback,
+    ISongReadModel songs) : IRequestHandler<GetQueuePageQuery, QueuePageDto>
+{
+    public async Task<QueuePageDto> Handle(GetQueuePageQuery q, CancellationToken ct)
+    {
+        var state = await playback.GetOrCreateAsync(q.UserId, ct);
+        var page = Math.Max(1, q.Page);
+        var pageSize = Math.Clamp(q.PageSize, 1, 200);
+        var slice = state.NextFiles
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+        var items = await songs.GetManyAsync(q.UserId, slice, includeCover: false, ct);
+        return new QueuePageDto(items, state.NextFiles.Count, page, pageSize);
+    }
+}
+
 public sealed class QueueHandler(
     IPlaybackStateRepository playback,
     ISongReadModel songs,
@@ -369,7 +394,7 @@ public static class PlayerHelpers
             current, state.IsPlaying, state.EstimatedPositionSec(DateTime.UtcNow),
             state.Volume, state.Shuffle, state.Repeat, queue,
             state.Source is null ? null : new QueueSourceDto(state.Source.Type, state.Source.Id),
-            state.IsCustomQueue, state.FirstPlay);
+            state.IsCustomQueue, state.FirstPlay, state.NextFiles.Count);
     }
 }
 

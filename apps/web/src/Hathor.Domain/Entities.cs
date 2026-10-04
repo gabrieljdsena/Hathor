@@ -60,6 +60,12 @@ public sealed class Song
     public string Title { get; set; } = "";
     public DateTime DateDownloadUtc { get; set; }
     public string? Artist { get; set; }
+    // Materialized file tags (indexed search/sort without opening MP3s).
+    // File tags stay the source of truth; these mirror them (see Scan).
+    public string? Album { get; set; }
+    public string? Year { get; set; }
+    public string? Genre { get; set; }
+    public double DurationSecs { get; set; }
 }
 
 public sealed class Podcast
