@@ -166,6 +166,7 @@ export default function Shell() {
             <NavItem to="/" end icon="home" label="Home" collapsed={collapsed} />
             <NavItem to="/songs" icon="musicNote" label="Songs" collapsed={collapsed} />
             <NavItem to="/download" icon="download" label="Download" collapsed={collapsed} />
+            <NavItem to="/discover" icon="compass" label="Discover" collapsed={collapsed} />
             <NavItem to="/podcasts" icon="mic" label="Podcasts" collapsed={collapsed} />
             <NavItem to="/playlists" icon="list" label="Playlists" collapsed={collapsed} />
             <NavItem to="/history" icon="clock" label="History" collapsed={collapsed} />
