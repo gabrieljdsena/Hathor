@@ -33,8 +33,8 @@ share this wire shape and these rules.
   - `artist` — other tracks by a top artist from the listener's history
     (iTunes `search?term={artist}&entity=song`, exact-artist filter).
   - `chart` — iTunes RSS `topsongs` editorial picks, resolved via search.
-  - `llm` — local-LLM taste expansion, iTunes-verified (Phase 2; unverified
-    suggestions are dropped, never shown).
+  - `llm` — local-LLM taste expansion (Ollama or any OpenAI-compatible `/v1`
+    endpoint), iTunes-verified; unverified suggestions are dropped, never shown.
 - `score` 0..1, descending. Formula (Phase 1):
   `0.7 * artistAffinity + 0.3 * sourceWeight`
   (`artist`=1.0, `chart`=0.5; chart items have 0 affinity).
@@ -55,3 +55,24 @@ share this wire shape and these rules.
    iTunes Search before display (hallucination filter).
 6. Downloading a recommendation uses the normal ingest pipeline
    (320k MP3 + iTunes enrichment) — Discover never writes files itself.
+
+## Configuration (web)
+
+`Discovery` section in `appsettings.json` (all optional, shown with defaults):
+
+```json
+"Discovery": {
+  "LlmEnabled": true,
+  "Endpoint": "http://localhost:11434/v1",
+  "Model": "",
+  "LlmTimeoutSec": 30
+}
+```
+
+- Empty `Model` disables LLM suggestions (with a log warning) — Discover runs
+  iTunes-only. Set it to your served model name (e.g. as listed by
+  `ollama ls`) to enable taste expansion.
+- `Endpoint` is the base URL; `/chat/completions` is appended. Works with
+  Ollama and llama.cpp server alike (`response_format: json_object`).
+- Any LLM failure (down, timeout, bad reply) silently yields zero suggestions;
+  the endpoint still returns iTunes candidates.

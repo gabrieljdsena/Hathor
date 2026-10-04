@@ -165,10 +165,17 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<Application.Ports.IDownloadEngine, Ingest.YoutubeExplodeEngine>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
+        services.AddScoped<Application.Ports.IDiscoverySuggester>(sp =>
+            new Enrichment.OllamaDiscoverySuggester(
+                sp.GetRequiredService<IHttpClientFactory>(),
+                config.GetSection("Discovery").Get<Enrichment.DiscoveryLlmOptions>()
+                    ?? new Enrichment.DiscoveryLlmOptions(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Enrichment.OllamaDiscoverySuggester>>()));
         services.AddScoped<Application.Ports.ILrclibClient, Enrichment.LrclibClientImpl>();
         services.AddHttpClient("metadata");
         services.AddHttpClient("itunes");
         services.AddHttpClient("lrclib");
+        services.AddHttpClient("llm");
         // FFmpeg static builds are ~80MB; the installer enforces its own
         // timeout, so the client itself never times out.
         services.AddHttpClient("ffmpeg").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
