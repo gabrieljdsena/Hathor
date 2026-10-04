@@ -17,6 +17,14 @@ using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Windows-service aware (content root = publish dir, graceful stop).
+// No-op under `dotnet run`, required for services.msc hosting.
+// Services run non-interactive with System32 as CWD — without this the
+// service would look for wwwroot/appsettings next to System32.
+builder.Services.AddWindowsService(options => options.ServiceName = "Hathor");
+if (!Environment.UserInteractive)
+    builder.WebHost.UseContentRoot(AppContext.BaseDirectory);
+
 // Local secrets (lab-Postgres password, dev overrides): gitignored, optional.
 // Inserted just above appsettings.json — NOT appended — so environment
 // variables, command-line args and test overrides always win over it.
@@ -169,6 +177,13 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// Self-hosted SPA (Windows-service deploys): the publish pipeline copies
+// frontend/dist into wwwroot. Serves without auth/rate-limit overhead;
+// unknown paths fall back to index.html (mapped below) for React Router.
+// Absent in dev/docker (vite/nginx serve) — then these are no-ops.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -182,6 +197,7 @@ app.UseAuthorization();
 app.MapControllers().RequireRateLimiting("Api");
 app.MapHub<PlayerHub>("/hubs/player");
 app.MapHub<DownloadsHub>("/hubs/downloads");
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
