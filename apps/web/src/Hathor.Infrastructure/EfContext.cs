@@ -25,6 +25,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<PlaylistHistoryEntry> PlaylistHistory => Set<PlaylistHistoryEntry>();
     public DbSet<SyncDeletion> SyncDeletions => Set<SyncDeletion>();
     public DbSet<DailyMix> DailyMixes => Set<DailyMix>();
+    public DbSet<DiscoverCache> DiscoverCaches => Set<DiscoverCache>();
     public DbSet<UserSettings> Settings => Set<UserSettings>();
     public DbSet<PlaybackStateRow> PlaybackStates => Set<PlaybackStateRow>();
 
@@ -132,6 +133,11 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
         {
             e.ToTable("Daily_Mix");
             e.HasKey(x => new { x.UserId, x.MixDate });
+        });
+        b.Entity<DiscoverCache>(e =>
+        {
+            e.ToTable("Discover_Cache");
+            e.HasKey(x => new { x.UserId, x.Date });
         });
         b.Entity<UserSettings>(e =>
         {

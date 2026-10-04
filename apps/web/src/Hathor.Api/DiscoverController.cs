@@ -17,6 +17,11 @@ public sealed class DiscoverController(IMediator mediator) : ControllerBase
     public async Task<ActionResult<DiscoverDto>> Get(CancellationToken ct) =>
         Ok(await mediator.Send(new GetDiscoverQuery(CurrentUserId()), ct));
 
+    [HttpPost("refresh")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<DiscoverDto>> Refresh(CancellationToken ct) =>
+        Ok(await mediator.Send(new RegenerateDiscoverCommand(CurrentUserId()), ct));
+
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 }

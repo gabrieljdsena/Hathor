@@ -74,6 +74,16 @@ public interface IDailyMixRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
+// Discover cache (EF). Items expire daily; lazy recompute on read,
+// forced recompute on refresh — no scheduler (same as Daily Mix).
+public interface IDiscoverCacheRepository
+{
+    Task<DiscoverCache?> GetAsync(Guid userId, string date, CancellationToken ct = default);
+    Task SaveAsync(Guid userId, string date, string itemsJson, CancellationToken ct = default);
+    Task PruneOthersAsync(Guid userId, string today, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
 // Playlist + song-link writes (EF). Hot reads live in IPlaylistReadModel (Dapper).
 public interface IPlaylistRepository
 {
