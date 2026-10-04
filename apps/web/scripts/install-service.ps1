@@ -62,5 +62,13 @@ else {
     Write-Host "[skip] service '$ServiceName' already registered"
 }
 
+# LAN access: the service binds 0.0.0.0, but Windows Firewall drops inbound
+# LAN traffic by default. Idempotent — refreshes the rule on every install.
+if (-not (Get-NetFirewallRule -DisplayName 'Hathor' -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName 'Hathor' -Direction Inbound `
+        -Protocol TCP -LocalPort $Port -Action Allow -Profile Private | Out-Null
+}
+Write-Host "[ok] firewall open for TCP $Port (Private/LAN)"
+
 Start-Service $ServiceName -ErrorAction SilentlyContinue
 Write-Host "[ok] service '$ServiceName' started"
