@@ -119,6 +119,7 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Domain.Repositories.IPodcastTagRepository, Repositories.EfPodcastTagRepository>();
         services.AddScoped<Domain.Repositories.ISongRecordRepository, Repositories.EfSongRecordRepository>();
         services.AddScoped<Domain.Repositories.IDailyMixRepository, Repositories.EfDailyMixRepository>();
+        services.AddScoped<Domain.Repositories.IDiscoverCacheRepository, Repositories.EfDiscoverCacheRepository>();
         services.AddScoped<Domain.Repositories.IDownloadJobRepository, Repositories.EfDownloadJobRepository>();
         services.AddScoped<Domain.Repositories.ILyricsRepository, Repositories.EfLyricsRepository>();
         services.AddScoped<Domain.Repositories.IPodcastRecordRepository, Repositories.EfPodcastRecordRepository>();
@@ -166,11 +167,11 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
         services.AddScoped<Application.Ports.IDiscoverySuggester>(sp =>
-            new Enrichment.OllamaDiscoverySuggester(
+            new Enrichment.LlamaDiscoverySuggester(
                 sp.GetRequiredService<IHttpClientFactory>(),
                 config.GetSection("Discovery").Get<Enrichment.DiscoveryLlmOptions>()
                     ?? new Enrichment.DiscoveryLlmOptions(),
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Enrichment.OllamaDiscoverySuggester>>()));
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Enrichment.LlamaDiscoverySuggester>>()));
         services.AddScoped<Application.Ports.ILrclibClient, Enrichment.LrclibClientImpl>();
         services.AddHttpClient("metadata");
         services.AddHttpClient("itunes");

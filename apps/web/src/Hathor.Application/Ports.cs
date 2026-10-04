@@ -188,7 +188,7 @@ public interface IITunesClient
     Task<IReadOnlyList<string>> GetTrendingAsync(int limit, CancellationToken ct = default);
 }
 
-// Local-LLM taste-expansion port (Ollama / any OpenAI-compatible /v1).
+// Local-LLM taste-expansion port (llama.cpp server / any OpenAI-compatible /v1).
 // Suggests title/artist pairs for a taste profile; every suggestion must be
 // iTunes-verified before display (packages/contracts/discover.md rule 5).
 // Never throws: LLM down/disabled/misconfigured yields [] (iTunes-only).

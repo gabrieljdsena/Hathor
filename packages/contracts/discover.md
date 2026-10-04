@@ -7,10 +7,12 @@ share this wire shape and these rules.
 ## Endpoints (web; others map 1:1)
 
 - `GET /discover` → `{date, items[], cached}`
-  - Auth: `library:read`. Computed on demand in Phase 1 (6h in-memory cache);
-    Phase 3 moves to a `Discover_Cache` table + Hangfire daily job.
-- `POST /discover/refresh` → 202 + fresh `{date, items[], cached:false}`
-  (Phase 3; Phase 1 has no refresh — `GET` always recomputes past cache TTL).
+  - Auth: `library:read`. Lazy once-per-day semantics (same as Daily Mix):
+    today's `Discover_Cache` row is served when present, otherwise recomputed
+    on read. No scheduler — there is no Hangfire in this codebase yet, so no
+    pre-warm job; a daily worker can be added later without changing this shape.
+- `POST /discover/refresh` → 200 + fresh `{date, items[], cached:false}`
+  - Auth: `library:write` (same policy as Daily Mix regenerate).
 - `POST /discover/download {title, artist}` → existing `POST /downloads`
   payload (Phase 2 wires the button; the shape is already compatible).
 
@@ -33,8 +35,9 @@ share this wire shape and these rules.
   - `artist` — other tracks by a top artist from the listener's history
     (iTunes `search?term={artist}&entity=song`, exact-artist filter).
   - `chart` — iTunes RSS `topsongs` editorial picks, resolved via search.
-  - `llm` — local-LLM taste expansion (Ollama or any OpenAI-compatible `/v1`
-    endpoint), iTunes-verified; unverified suggestions are dropped, never shown.
+  - `llm` — local-LLM taste expansion (llama.cpp server, or any
+    OpenAI-compatible `/v1` endpoint), iTunes-verified; unverified
+    suggestions are dropped, never shown.
 - `score` 0..1, descending. Formula (Phase 1):
   `0.7 * artistAffinity + 0.3 * sourceWeight`
   (`artist`=1.0, `chart`=0.5; chart items have 0 affinity).
@@ -63,16 +66,16 @@ share this wire shape and these rules.
 ```json
 "Discovery": {
   "LlmEnabled": true,
-  "Endpoint": "http://localhost:11434/v1",
-  "Model": "",
+  "Endpoint": "http://localhost:1234/v1",
+  "Model": "qwen3.5-4b-uncensored",
   "LlmTimeoutSec": 30
 }
 ```
 
-- Empty `Model` disables LLM suggestions (with a log warning) — Discover runs
-  iTunes-only. Set it to your served model name (e.g. as listed by
-  `ollama ls`) to enable taste expansion.
-- `Endpoint` is the base URL; `/chat/completions` is appended. Works with
-  Ollama and llama.cpp server alike (`response_format: json_object`).
+- `Endpoint` is the llama.cpp server base URL (`/chat/completions` is
+  appended). Any OpenAI-compatible endpoint works (`response_format:
+  json_object`).
+- `Model` is the server model alias. Empty disables LLM suggestions (with a
+  log warning) — Discover runs iTunes-only.
 - Any LLM failure (down, timeout, bad reply) silently yields zero suggestions;
   the endpoint still returns iTunes candidates.

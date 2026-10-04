@@ -81,6 +81,26 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.ToTable("Daily_Mix", (string)null);
                 });
 
+            modelBuilder.Entity("Hathor.Domain.Entities.DiscoverCache", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Date")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ItemsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("UserId", "Date");
+
+                    b.ToTable("Discover_Cache", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Domain.Entities.DownloadJob", b =>
                 {
                     b.Property<long>("Id")

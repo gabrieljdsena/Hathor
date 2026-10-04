@@ -169,6 +169,16 @@ public sealed class DailyMix
     public DateTime CreatedAtUtc { get; set; }
 }
 
+// Discover cache (packages/contracts/discover.md): one row per user per day,
+// items as JSON (out-of-library candidates expire fast — no tombstones).
+public sealed class DiscoverCache
+{
+    public Guid UserId { get; set; }
+    public string Date { get; set; } = ""; // YYYY-MM-DD, PK with UserId
+    public string ItemsJson { get; set; } = "[]";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
 // Persisted prefs (desktop Settings row id=1 → per-user).
 public sealed class UserSettings
 {
