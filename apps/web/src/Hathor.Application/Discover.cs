@@ -12,11 +12,13 @@ namespace Hathor.Application.Discover;
 // persistent cache + refresh endpoint land in Phases 2-3.
 public sealed record GetDiscoverQuery(Guid UserId) : IRequest<DiscoverDto>;
 
-public sealed class DiscoverService(IDiscoverTasteReadModel taste, IITunesClient itunes)
+public sealed class DiscoverService(
+    IDiscoverTasteReadModel taste, IITunesClient itunes, IDiscoverySuggester suggester)
 {
     private const int TopArtists = 8;
     private const int PerArtistLimit = 10;
     private const int TrendingLimit = 10;
+    private const int LlmSuggestions = 30;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(6);
 
     private static readonly ConcurrentDictionary<Guid, (string Date, DiscoverDto Dto, DateTime StoredUtc)> Cache
@@ -49,6 +51,17 @@ public sealed class DiscoverService(IDiscoverTasteReadModel taste, IITunesClient
                 candidates.Add(new DiscoverCandidate(
                     resolved.Title, resolved.Artist, resolved.Album, resolved.Year,
                     resolved.Genre, resolved.ArtworkUrl, DiscoverSources.Chart));
+        }
+
+        // Local-LLM expansion (contract rule 5): suggestions are unverified
+        // until iTunes resolves them — hallucinations are dropped here.
+        foreach (var (title, artist) in await suggester.SuggestAsync(topArtists, LlmSuggestions, ct))
+        {
+            var verified = await itunes.SearchSingleAsync(title, artist, ct);
+            if (verified is not null)
+                candidates.Add(new DiscoverCandidate(
+                    verified.Title, verified.Artist, verified.Album, verified.Year,
+                    verified.Genre, verified.ArtworkUrl, DiscoverSources.Llm));
         }
 
         var library = await taste.GetLibraryPairsAsync(userId, ct);
