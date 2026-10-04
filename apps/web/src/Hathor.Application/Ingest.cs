@@ -58,6 +58,22 @@ public sealed record RetryDownloadCommand(Guid UserId, string Qid) : IRequest<bo
 public sealed record CancelDownloadCommand(Guid UserId, string Qid) : IRequest<bool>;
 public sealed record ClearCompletedDownloadsCommand(Guid UserId) : IRequest<int>;
 
+// Ownership pre-check for the "already in your library?" download confirm:
+// normalized title+artist match against live library files, or not-owned.
+public sealed record CheckDownloadQuery(Guid UserId, string Title, string? Artist)
+    : IRequest<OwnedCheckDto>;
+
+public sealed class CheckDownloadHandler(ISongReadModel songs)
+    : IRequestHandler<CheckDownloadQuery, OwnedCheckDto>
+{
+    public async Task<OwnedCheckDto> Handle(CheckDownloadQuery q, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(q.Title)) return new OwnedCheckDto(false, null);
+        var file = await songs.FindFileByMetadataAsync(q.UserId, q.Title, q.Artist, ct);
+        return new OwnedCheckDto(file is not null, file);
+    }
+}
+
 public sealed class RetryDownloadHandler(IDownloadQueue queue)
     : IRequestHandler<RetryDownloadCommand, bool>
 {
