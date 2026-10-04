@@ -24,3 +24,35 @@ describe('api request', () => {
     await expect(api.saveLyrics('s.mp3', null, 'la')).rejects.toThrow('nope')
   })
 })
+
+describe('discover api', () => {
+  function captureFetch(body: string) {
+    const calls: { input: unknown; init?: RequestInit }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        calls.push({ input, init })
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    return calls
+  }
+
+  it('GETs /discover', async () => {
+    const calls = captureFetch(JSON.stringify({ date: '2026-10-04', items: [], cached: true }))
+    await expect(api.discover()).resolves.toEqual({ date: '2026-10-04', items: [], cached: true })
+    expect(calls[0].input).toBe('/api/v1/discover')
+    expect(calls[0].init?.method).toBeUndefined()
+  })
+
+  it('POSTs /discover/refresh', async () => {
+    const calls = captureFetch(JSON.stringify({ date: '2026-10-04', items: [], cached: false }))
+    await expect(api.refreshDiscover()).resolves.toEqual({
+      date: '2026-10-04',
+      items: [],
+      cached: false,
+    })
+    expect(calls[0].input).toBe('/api/v1/discover/refresh')
+    expect(calls[0].init?.method).toBe('POST')
+  })
+})
