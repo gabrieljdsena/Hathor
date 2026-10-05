@@ -37,7 +37,7 @@ export function useAudioPosition(): number {
 }
 
 export const LYRICS_OFFSET_STEP_MS = 250;
-export const LYRICS_OFFSET_LIMIT_MS = 10000;
+export const LYRICS_OFFSET_LIMIT_MS = 20000;
 
 // Server-persisted per-song highlight timing correction (sparse: the API
 // deletes the row when the offset returns to 0). Shared by the header

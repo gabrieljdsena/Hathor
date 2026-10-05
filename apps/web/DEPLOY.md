@@ -28,6 +28,11 @@ Open `http://localhost:5050` (API + UI same origin).
 
 ## Notes
 
+- Lyrics romanization (fugashi + UniDic) is optional: `pip install fugashi
+  unidic-lite` where the API runs (Windows service / dev machine) for
+  full-quality kanji readings; without it the endpoint falls back to the
+  built-in kana table. Docker images stay Python-free by design.
+
 - The service runs as LocalSystem, whose `%APPDATA%` is the SYSTEM profile,
   not yours. The installer therefore pins `Library__SongsPath`,
   `Library__PodcastsPath` and `Database__StorageRoot` machine env vars to

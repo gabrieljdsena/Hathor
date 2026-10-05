@@ -1,5 +1,6 @@
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
+using Hathor.Domain.Services;
 using MediatR;
 
 namespace Hathor.Application.Enrichment;
@@ -10,6 +11,30 @@ public sealed record ITunesSearchQuery(Guid UserId, string Title, string? Artist
 public sealed record ITunesOptionsQuery(Guid UserId, string Title, string? Artist, int Limit = 5)
     : IRequest<IReadOnlyList<ITunesHitDto>>;
 public sealed record TrendingQuery(int Limit = 4) : IRequest<IReadOnlyList<string>>;
+
+// Romanization: MeCab backend (fugashi + cutlet) when a Python environment
+// is available, otherwise the built-in kana table (always works, kanji
+// passes through). Response shape unchanged — the frontend needs nothing new.
+public sealed record RomanizeTextQuery(string Text, bool IsLrc) : IRequest<string>;
+
+public sealed class RomanizeTextHandler(IRomanizerBackend backend)
+    : IRequestHandler<RomanizeTextQuery, string>
+{
+    public async Task<string> Handle(RomanizeTextQuery q, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(q.Text)) return q.Text;
+        try
+        {
+            var mecab = await backend.RomanizeAsync(q.Text, q.IsLrc, ct);
+            if (!string.IsNullOrWhiteSpace(mecab)) return mecab;
+        }
+        catch
+        {
+            // Fall through to kana — the port promises null, belt and braces.
+        }
+        return KanaRomaji.Romanize(q.Text, q.IsLrc);
+    }
+}
 
 // Detail-page artwork (desktop get_artist_image/get_album_image, 600x600):
 // first candidate whose names match exactly (case-insensitive), else the
