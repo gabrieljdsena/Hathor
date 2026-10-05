@@ -27,6 +27,7 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
   const menuId = useId()
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [buttonMenu, setButtonMenu] = useState(false)
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [metadataOpen, setMetadataOpen] = useState(false)
   const [playlistsOpen, setPlaylistsOpen] = useState(false)
@@ -39,6 +40,7 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
   const close = useCallback(() => {
     setPos(null)
     setButtonMenu(false)
+    setAnchor(null)
     releaseMenu(menuId)
   }, [menuId])
 
@@ -60,6 +62,7 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
         if (open !== null && open !== menuId) {
           setPos(null)
           setButtonMenu(false)
+          setAnchor(null)
         }
       }),
     [menuId],
@@ -141,12 +144,14 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
     { key: 'delete', label: 'Delete', icon: 'x' as const, danger: true, run: () => { close(); setDeleteOpen(true) } },
   ]
 
-  const menu = (fixed: { x: number; y: number } | null) => (
+  // Both triggers render the same portaled fixed menu at z-[90]: above
+  // queue/lyrics/now-playing/player-bar, below modals (z-[100]). Inline
+  // rendering used to trap the ⋮ menu inside backdrop-blur/transform
+  // stacking contexts where it lost to siblings.
+  const menu = (at: { x: number; y: number }) => (
     <div
-      className={`${
-        fixed ? 'fixed z-50' : 'absolute right-0 top-full mt-1 z-40'
-      } w-48 py-1 bg-zinc-800 border border-white/10 rounded-xl shadow-2xl`}
-      style={fixed ? { left: Math.min(fixed.x, window.innerWidth - 200), top: Math.min(fixed.y, window.innerHeight - 260) } : undefined}
+      className="fixed z-[90] w-48 py-1 bg-zinc-800 border border-white/10 rounded-xl shadow-2xl"
+      style={{ left: Math.min(at.x, window.innerWidth - 200), top: Math.min(at.y, window.innerHeight - 260) }}
     >
       {items.map((item) => (
         <button
@@ -173,6 +178,10 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
           onClick={(e) => {
             e.stopPropagation()
             setPos(null)
+            // Anchor the ⋮ menu to the button (menu drops below it);
+            // clamped into view by menu().
+            const rect = e.currentTarget.getBoundingClientRect()
+            setAnchor({ x: rect.right - 192, y: rect.bottom + 4 })
             setButtonMenu((v) => {
               const next = !v
               if (next) claimMenu(menuId)
@@ -186,9 +195,8 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
           <Icon name="dots" className="w-5 h-5 pointer-events-none" />
         </button>
       )}
-      {buttonMenu && menu(null)}
-      {/* Fixed (cursor) menus portal to body: ancestors with backdrop-blur
-          or transforms would otherwise hijack fixed positioning. */}
+      {buttonMenu && anchor && createPortal(menu(anchor), document.body)}
+      {/* Cursor menus portal to body for the same reason. */}
       {pos && createPortal(menu(pos), document.body)}
       {editOpen && (
         <EditSongModal

@@ -119,7 +119,7 @@ export default function LyricsSheet({
   return (
     <div
       id="lyrics-container-view"
-      className={`absolute inset-x-0 top-0 bottom-10 z-40 bg-zinc-950/95 backdrop-blur-3xl flex-col items-center overflow-hidden flex transition-[right] duration-300 ${
+      className={`absolute inset-x-0 top-0 bottom-0 z-40 bg-zinc-950/95 backdrop-blur-3xl flex-col items-center overflow-hidden flex transition-[right] duration-300 ${
         queueOpen ? 'sm:right-80' : ''
       }`}
     >

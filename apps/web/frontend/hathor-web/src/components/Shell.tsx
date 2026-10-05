@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -61,6 +61,7 @@ export default function Shell() {
   const [narrow, setNarrow] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 700,
   )
+  const rootRef = useRef<HTMLDivElement>(null)
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.settings })
 
   useEffect(() => {
@@ -71,6 +72,23 @@ export default function Shell() {
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  // The player bar is fixed with a breakpoint-dependent height, so a static
+  // margin always leaves a gap or an overlap somewhere. Measure the real
+  // #controls height and expose it as --controller-height: the page margin,
+  // queue sheet and lyrics sheet all derive from it and stay flush.
+  useEffect(() => {
+    const root = rootRef.current
+    const bar = document.getElementById('controls')
+    if (!root || !bar || typeof ResizeObserver === 'undefined') return
+    const apply = () => {
+      root.style.setProperty('--controller-height', `${Math.ceil(bar.getBoundingClientRect().height)}px`)
+    }
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(bar)
+    return () => observer.disconnect()
   }, [])
 
   // Keyboard shortcuts (desktop Now Playing & shortcuts): Space play/pause,
@@ -110,7 +128,7 @@ export default function Shell() {
   }, [])
 
   return (
-    <div className="bg-zinc-950 text-zinc-300 font-sans overflow-hidden selection:bg-orange-500/30 h-screen w-screen relative z-0 flex flex-col">
+    <div ref={rootRef} className="bg-zinc-950 text-zinc-300 font-sans overflow-hidden selection:bg-orange-500/30 h-screen w-screen relative z-0 flex flex-col">
       {/* Custom background image under the glass (desktop apply_background:
           dark gradient overlay + cover + centered + fixed). */}
       {settings?.backgroundPath && (
@@ -129,7 +147,11 @@ export default function Shell() {
       <div className="absolute -top-[15%] -left-[5%] w-[45vw] h-[45vw] bg-orange-500/10 rounded-full blur-[120px] pointer-events-none z-[-1]" />
       <div className="absolute -bottom-[15%] right-[15%] w-[35vw] h-[35vw] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none z-[-1]" />
 
-      <div id="page" className="flex flex-row w-full flex-1 mb-36 min-[1100px]:mb-28" style={{ minHeight: 0 }}>
+      <div
+        id="page"
+        className="flex flex-row w-full flex-1"
+        style={{ minHeight: 0, marginBottom: 'var(--controller-height, 112px)' }}
+      >
         <aside
           id="sidebar"
           className={`flex-shrink-0 flex flex-col border-r border-orange-500/10 bg-black/40 backdrop-blur-2xl z-10 relative shadow-[4px_0_24px_rgba(0,0,0,0.5)] overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
@@ -206,9 +228,9 @@ export default function Shell() {
             <Outlet />
           </div>
           {/* Inside the content column (like the original #lyrics-container-view):
-              inset-x-0 spans content only so the sidebar stays visible, and
-              bottom-10 clears the player bar via the page margin. Shifts
-              left of the queue panel (sm+) while it is open. */}
+              inset-x-0 spans content only so the sidebar stays visible; the
+              page margin already clears the player bar, so the sheet runs
+              flush to it (bottom-0). Shifts left of the queue panel (sm+). */}
           <LyricsSheet open={lyricsOpen} onClose={() => setLyricsOpen(false)} queueOpen={queueOpen} />
         </div>
       </div>
