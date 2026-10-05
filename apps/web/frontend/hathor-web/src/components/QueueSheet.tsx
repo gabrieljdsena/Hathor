@@ -44,7 +44,8 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
   return (
     <div
       id="queue-sidebar"
-      className="fixed right-0 bottom-28 top-0 w-full sm:w-80 border-l border-white/10 bg-zinc-950/95 backdrop-blur-3xl flex flex-col z-50 shadow-2xl"
+      className="fixed right-0 top-0 w-full sm:w-80 border-l border-white/10 bg-zinc-950/95 backdrop-blur-3xl flex flex-col z-50 shadow-2xl"
+      style={{ bottom: 'var(--controller-height, 112px)' }}
     >
       <div className="p-5 border-b border-white/5 flex items-center justify-between">
         <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">

@@ -74,6 +74,27 @@ describe('LibraryTable context menu', () => {
     expect(menu!.style.top).toBe('200px')
   })
 
+  it('cursor menu portals to body above sheets but below modals', () => {
+    renderTable()
+    const row = screen.getByText('Title').closest('div.grid')
+    expect(row).not.toBeNull()
+    fireEvent.contextMenu(row!, { clientX: 100, clientY: 200 })
+    const menu = screen.getByText('Play Next').closest('div.fixed') as HTMLElement | null
+    expect(menu).not.toBeNull()
+    expect(menu!.parentElement).toBe(document.body)
+    expect(menu!.className).toContain('z-[90]')
+  })
+
+  it('button menu portals to body at z-[90]', () => {
+    renderTable()
+    fireEvent.click(screen.getAllByTitle('More actions')[0])
+    expect(screen.getByText('Play Next')).toBeInTheDocument()
+    const menu = screen.getByText('Play Next').closest('div.fixed') as HTMLElement | null
+    expect(menu).not.toBeNull()
+    expect(menu!.parentElement).toBe(document.body)
+    expect(menu!.className).toContain('z-[90]')
+  })
+
   it('does not open the menu on left-click (left-click plays)', () => {
     vi.stubGlobal(
       'fetch',
