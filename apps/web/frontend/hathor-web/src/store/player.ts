@@ -13,6 +13,20 @@ interface PlayerStore extends PlayerState {
   playSong: (song: Song, context: Song[], source: QueueSource | null) => Promise<void>
   toggle: () => Promise<void>
   syncAudio: () => void
+  // Volume normalization (client-side leveling): browser-local only, never
+  // synced — no server setting exists for it (unlike volume/crossfade).
+  normalize: boolean
+  setNormalize: (enabled: boolean) => void
+}
+
+const NORMALIZE_KEY = 'hathor:normalize'
+
+function loadNormalize(): boolean {
+  try {
+    return localStorage.getItem(NORMALIZE_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 function toTrack(song: Song) {
@@ -93,6 +107,17 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   isCustomQueue: false,
   firstPlay: true,
   queueTotal: 0,
+  normalize: loadNormalize(),
+
+  setNormalize: (enabled: boolean) => {
+    try {
+      localStorage.setItem(NORMALIZE_KEY, enabled ? '1' : '0')
+    } catch {
+      // private-mode storage may reject writes — engine flag still applies
+    }
+    set({ normalize: enabled })
+    engine.setNormalize(enabled)
+  },
 
   refresh: async () => {
     const state = await api.playerState()
@@ -120,6 +145,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       // settings fetch must never break boot; engine stays faded off
     }
     engine.setVolume(get().volume)
+    engine.setNormalize(get().normalize)
     syncEngine(get())
   },
 
