@@ -5,14 +5,19 @@ appsettings.Secrets.json
 *.pem
 CA.pem
 
-# Databases / local media
+# Databases / local media (anchored: a bare data/ would swallow the
+# Android app's data package — see apps/mobile/.../data/)
+/data/
+/logs/
+apps/web/data/
+apps/web/logs/
+apps/web/src/Hathor.Api/data/
+apps/web/src/Hathor.Api/logs/
 *.db
 *.db-shm
 *.db-wal
 *.db-journal
 hathor.log
-data/
-logs/
 
 # Python (desktop)
 __pycache__/
