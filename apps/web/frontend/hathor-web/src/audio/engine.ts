@@ -7,6 +7,11 @@
 // Gains follow the equal-power curve (cos/sin), which preserves perceived
 // loudness — a linear ramp would dip audibly in the middle.
 //
+// Optional volume normalization inserts a DynamicsCompressor between master
+// and destination (all tracks incl. podcasts). It is leveling, not measured
+// loudness matching (see Stage 2 loudnorm plan): it evens out loud/quiet
+// material with zero analysis. Purely client-side, persisted in localStorage.
+//
 // Design notes:
 // - The graph runs on the audio thread, but fades are *driven* by a plain
 //   interval timer reading media time, so background tabs (throttled timers),
@@ -14,9 +19,11 @@
 // - The server stays the source of truth: at fade start the engine asks the
 //   store to advance (api.next), exactly when the new audio starts, so the
 //   server position estimate and the new track stay aligned.
-// - Podcasts never fade (Spotify parity): hard switch only.
+// - Podcasts never fade (Spotify parity): hard switch only. Normalization,
+//   by explicit choice, DOES apply to podcasts.
 // - No AudioContext (ancient browsers, some tests) → bypass mode: plain
-//   single-track behavior, no fades, everything else identical.
+//   single-track behavior, no fades, no normalization, everything else
+//   identical.
 
 export interface EngineTrack {
   file: string
@@ -49,6 +56,17 @@ export interface GainParamLike {
 export interface GainNodeLike {
   gain: GainParamLike
   connect(node: unknown): void
+  disconnect(): void
+}
+
+export interface DynamicsCompressorLike {
+  threshold: GainParamLike
+  knee: GainParamLike
+  ratio: GainParamLike
+  attack: GainParamLike
+  release: GainParamLike
+  connect(node: unknown): void
+  disconnect(): void
 }
 
 export interface AudioSourceLike {
@@ -59,6 +77,7 @@ export interface AudioContextLike {
   readonly destination: unknown
   readonly state: string
   createGain(): GainNodeLike
+  createDynamicsCompressor(): DynamicsCompressorLike
   createMediaElementSource(el: AudioElementLike): AudioSourceLike
   resume(): Promise<void> | void
 }
@@ -94,6 +113,8 @@ export class AudioEngine {
   private readonly deps: EngineDeps
   private ctx: AudioContextLike | null = null
   private master: GainNodeLike | null = null
+  private normalizer: DynamicsCompressorLike | null = null
+  private normalizeEnabled = false
   private graphOk = true
   private a: Slot
   private b: Slot
@@ -151,6 +172,56 @@ export class AudioEngine {
     if (!enabled && this.fading) this.finishFade()
   }
 
+  // Volume normalization (leveling): DynamicsCompressor after master.
+  // Stored flag always wins eventually — applied now when the graph exists,
+  // and (re)applied by ensureContext when it is (re)built. Bypass mode
+  // (no AudioContext) keeps the flag but applies nothing.
+  setNormalize(enabled: boolean) {
+    this.normalizeEnabled = enabled
+    this.applyNormalize()
+  }
+
+  isNormalize(): boolean {
+    return this.normalizeEnabled
+  }
+
+  private applyNormalize() {
+    if (!this.ctx || !this.master) return
+    try {
+      this.master.disconnect()
+      this.normalizer?.disconnect()
+    } catch {
+      /* already unwired — rewire below */
+    }
+    if (this.normalizeEnabled) {
+      const comp = this.normalizer ?? this.createNormalizer()
+      if (!comp) {
+        this.master.connect(this.ctx.destination)
+        return
+      }
+      this.normalizer = comp
+      this.master.connect(comp)
+      comp.connect(this.ctx.destination)
+    } else {
+      this.master.connect(this.ctx.destination)
+    }
+  }
+
+  private createNormalizer(): DynamicsCompressorLike | null {
+    if (!this.ctx) return null
+    try {
+      const comp = this.ctx.createDynamicsCompressor()
+      comp.threshold.value = -18
+      comp.knee.value = 20
+      comp.ratio.value = 3
+      comp.attack.value = 0.003
+      comp.release.value = 0.25
+      return comp
+    } catch {
+      return null
+    }
+  }
+
   setNextProvider(
     peek: () => EngineTrack | null,
     begin: (expected: EngineTrack) => Promise<EngineTrack | null>,
@@ -183,7 +254,6 @@ export class AudioEngine {
       const ctx = this.deps.createContext()
       const master = ctx.createGain()
       master.gain.value = this.volume
-      master.connect(ctx.destination)
       for (const slot of [this.a, this.b]) {
         const gain = ctx.createGain()
         gain.gain.value = slot === this.active ? 1 : 0
@@ -193,6 +263,7 @@ export class AudioEngine {
       }
       this.ctx = ctx
       this.master = master
+      this.applyNormalize()
       if (ctx.state === 'suspended') void ctx.resume()
     } catch {
       // No Web Audio: bypass mode (plain elements, no fades).
