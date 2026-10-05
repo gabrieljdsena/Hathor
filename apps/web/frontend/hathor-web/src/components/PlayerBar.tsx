@@ -265,6 +265,15 @@ export default function PlayerBar({
         </div>
         <div className="flex items-center justify-end">
           <button
+            onClick={onToggleLyrics}
+            title="Toggle Lyrics"
+            className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${
+              lyricsActive ? 'text-orange-400' : 'text-zinc-400 active:text-white'
+            }`}
+          >
+            <Icon name="musicNote" className="w-5 h-5" />
+          </button>
+          <button
             onClick={onToggleQueue}
             title="Toggle Queue"
             className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${

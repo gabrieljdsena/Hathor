@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { describe, expect, it } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
 import NowPlaying from './components/NowPlaying'
+import PlayerBar from './components/PlayerBar'
 import SearchInput from './components/ui/SearchInput'
 import SongRow, { VisualizerBars } from './components/ui/SongRow'
 import SortableHeader from './components/ui/SortableHeader'
@@ -128,5 +130,36 @@ describe('NowPlaying', () => {
       </QueryClientProvider>,
     )
     expect(container.firstChild).toBeNull()
+  })
+})
+
+describe('PlayerBar lyrics toggle', () => {
+  function renderBar(onToggleLyrics = vi.fn()) {
+    const client = new QueryClient()
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <PlayerBar
+            onToggleQueue={() => {}}
+            onToggleLyrics={onToggleLyrics}
+            onOpenNowPlaying={() => {}}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    return onToggleLyrics
+  }
+
+  it('renders a lyrics toggle in both desktop and compact layouts', () => {
+    renderBar()
+    // Desktop row + compact row (hidden classes keep both in the DOM).
+    expect(screen.getAllByTitle('Toggle Lyrics')).toHaveLength(2)
+  })
+
+  it('fires the toggle from the compact layout button', () => {
+    const onToggleLyrics = renderBar()
+    // Compact row renders first in the DOM; desktop row second.
+    fireEvent.click(screen.getAllByTitle('Toggle Lyrics')[0])
+    expect(onToggleLyrics).toHaveBeenCalledTimes(1)
   })
 })
