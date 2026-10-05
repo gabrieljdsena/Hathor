@@ -5,6 +5,12 @@
 param(
     [string]$ServiceName = 'Hathor',
     [int]$Port = 5050,
+    # The service runs as LocalSystem, whose %APPDATA% is NOT yours — without
+    # these the API would serve an empty library from the SYSTEM profile.
+    # Defaults to this user's desktop folders (same ones the desktop app uses).
+    [string]$SongsPath = (Join-Path $env:APPDATA 'musicPlayer'),
+    [string]$PodcastsPath = (Join-Path $env:APPDATA 'musicPlayerPodcasts'),
+    [string]$StorageRoot = (Join-Path $env:PROGRAMDATA 'Hathor'),
     [switch]$Uninstall
 )
 
@@ -61,6 +67,20 @@ if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
 else {
     Write-Host "[skip] service '$ServiceName' already registered"
 }
+
+# Library paths refresh on every install (not just first registration):
+# the service runs as LocalSystem, whose %APPDATA% is NOT yours — without
+# these the API serves an empty library from the SYSTEM profile.
+foreach ($dir in @($SongsPath, $PodcastsPath, $StorageRoot)) {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+}
+[Environment]::SetEnvironmentVariable('Library__SongsPath', $SongsPath, 'Machine')
+[Environment]::SetEnvironmentVariable('Library__PodcastsPath', $PodcastsPath, 'Machine')
+[Environment]::SetEnvironmentVariable('Database__StorageRoot', $StorageRoot, 'Machine')
+Write-Host "[ok] library paths pinned as machine env:"
+Write-Host "     songs=$SongsPath"
+Write-Host "     podcasts=$PodcastsPath"
+Write-Host "     storage=$StorageRoot"
 
 # LAN access: the service binds 0.0.0.0, but Windows Firewall drops inbound
 # LAN traffic by default. Profile Any (same as the MyHomeLab 443/8080 rules):
