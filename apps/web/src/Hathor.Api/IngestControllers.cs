@@ -88,10 +88,13 @@ public sealed class LyricsQueryController(IMediator mediator) : ControllerBase
             Guid.Empty, body.Track, body.Artist ?? "", body.Album, body.Duration), ct));
     }
 
-    // Kana → romaji (desktop pykakasi toggle; timestamps preserved for LRC).
+    // Kana → romaji (MeCab backend when Python is available, kana table
+    // fallback; timestamps preserved for LRC).
     [HttpPost("romanize")]
-    public ActionResult<RomanizeResponse> Romanize([FromBody] RomanizeRequest body) =>
-        Ok(new RomanizeResponse(KanaRomaji.Romanize(body.Text ?? "", body.IsLrc)));
+    public async Task<ActionResult<RomanizeResponse>> Romanize(
+        [FromBody] RomanizeRequest body, CancellationToken ct) =>
+        Ok(new RomanizeResponse(await mediator.Send(
+            new RomanizeTextQuery(body.Text ?? "", body.IsLrc), ct)));
 
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -140,7 +143,7 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
             ? NoContent()
             : NotFound();
 
-    // Highlight timing correction, milliseconds (-10000..10000, clamped).
+    // Highlight timing correction, milliseconds (-20000..20000, clamped).
     // Zero removes the row when it holds no lyrics (sparse storage).
     [HttpGet("offset")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]

@@ -104,7 +104,7 @@ public sealed class SetLyricsOffsetHandler(ILyricsRepository cache)
 {
     public async Task<int> Handle(SetLyricsOffsetCommand cmd, CancellationToken ct)
     {
-        var offset = Math.Clamp(cmd.OffsetMs, -10000, 10000);
+        var offset = Math.Clamp(cmd.OffsetMs, -20000, 20000);
         await cache.SetOffsetAsync(cmd.UserId, cmd.File, offset, ct);
         await cache.SaveChangesAsync(ct);
         return offset;

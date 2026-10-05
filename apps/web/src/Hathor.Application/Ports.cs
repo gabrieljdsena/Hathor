@@ -214,6 +214,14 @@ public interface ILoudnessAnalyzer
     Task<double?> AnalyzeAsync(string path, CancellationToken ct = default);
 }
 
+// MeCab romanization backend port (fugashi + cutlet via sidecar).
+// Optional: null means unavailable (no Python/packages/timeout) and the
+// caller falls back to KanaRomaji. Never throws.
+public interface IRomanizerBackend
+{
+    Task<string?> RomanizeAsync(string text, bool isLrc, CancellationToken ct = default);
+}
+
 // lrclib port (desktop LyricsService fetch paths).
 public interface ILrclibClient
 {

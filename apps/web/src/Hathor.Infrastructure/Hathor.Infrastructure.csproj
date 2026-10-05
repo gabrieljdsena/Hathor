@@ -37,4 +37,13 @@
     <InternalsVisibleTo Include="Hathor.Application.Tests" />
   </ItemGroup>
 
+  <!-- Lyrics romanizer sidecar: copied next to the app (AppContext/BaseDirectory
+       + "Python") for dev runs, tests, publish and Docker alike. -->
+  <ItemGroup>
+    <Content Include="Python\*.py">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

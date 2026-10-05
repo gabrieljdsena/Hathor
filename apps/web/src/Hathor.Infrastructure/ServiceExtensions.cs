@@ -167,6 +167,11 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<Application.Ports.ILoudnessAnalyzer, Enrichment.LoudnessAnalyzer>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
+        services.AddScoped<Application.Ports.IRomanizerBackend>(sp =>
+            new Enrichment.FugashiRomanizer(
+                config.GetSection("Romanize").Get<Enrichment.RomanizerOptions>()
+                    ?? new Enrichment.RomanizerOptions(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Enrichment.FugashiRomanizer>>()));
         services.AddScoped<Application.Ports.IDiscoverySuggester>(sp =>
             new Enrichment.LlamaDiscoverySuggester(
                 sp.GetRequiredService<IHttpClientFactory>(),
