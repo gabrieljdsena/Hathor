@@ -31,19 +31,49 @@ class FakeEl implements AudioElementLike {
 
 class FakeGain {
   gain = { value: 0 }
-  connect() {}
+  connectedTo: unknown[] = []
+  disconnects = 0
+  connect(node: unknown) {
+    this.connectedTo.push(node)
+  }
+  disconnect() {
+    this.disconnects += 1
+  }
+}
+
+class FakeComp {
+  threshold = { value: 0 }
+  knee = { value: 0 }
+  ratio = { value: 0 }
+  attack = { value: 0 }
+  release = { value: 0 }
+  connectedTo: unknown[] = []
+  disconnects = 0
+  connect(node: unknown) {
+    this.connectedTo.push(node)
+  }
+  disconnect() {
+    this.disconnects += 1
+  }
 }
 
 class FakeCtx implements AudioContextLike {
   destination = {}
   state = 'running'
   gains: FakeGain[] = []
+  comps: FakeComp[] = []
   resumed = 0
 
   createGain() {
     const g = new FakeGain()
     this.gains.push(g)
     return g
+  }
+
+  createDynamicsCompressor() {
+    const c = new FakeComp()
+    this.comps.push(c)
+    return c
   }
 
   createMediaElementSource() {
@@ -313,5 +343,56 @@ describe('AudioEngine crossfade', () => {
     engine.setCrossfade(true, 5)
     engine.setVolume(0.4)
     expect(els[0].volume).toBeCloseTo(0.4, 5)
+  })
+})
+
+describe('AudioEngine normalize (leveling)', () => {
+  it('routes master straight to destination when off (default)', () => {
+    const s = setup()
+    s.engine.load(track('a.mp3'), true)
+    expect(s.engine.isNormalize()).toBe(false)
+    expect(s.ctx.comps).toHaveLength(0)
+    expect(s.ctx.gains[0].connectedTo).toContain(s.ctx.destination)
+  })
+
+  it('inserts the compressor with music-tuned settings when enabled', () => {
+    const s = setup()
+    s.engine.setNormalize(true)
+    s.engine.load(track('a.mp3'), true)
+    expect(s.ctx.comps).toHaveLength(1)
+    const comp = s.ctx.comps[0]
+    expect(comp.threshold.value).toBe(-18)
+    expect(comp.knee.value).toBe(20)
+    expect(comp.ratio.value).toBe(3)
+    expect(comp.attack.value).toBeCloseTo(0.003, 5)
+    expect(comp.release.value).toBe(0.25)
+    expect(s.ctx.gains[0].connectedTo).toContain(comp)
+    expect(comp.connectedTo).toContain(s.ctx.destination)
+  })
+
+  it('rewires live on toggle without touching slot gains', () => {
+    const s = setup()
+    s.engine.load(track('a.mp3'), true)
+    const slotBefore = s.ctx.gains[1].gain.value
+    s.engine.setNormalize(true)
+    expect(s.ctx.comps).toHaveLength(1)
+    s.engine.setNormalize(false)
+    const masterWires = s.ctx.gains[0].connectedTo
+    expect(masterWires[masterWires.length - 1]).toBe(s.ctx.destination)
+    expect(s.ctx.gains[1].gain.value).toBe(slotBefore)
+  })
+
+  it('is a stored no-op without Web Audio', () => {
+    vi.useRealTimers()
+    const engine = new AudioEngine({
+      createElement: () => new FakeEl(),
+      createContext: () => {
+        throw new Error('no webaudio')
+      },
+      now: () => 0,
+    })
+    expect(() => engine.setNormalize(true)).not.toThrow()
+    engine.load(track('a.mp3'), true)
+    expect(engine.isNormalize()).toBe(true)
   })
 })

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type FfmpegDownloadStatus, type LibraryInfo, type SessionInfo } from '../api/client'
 import { engine } from '../audio/engine'
 import { useAuth } from '../auth/AuthContext'
+import { usePlayer } from '../store/player'
 import ToggleSwitch from '../components/ui/ToggleSwitch'
 import ViewHeader from '../components/ui/ViewHeader'
 
@@ -373,6 +374,30 @@ export default function Settings() {
           <button className={btn} disabled={busy !== null} onClick={saveCrossfade}>
             {spin('crossfade')}Save
           </button>
+        </Row>
+
+        <Row
+          icon={
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v18m0-18c-4 0-7 2.5-7 7v4c0 4.5 3 7 7 7s7-2.5 7-7v-4c0-4.5-3-7-7-7zm-7 10h14" />
+            </svg>
+          }
+          title="Normalize volume"
+          hint="Even out loud and quiet tracks (all music and podcasts). Leveling only — measured loudness matching lands later. This browser only."
+          extra={
+            <div className="flex items-center gap-3 mt-2">
+              <span className="flex items-center gap-2 text-xs text-zinc-400 select-none">
+                <ToggleSwitch
+                  checked={usePlayer((s) => s.normalize)}
+                  onChange={(v) => usePlayer.getState().setNormalize(v)}
+                  label="Normalize volume"
+                />
+                Enabled
+              </span>
+            </div>
+          }
+        >
+          <span className="text-xs text-zinc-600 uppercase tracking-widest">Instant · no save needed</span>
         </Row>
 
         <Row
