@@ -74,18 +74,37 @@ apps/mobile/
 ## How sync works
 
 The app talks directly to the remote MySQL/TiDB database (Connector/J) using
-the same table and column names as the desktop `database.sql`, and keeps a
-local Room copy for offline use. Background sync is scheduled with WorkManager.
-Credentials are baked in from `local.properties` at build time via
-`BuildConfig` fields — they never appear in source. Tombstone deletions,
-incremental history and newest-wins mixes follow `packages/contracts`
-(`../../packages/contracts/`).
+the same table and column names as the desktop `database.sql` (see
+`data/db/Entities.kt` — byte-identical names, no translation layer), and
+keeps a local Room copy (`hathor.db`) for offline use. Credentials are baked
+in from `local.properties` at build time via `BuildConfig` fields — they
+never appear in source. Empty `DB_HOST` disables sync, exactly like desktop.
+
+- **Pull** (`data/remote/PullWorker.kt`, shared by the first-run prompt and
+  the Settings Pull button): reads songs + podcasts + playlists + links +
+  lyrics + both histories + tags + daily mix (guarded tables for old
+  remotes), upserts into Room, adopts the remote mix, downloads missing
+  files under their exact remote filenames. One bad row never aborts.
+  Tombstones are not applied on pull (desktop parity — deletions propagate
+  through push; the rows are already gone remotely).
+- **Push** (`data/SyncRepository.kt`, Settings Push button): initializes the
+  remote schema, upserts songs/podcasts/playlists/tags/lyrics, replaces link
+  tables scoped to this phone's ids, propagates tombstones, pushes the mix
+  newest-wins with prune, appends history past remote `MAX(id)` with
+  `AUTO_INCREMENT` realignment, then clears applied tombstones. Step-by-step
+  progress, summary and errors surface through `SyncState`.
+- Push/pull are 1:1 with desktop `sync.py` + `sync_remote_to_local…` and web
+  `RemotePushService`/`RemotePullService` (same DDL, same delete columns,
+  same guarded-table behavior). No scheduler anywhere: pull is first-run
+  prompt + Pull button, push is the Push button (manual-only, like desktop).
 
 ## Current status
 
-The Compose UI, navigation shell, theme, download engine and playback service
-are in the repo. The `data` package (Room database, repositories, sync
-workers referenced by the screens) has not landed yet, so the project does
-not compile on a fresh checkout — that layer is the next piece to push.
+Sync is complete: Room database, remote reader/writer, `SyncRepository` and
+`PullWorker` are in the repo, wired to the exact APIs the UI already calls.
+Still missing (separate features, untouched by sync): `QueueRepository`,
+`MetadataRepository`, `ArtworkRepository`, `SettingsRepository`,
+`PodcastRepository`, the remaining read repositories the screens import, and
+`DownloadService` — so the project does not compile on a fresh checkout yet.
 `PLAN.md` and `FEATURE_PLAN.md` in this folder are the original build plans
 kept for reference; this README describes the app itself.

@@ -142,7 +142,7 @@ class PlayerApp : Application() {
                 withTimeoutOrNull(180_000) { ytdlpUpdate.join() }
             }
         )
-        syncRepo = SyncRepository(this, downloadEngine, queueRepo, metadata = metadataRepo)
+        syncRepo = SyncRepository(this, downloadEngine)
     }
 
     sealed interface EngineState {
