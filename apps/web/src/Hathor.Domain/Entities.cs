@@ -66,6 +66,10 @@ public sealed class Song
     public string? Year { get; set; }
     public string? Genre { get; set; }
     public double DurationSecs { get; set; }
+    // Measured integrated loudness in LUFS (ffmpeg loudnorm), null until
+    // analyzed. Drives per-track normalization gain (Stage 2); the leveler
+    // covers unmeasured tracks.
+    public double? LoudnessDb { get; set; }
 }
 
 public sealed class Podcast

@@ -164,6 +164,7 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<Application.Ports.IJwtTokenService, JwtTokenService>();
         services.AddSingleton<Application.Ports.IApiKeyService, ApiKeyService>();
         services.AddSingleton<Application.Ports.IDownloadEngine, Ingest.YoutubeExplodeEngine>();
+        services.AddSingleton<Application.Ports.ILoudnessAnalyzer, Enrichment.LoudnessAnalyzer>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
         services.AddScoped<Application.Ports.IDiscoverySuggester>(sp =>

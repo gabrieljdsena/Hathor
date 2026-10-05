@@ -20,6 +20,9 @@ public interface ISongReadModel
     // or null — drives the "already in your library?" download confirm.
     Task<string?> FindFileByMetadataAsync(Guid userId, string title, string? artist,
         CancellationToken ct = default);
+    // Files whose rows lack measured loudness (bounded backfill).
+    Task<IReadOnlyList<string>> GetFilesMissingLoudnessAsync(Guid userId, int limit,
+        CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetAlbumsAsync(Guid userId, CancellationToken ct = default);
     Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(Guid userId, string album, CancellationToken ct = default);
 }
@@ -201,6 +204,14 @@ public interface IDiscoverySuggester
     Task<IReadOnlyList<(string Title, string Artist)>> SuggestAsync(
         IReadOnlyList<(string Artist, long Plays)> taste, int maxSuggestions,
         CancellationToken ct = default);
+}
+
+// Loudness analyzer port (ffmpeg loudnorm): integrated LUFS for a file,
+// or null when analysis fails. Never throws — callers treat null as
+// "unmeasured" and the leveler covers the track.
+public interface ILoudnessAnalyzer
+{
+    Task<double?> AnalyzeAsync(string path, CancellationToken ct = default);
 }
 
 // lrclib port (desktop LyricsService fetch paths).
