@@ -141,7 +141,7 @@ public sealed class Lyric
     public Guid UserId { get; set; }
     public string SongFile { get; set; } = "";
     public string? LyricsJson { get; set; } // {synced, plain}
-    // Per-song highlight timing correction, milliseconds (-10000..10000).
+    // Per-song highlight timing correction, milliseconds (-20000..20000).
     // Zero = none (no row needed, but harmless when present).
     public int OffsetMs { get; set; }
 }
