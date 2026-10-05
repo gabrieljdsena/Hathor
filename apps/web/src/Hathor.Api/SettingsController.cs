@@ -107,6 +107,13 @@ public sealed class SettingsController(
         return Ok(new ScanResultDto(result.Added, result.Updated));
     }
 
+    // Loudness backfill: analyze up to `limit` unmeasured files (resumable).
+    [HttpPost("/api/v1/songs/loudness/backfill")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<LoudnessBackfillDto>> BackfillLoudness(
+        [FromQuery] int limit = 20, CancellationToken ct = default) =>
+        Ok(await mediator.Send(new BackfillLoudnessCommand(CurrentUserId(), limit), ct));
+
     private static string MimeFor(string file) =>
         Path.GetExtension(file).ToLowerInvariant() switch
         {

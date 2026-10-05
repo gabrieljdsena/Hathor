@@ -225,10 +225,23 @@ export default function Settings() {
             </svg>
           }
           title="Local Songs Folder"
-          hint="Scan the folder into the database, pull the desktop remote library, or push this library back to the remote."
+          hint="Scan the folder into the database, measure loudness for normalization, pull the desktop remote library, or push this library back to the remote."
         >
           <button className={btn} disabled={busy !== null} onClick={() => run('songs', api.scanSongs().then((r) => `Sync complete: ${r.added} added, ${r.updated} updated.`))}>
             {spin('songs')}Scan
+          </button>
+          <button
+            className={btn}
+            disabled={busy !== null}
+            onClick={() =>
+              run('loudness', api.backfillLoudness().then((r) =>
+                r.remaining > 0
+                  ? `Measured ${r.scanned} songs, ${r.remaining} to go — run again.`
+                  : `Loudness measured for ${r.scanned} songs. Library complete.`,
+              ))
+            }
+          >
+            {spin('loudness')}Measure
           </button>
           <button
             className={btn}
@@ -383,7 +396,7 @@ export default function Settings() {
             </svg>
           }
           title="Normalize volume"
-          hint="Even out loud and quiet tracks (all music and podcasts). Leveling only — measured loudness matching lands later. This browser only."
+          hint="Even out loud and quiet tracks (all music and podcasts). Measured per-track loudness when analyzed, leveling otherwise. This browser only."
           extra={
             <div className="flex items-center gap-3 mt-2">
               <span className="flex items-center gap-2 text-xs text-zinc-400 select-none">

@@ -13,6 +13,7 @@ export interface Song {
   coverArt: string | null
   dateDownload: string | null
   isPodcast?: boolean
+  loudnessDb?: number | null
 }
 
 export interface QueueSource {
@@ -607,6 +608,12 @@ export const api = {
     request<void>(`/podcasts/${encodeURIComponent(file)}`, { method: 'DELETE' }),
   scanPodcasts: () => request<{ added: number; updated: number }>('/podcasts/scan', { method: 'POST' }),
   scanSongs: () => request<{ added: number; updated: number }>('/songs/scan', { method: 'POST' }),
+  // Loudness backfill (resumable: repeat until remaining hits 0).
+  backfillLoudness: (limit = 20) =>
+    request<{ scanned: number; remaining: number }>(
+      `/songs/loudness/backfill?limit=${limit}`,
+      { method: 'POST' },
+    ),
 
   // settings + system
   settings: () => request<UserSettings>('/settings'),

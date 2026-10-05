@@ -14,7 +14,8 @@ public sealed record SongDto(
     string? CoverArt,
     string? DateDownload,
     bool IsPodcast = false,
-    string Genre = "Unknown");
+    string Genre = "Unknown",
+    double? LoudnessDb = null);
 
 public sealed record QueueSourceDto(string Type, string? Id);
 
@@ -143,6 +144,9 @@ public sealed record ITunesHitDto(
 
 // Download ownership pre-check (already-in-library confirm).
 public sealed record OwnedCheckDto(bool Owned, string? File);
+
+// Loudness backfill progress (resumable: repeat until remaining hits 0).
+public sealed record LoudnessBackfillDto(int Scanned, int Remaining);
 
 // lrclib candidates (desktop search_lyrics suggestions, max 10 deduped).
 public sealed record LyricsHitDto(

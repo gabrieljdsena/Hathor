@@ -184,6 +184,7 @@ public sealed class DownloadQueueService(
         var storage = scope.ServiceProvider.GetRequiredService<ILibraryStorage>();
         var metaReader = scope.ServiceProvider.GetRequiredService<Library.SongMetadataReader>();
         var itunes = scope.ServiceProvider.GetRequiredService<IITunesClient>();
+        var loudness = scope.ServiceProvider.GetRequiredService<ILoudnessAnalyzer>();
         var hub = scope.ServiceProvider.GetRequiredService<IPlaybackHub>();
 
         var job = await jobs.GetByQidAsync(qid);
@@ -327,6 +328,15 @@ public sealed class DownloadQueueService(
                 await records.UpsertDownloadedAsync(userId, name, info.PageUrl,
                     finished.Title, finished.Artist, finished.Album,
                     finished.Year, finished.Genre, finished.Duration);
+                // Measure loudness for per-track normalization (best effort:
+                // analysis must never fail a completed download).
+                try
+                {
+                    var lufs = await loudness.AnalyzeAsync(finalPath, cts.Token);
+                    if (lufs is not null)
+                        await records.SetLoudnessAsync(userId, name, lufs.Value, cts.Token);
+                }
+                catch { }
                 await records.SaveChangesAsync();
             }
 

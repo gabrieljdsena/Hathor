@@ -29,6 +29,20 @@ export interface EngineTrack {
   file: string
   url: string
   isPodcast: boolean
+  // Measured-loudness correction in dB (null = unmeasured, gain 1).
+  // Applied per slot so fades multiply, never fight, the correction.
+  gainDb: number | null
+}
+
+// Streaming-style target (mirrors backend LoudnessGain.TargetLufs /
+// MaxCorrectionDb — keep the constants in sync).
+export const LOUDNESS_TARGET_LUFS = -14
+export const LOUDNESS_MAX_CORRECTION_DB = 12
+
+export function gainForDb(gainDb: number | null | undefined): number {
+  if (gainDb === null || gainDb === undefined || !Number.isFinite(gainDb)) return 1
+  const clamped = Math.min(LOUDNESS_MAX_CORRECTION_DB, Math.max(-LOUDNESS_MAX_CORRECTION_DB, gainDb))
+  return Math.pow(10, clamped / 20)
 }
 
 export interface EngineDeps {
@@ -87,6 +101,7 @@ interface Slot {
   gain: GainNodeLike | null
   file: string | null
   isPodcast: boolean
+  baseGain: number
 }
 
 interface Fade {
@@ -145,7 +160,7 @@ export class AudioEngine {
       createContext: contextFactory,
       now: deps?.now ?? (() => performance.now()),
     }
-    const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, isPodcast: false })
+    const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, isPodcast: false, baseGain: 1 })
     this.a = mkSlot()
     this.b = mkSlot()
     this.active = this.a
@@ -288,6 +303,7 @@ export class AudioEngine {
       this.active.el.currentTime = 0
       this.active.file = track.file
       this.active.isPodcast = track.isPodcast
+      this.active.baseGain = gainForDb(track.gainDb)
     }
     this.setSlotGain(this.active, 1)
     if (autoplay) safelyPlay(this.active.el)
@@ -355,8 +371,11 @@ export class AudioEngine {
   // ---- internals ------------------------------------------------------
 
   private setSlotGain(slot: Slot, v: number) {
-    if (slot.gain) slot.gain.gain.value = v
-    else if (!this.graph) slot.el.volume = this.active === slot ? this.volume : 0
+    if (slot.gain) slot.gain.gain.value = v * slot.baseGain
+    else if (!this.graph) {
+      slot.el.volume =
+        this.active === slot ? Math.min(1, Math.max(0, this.volume * slot.baseGain)) : 0
+    }
   }
 
   private handleEnded(slot: Slot) {
@@ -465,6 +484,7 @@ export class AudioEngine {
         idle.el.src = next.url
         idle.file = next.file
         idle.isPodcast = next.isPodcast
+        idle.baseGain = gainForDb(next.gainDb)
       }
       if (remaining > this.fadeSec) return
     }
@@ -524,6 +544,7 @@ export class AudioEngine {
       this.active.el.currentTime = 0
       this.active.file = actual.file
       this.active.isPodcast = actual.isPodcast
+      this.active.baseGain = gainForDb(actual.gainDb)
       this.setSlotGain(this.active, 1)
       safelyPlay(this.active.el)
     } else {
