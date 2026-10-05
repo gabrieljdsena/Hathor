@@ -30,7 +30,15 @@ function loadNormalize(): boolean {
 }
 
 function toTrack(song: Song) {
-  return { file: song.file, url: api.streamUrl(song.file, song.isPodcast), isPodcast: !!song.isPodcast }
+  return {
+    file: song.file,
+    url: api.streamUrl(song.file, song.isPodcast),
+    isPodcast: !!song.isPodcast,
+    gainDb:
+      song.loudnessDb === null || song.loudnessDb === undefined
+        ? null
+        : -14 - song.loudnessDb,
+  }
 }
 
 // The engine renders whatever the server says is current (used after every

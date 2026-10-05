@@ -128,6 +128,9 @@ public interface ISongRecordRepository
     Task UpsertDownloadedAsync(Guid userId, string file, string? link, string title,
         string? artist, string? album, string? year, string? genre, double durationSecs,
         CancellationToken ct = default);
+    // Loudness backfill (ffmpeg loudnorm): null until analyzed.
+    Task SetLoudnessAsync(Guid userId, string file, double loudnessDb,
+        CancellationToken ct = default);
     // Deletes links + lyrics + history + song row. Returns false when no row existed.
     Task<bool> DeleteCascadeAsync(Guid userId, string file, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);

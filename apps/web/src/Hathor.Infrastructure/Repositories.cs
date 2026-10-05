@@ -287,6 +287,14 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
         song.DurationSecs = durationSecs;
     }
 
+    public async Task SetLoudnessAsync(Guid userId, string file, double loudnessDb,
+        CancellationToken ct = default)
+    {
+        var song = await GetAsync(userId, file, ct);
+        if (song is null) return;
+        song.LoudnessDb = loudnessDb;
+    }
+
     public async Task UpsertDownloadedAsync(Guid userId, string file, string? link,
         string title, string? artist, string? album, string? year, string? genre,
         double durationSecs, CancellationToken ct = default)

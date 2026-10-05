@@ -437,6 +437,9 @@ namespace Hathor.Migrations.MySql.Migrations
                     b.Property<string>("Genre")
                         .HasColumnType("longtext");
 
+                    b.Property<double?>("LoudnessDb")
+                        .HasColumnType("double");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(255)

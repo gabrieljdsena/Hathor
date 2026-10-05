@@ -86,10 +86,11 @@ class FakeCtx implements AudioContextLike {
   }
 }
 
-const track = (file: string, podcast = false): EngineTrack => ({
+const track = (file: string, podcast = false, gainDb: number | null = null): EngineTrack => ({
   file,
   url: `http://x/${file}`,
   isPodcast: podcast,
+  gainDb,
 })
 
 function setup() {
@@ -394,5 +395,53 @@ describe('AudioEngine normalize (leveling)', () => {
     expect(() => engine.setNormalize(true)).not.toThrow()
     engine.load(track('a.mp3'), true)
     expect(engine.isNormalize()).toBe(true)
+  })
+})
+
+describe('AudioEngine per-track loudness gain', () => {
+  it('applies measured gain multiplied with fade gain', () => {
+    const s = setup()
+    // +8 dB correction: gain = 10^(8/20), applied at unity fade gain.
+    s.engine.load(track('hot.mp3', false, 8), true)
+    expect(s.ctx.gains[1].gain.value).toBeCloseTo(Math.pow(10, 8 / 20), 5)
+  })
+
+  it('uses unity gain without measurement', () => {
+    const s = setup()
+    s.engine.load(track('a.mp3', false, null), true)
+    expect(s.ctx.gains[1].gain.value).toBeCloseTo(1, 5)
+  })
+
+  it('clamps extreme corrections in bypass mode', () => {
+    vi.useRealTimers()
+    const els: FakeEl[] = []
+    const engine = new AudioEngine({
+      createElement: () => {
+        const el = new FakeEl()
+        els.push(el)
+        return el
+      },
+      createContext: () => {
+        throw new Error('no webaudio')
+      },
+      now: () => 0,
+    })
+    engine.setVolume(0.9)
+    // +30 dB clamps to +12 dB (~4x): 0.9 * 4 exceeds 1, clamps to 1.
+    engine.load(track('hot.mp3', false, 30), true)
+    expect(els[0].volume).toBeCloseTo(1, 5)
+  })
+
+  it('gainForDb mirrors the backend constants', async () => {
+    const { gainForDb, LOUDNESS_TARGET_LUFS, LOUDNESS_MAX_CORRECTION_DB } =
+      await import('./engine')
+    expect(LOUDNESS_TARGET_LUFS).toBe(-14)
+    expect(LOUDNESS_MAX_CORRECTION_DB).toBe(12)
+    expect(gainForDb(null)).toBe(1)
+    expect(gainForDb(Number.NaN)).toBe(1)
+    expect(gainForDb(0)).toBe(1)
+    expect(gainForDb(-8)).toBeCloseTo(Math.pow(10, -8 / 20), 5)
+    expect(gainForDb(30)).toBeCloseTo(Math.pow(10, 12 / 20), 5)
+    expect(gainForDb(-30)).toBeCloseTo(Math.pow(10, -12 / 20), 5)
   })
 })

@@ -20,7 +20,7 @@ public sealed class DapperSongReadModel(
     // Narrow row: everything list/search/sort/display needs, no file I/O.
     private sealed record SongRow(
         string File, string Title, string? Artist, string? Album, string? Year,
-        string? Genre, double DurationSecs, DateTime DateDownloadUtc);
+        string? Genre, double DurationSecs, double? LoudnessDb, DateTime DateDownloadUtc);
 
     private static string Iso(DateTime dt) => dt.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
 
@@ -35,14 +35,15 @@ public sealed class DapperSongReadModel(
         null,
         Iso(r.DateDownloadUtc),
         false,
-        string.IsNullOrWhiteSpace(r.Genre) ? "Unknown" : r.Genre);
+        string.IsNullOrWhiteSpace(r.Genre) ? "Unknown" : r.Genre,
+        r.LoudnessDb);
 
     private async Task<IReadOnlyList<SongRow>> SongRowsAsync(Guid userId, CancellationToken ct)
     {
         var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
             $"{factory.Quote("Artist")}, {factory.Quote("Album")}, {factory.Quote("Year")}, " +
             $"{factory.Quote("Genre")}, {factory.Quote("DurationSecs")}, " +
-            $"{factory.Quote("DateDownloadUtc")} " +
+            $"{factory.Quote("LoudnessDb")}, {factory.Quote("DateDownloadUtc")} " +
             $"FROM {factory.Quote("Songs")} WHERE {factory.UserIdPredicate()}";
         using var conn = factory.Create();
         var rows = await conn.QueryAsync<SongRow>(
@@ -60,7 +61,7 @@ public sealed class DapperSongReadModel(
         var cols = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
             $"{factory.Quote("Artist")}, {factory.Quote("Album")}, {factory.Quote("Year")}, " +
             $"{factory.Quote("Genre")}, {factory.Quote("DurationSecs")}, " +
-            $"{factory.Quote("DateDownloadUtc")} " +
+            $"{factory.Quote("LoudnessDb")}, {factory.Quote("DateDownloadUtc")} " +
             $"FROM {factory.Quote("Songs")} WHERE {factory.UserIdPredicate()} " +
             $"AND {factory.Quote("File")} IN ";
         using var conn = factory.Create();
@@ -350,6 +351,25 @@ public sealed class DapperSongReadModel(
             .Where(r => MediaKeys.Key(r.Title, r.Artist ?? "") == want)
             .Select(r => r.File)
             .FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<string>> GetFilesMissingLoudnessAsync(
+        Guid userId, int limit, CancellationToken ct = default)
+    {
+        var sql = $"SELECT {factory.Quote("File")} FROM {factory.Quote("Songs")} " +
+            $"WHERE {factory.UserIdPredicate()} AND {factory.Quote("LoudnessDb")} IS NULL " +
+            $"ORDER BY {factory.Quote("File")} LIMIT @Limit";
+        using var conn = factory.Create();
+        var rows = await conn.QueryAsync<string>(
+            new CommandDefinition(sql,
+                new
+                {
+                    UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId),
+                    Limit = Math.Max(limit, 1),
+                },
+                cancellationToken: ct));
+        var live = storage.ListSongFiles(userId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return rows.Where(f => live.Contains(f)).ToList();
     }
 
     public async Task<IReadOnlyList<string>> GetAlbumsAsync(Guid userId, CancellationToken ct = default)
