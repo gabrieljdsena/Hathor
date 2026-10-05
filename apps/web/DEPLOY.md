@@ -28,6 +28,14 @@ Open `http://localhost:5050` (API + UI same origin).
 
 ## Notes
 
+- The service runs as LocalSystem, whose `%APPDATA%` is the SYSTEM profile,
+  not yours. The installer therefore pins `Library__SongsPath`,
+  `Library__PodcastsPath` and `Database__StorageRoot` machine env vars to
+  your real folders (same ones the desktop app uses). Override with
+  `-SongsPath` / `-PodcastsPath` / `-StorageRoot` if your library lives
+  elsewhere. Without these, All Songs comes back empty while the DB looks
+  fine — the classic symptom this fixes.
+
 - `artifacts/publish/` and the copied `src/Hathor.Api/wwwroot/` are
   gitignored build outputs — never committed.
 - `appsettings.Secrets.json` is excluded from publish output by the csproj,
