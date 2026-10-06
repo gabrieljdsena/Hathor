@@ -54,6 +54,14 @@ data class RemoteTagRow(val id: Long, val name: String)
 
 data class RemoteTagLinkRow(val id: Long, val podcastFile: String, val tagId: Long)
 
+data class RemoteChapterRow(
+    val id: Long,
+    val podcastFile: String,
+    val name: String,
+    val startSecs: Double,
+    val endSecs: Double?,
+)
+
 data class RemoteMixRow(val mixDate: String, val songFilesJson: String)
 
 data class RemoteSnapshot(
@@ -66,6 +74,7 @@ data class RemoteSnapshot(
     val playlistHistory: List<RemotePlaylistHistoryRow>,
     val tags: List<RemoteTagRow>,
     val tagLinks: List<RemoteTagLinkRow>,
+    val chapters: List<RemoteChapterRow>,
     val mixes: List<RemoteMixRow>,
 )
 
@@ -222,8 +231,28 @@ object RemoteReader {
         } else {
             emptyList()
         }
-        val mixes = if (RemoteDb.tableExists(conn, "daily_mix")) {
-            conn.prepareStatement("SELECT mix_date, song_files FROM daily_mix").use { stmt ->
+        val chapters = if (RemoteDb.tableExists(conn, "podcast_chapters")) {
+            conn.prepareStatement(
+                "SELECT id, podcast_file, name, start_secs, end_secs FROM podcast_chapters",
+            ).use { stmt ->
+                stmt.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            val end = rs.getDouble(5)
+                            add(
+                                RemoteChapterRow(
+                                    rs.getLong(1), rs.getString(2), rs.getString(3),
+                                    rs.getDouble(4), if (rs.wasNull()) null else end,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            emptyList()
+        }
+        val mixes = if (RemoteDb.tableExists(conn, "daily_mix")) {            conn.prepareStatement("SELECT mix_date, song_files FROM daily_mix").use { stmt ->
                 stmt.executeQuery().use { rs ->
                     buildList {
                         while (rs.next()) add(RemoteMixRow(rs.getString(1), rs.getString(2)))
@@ -235,7 +264,7 @@ object RemoteReader {
         }
         return RemoteSnapshot(
             songs, podcasts, playlists, songLinks, lyrics,
-            musicHistory, playlistHistory, tags, tagLinks, mixes,
+            musicHistory, playlistHistory, tags, tagLinks, chapters, mixes,
         )
     }
 }

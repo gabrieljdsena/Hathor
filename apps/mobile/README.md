@@ -16,10 +16,16 @@ background, glass surfaces, orange accent.
 - **YouTube downloads** — on-device YouTube → 320kbps MP3 using the real yt-dlp
   engine (`youtubedl-android` + its bundled FFmpeg), with a job list showing
   per-download progress, retry and cancel
-- **Podcasts** — separate podcast library with its own storage folder
+- **Podcasts** — separate podcast library with its own storage folder,
+  per-episode chapter marks (seek chips, edit, delete) with optional
+  chapter auto-skip (Settings), and podcast tags
+- **Lyrics** — lrclib synced/plain fetch with offline Room cache plus a
+  per-song highlight-timing correction (±20 s stepper, persisted)
 - **Playlists & history** — playlist CRUD, played/download history tabs
 - **Remote sync** — pulls the library from the same MySQL/TiDB database the
   desktop app pushes to, so the phone mirrors the PC collection
+  (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast
+  chapters, tags, history, daily mix)
 
 ## Requirements
 

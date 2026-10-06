@@ -72,6 +72,13 @@ object RemoteWriter {
             podcast_file VARCHAR(255) NOT NULL,
             tag_id BIGINT NOT NULL
         )""",
+        """CREATE TABLE IF NOT EXISTS podcast_chapters (
+            id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            podcast_file VARCHAR(255) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            start_secs DOUBLE NOT NULL,
+            end_secs DOUBLE NULL
+        )""",
     )
 
     // Desktop REMOTE_DELETE_COLUMNS (tombstone table -> remote key column).
@@ -83,12 +90,13 @@ object RemoteWriter {
         "music_history" to "song_file",
         "playlist_history" to "playlist_id",
         "podcast_tags" to "id",
+        "podcast_chapters" to "podcast_file",
     )
 
     private val songTables = listOf(
         "songs", "playlists", "lyrics", "music_history", "playlist_history",
     )
-    private val podcastTables = listOf("podcasts", "podcast_tags")
+    private val podcastTables = listOf("podcasts", "podcast_tags", "podcast_chapters")
 
     data class PushReport(val rows: Int, val message: String)
 
@@ -186,6 +194,15 @@ object RemoteWriter {
                 listOf("id", "podcast_file", "tag_id"), "tag_id", tags.map { it.id },
                 db.podcastTagLinkDao().all().map { listOf(it.id, it.podcastFile, it.tagId) },
             )
+            val episodes = db.podcastDao().all().map { it.file }
+            rows += replaceLinksByFile(
+                conn, "podcast_chapters",
+                listOf("id", "podcast_file", "name", "start_secs", "end_secs"), episodes,
+                db.podcastChapterDao().all().map {
+                    listOf(it.id, it.podcastFile, it.name, it.startSecs, it.endSecs)
+                },
+            )
+            alignAutoIncrement(conn, "podcast_chapters")
             db.syncDeletionDao().clearTables(podcastTables)
             PushReport(rows, "Pushed $rows rows to remote DB.")
         } finally {
@@ -257,8 +274,7 @@ object RemoteWriter {
     private fun replaceLinks(
         conn: Connection, table: String, cols: List<String>, parentCol: String,
         parentIds: List<Long>, links: List<List<Any?>>,
-    ): Int {
-        if (parentIds.isEmpty()) return 0
+    ): Int {        if (parentIds.isEmpty()) return 0
         var written = 0
         for (batch in parentIds.chunked(500)) {
             conn.prepareStatement(
@@ -276,6 +292,35 @@ object RemoteWriter {
             }
         }
         alignAutoIncrement(conn, table)
+        return written
+    }
+
+    // File-scoped variant of replaceLinks for podcast_chapters (parents are
+    // episode filenames, not numeric ids — desktop _sync_podcast_chapters).
+    private fun replaceLinksByFile(
+        conn: Connection, table: String, cols: List<String>,
+        parentFiles: List<String>, links: List<List<Any?>>,
+    ): Int {
+        if (parentFiles.isEmpty()) return 0
+        var written = 0
+        for (batch in parentFiles.chunked(500)) {
+            conn.prepareStatement(
+                "DELETE FROM `$table` WHERE `podcast_file` IN (${batch.joinToString(",") { "?" }})",
+            ).use { stmt ->
+                batch.forEachIndexed { i, f -> stmt.setString(i + 1, f) }
+                stmt.executeUpdate()
+            }
+        }
+        for (batch in links.chunked(250)) {
+            val single = "(${cols.joinToString(", ") { "?" }})"
+            val sql = "INSERT INTO `$table` (${cols.joinToString(", ") { "`$it`" }}) " +
+                "VALUES ${batch.joinToString(", ") { single }}"
+            conn.prepareStatement(sql).use { stmt ->
+                var ix = 1
+                for (row in batch) for (value in row) stmt.setObject(ix++, value)
+                written += stmt.executeUpdate()
+            }
+        }
         return written
     }
 

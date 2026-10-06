@@ -211,6 +211,30 @@ fun SettingsScreen(
             )
         }
 
+        // ---- Chapter auto-skip (desktop Settings toggle, podcasts only) ----
+        // Timestamped episodes start at the first chapter and skip to the
+        // next chapter when one ends. Chapters are managed per episode.
+        val chapterSkip by settings.chapterSkip.collectAsState()
+        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Chapter auto-skip", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Podcast episodes start at the first chapter and skip ahead at chapter ends.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                HathorSwitch(
+                    checked = chapterSkip,
+                    onCheckedChange = { scope.launch { settings.setChapterSkip(it) } }
+                )
+            }
+        }
+
         // ---- Concurrency ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionLabel(Icons.Filled.Download, "Concurrent downloads ($limit)")

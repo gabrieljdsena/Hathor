@@ -97,6 +97,9 @@ interface PodcastTagDao {
 
     @Query("SELECT id FROM podcast_tags")
     suspend fun allIds(): List<Long>
+
+    @Query("DELETE FROM podcast_tags WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -110,6 +113,12 @@ interface PodcastTagLinkDao {
     @Query("DELETE FROM podcast_tag_links WHERE tag_id IN (:tagIds)")
     suspend fun deleteForTags(tagIds: List<Long>)
 
+    @Query("DELETE FROM podcast_tag_links WHERE podcast_file = :file AND tag_id = :tagId")
+    suspend fun deleteLink(file: String, tagId: Long)
+
+    @Query("DELETE FROM podcast_tag_links WHERE podcast_file = :file")
+    suspend fun deleteForEpisode(file: String)
+
     @Query("SELECT * FROM podcast_tag_links")
     suspend fun all(): List<PodcastTagLink>
 }
@@ -119,14 +128,44 @@ interface LyricDao {
     @Query("SELECT * FROM lyrics WHERE id = :id LIMIT 1")
     suspend fun byId(id: Long): LyricEntity?
 
+    @Query("SELECT * FROM lyrics WHERE song_file = :file LIMIT 1")
+    suspend fun bySongFile(file: String): LyricEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(lyric: LyricEntity): Long
 
     @Update
     suspend fun update(lyric: LyricEntity)
 
+    @Query("UPDATE lyrics SET offset_ms = :ms WHERE song_file = :file")
+    suspend fun setOffsetMs(file: String, ms: Int)
+
     @Query("SELECT * FROM lyrics")
     suspend fun all(): List<LyricEntity>
+}
+
+@Dao
+interface PodcastChapterDao {
+    @Query("SELECT * FROM podcast_chapters WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): PodcastChapterEntity?
+
+    @Query("SELECT * FROM podcast_chapters WHERE podcast_file = :file ORDER BY start_secs")
+    suspend fun byEpisode(file: String): List<PodcastChapterEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(chapter: PodcastChapterEntity): Long
+
+    @Update
+    suspend fun update(chapter: PodcastChapterEntity)
+
+    @Query("DELETE FROM podcast_chapters WHERE id = :id")
+    suspend fun deleteById(id: Long): Int
+
+    @Query("DELETE FROM podcast_chapters WHERE podcast_file = :file")
+    suspend fun deleteForEpisode(file: String)
+
+    @Query("SELECT * FROM podcast_chapters")
+    suspend fun all(): List<PodcastChapterEntity>
 }
 
 @Dao

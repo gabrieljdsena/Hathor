@@ -106,11 +106,26 @@ class MainActivity : ComponentActivity() {
         settingsRepo.onCrossfadeChanged = { enabled, seconds ->
             player.setCrossfade(enabled, seconds)
         }
+        // Chapter auto-skip (desktop set_chapter_skip live-apply parity):
+        // the player caches marks per track, so it needs the pref + a
+        // resolver + a podcast classifier, all wired here (it owns both).
+        player.chapterProvider = { fileName -> podcastRepo.chaptersFor(fileName) }
+        player.isPodcastFile = { f ->
+            try {
+                f.canonicalPath.startsWith(PlayerApp.instance.podcastsDir.canonicalPath)
+            } catch (_: Exception) {
+                false
+            }
+        }
+        settingsRepo.onChapterSkipChanged = { player.setChapterSkip(it) }
         // Restore persisted prefs at startup (folders, volume, crossfade):
         // Settings might never be opened, but the player needs its prefs.
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 settingsRepo.load()
+                withContext(Dispatchers.Main) {
+                    player.setChapterSkip(settingsRepo.chapterSkip.value)
+                }
             } catch (e: Exception) {
                 android.util.Log.w("MainActivity", "settings load failed: ${e.message}")
             }
@@ -343,10 +358,9 @@ class MainActivity : ComponentActivity() {
                                     // episodes; source carries the filename.
                                     playWithContext(
                                         ep.file, visible, null,
-                                        com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
+                                                                                com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
                                     )
-                                },
-                                onPlayAll = { visible ->
+                                },                                onPlayAll = { visible ->
                                     if (visible.isNotEmpty()) {
                                         playWithContext(
                                             visible.first().file, visible, null,
@@ -369,7 +383,14 @@ class MainActivity : ComponentActivity() {
                                 nowPlayingFile = currentFile?.name,
                                 isPlaying = isPlaying,
                                 isCurrentlyPlaying = { isPlaying },
-                                onTogglePause = { player.toggle() }
+                                onTogglePause = { player.toggle() },
+                                onSeekTo = { ep, secs ->
+                                    // Chapter time-chip: play the episode, then
+                                    // land on the chapter (pending-seek path).
+                                    previewPlayer.stop()
+                                    val f = resolveFile(ep)
+                                    if (f.exists()) player.playFileAtPosition(f, (secs * 1000).toInt())
+                                }
                             )
                             Dest.Playlists -> PlaylistsScreen(
                                 repo = playlistRepo,

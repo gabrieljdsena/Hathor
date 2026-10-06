@@ -66,6 +66,21 @@ data class PodcastTagLink(
     @ColumnInfo(name = "tag_id") val tagId: Long,
 )
 
+// Chapter marks inside a podcast episode (desktop Podcast_Chapters +
+// web PodcastTimestamp, 1:1): start offset in seconds, display name,
+// optional end offset (null = open-ended, never auto-skipped).
+@Entity(
+    tableName = "podcast_chapters",
+    indices = [Index(value = ["podcast_file", "start_secs"])],
+)
+data class PodcastChapterEntity(
+    @PrimaryKey(autoGenerate = true) @ColumnInfo(name = "id") val id: Long = 0,
+    @ColumnInfo(name = "podcast_file") val podcastFile: String,
+    @ColumnInfo(name = "name") val name: String,
+    @ColumnInfo(name = "start_secs") val startSecs: Double,
+    @ColumnInfo(name = "end_secs") val endSecs: Double?,
+)
+
 @Entity(tableName = "lyrics")
 data class LyricEntity(
     @PrimaryKey(autoGenerate = true) @ColumnInfo(name = "id") val id: Long = 0,

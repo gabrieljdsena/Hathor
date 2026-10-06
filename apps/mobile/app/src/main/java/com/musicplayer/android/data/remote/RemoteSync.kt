@@ -7,6 +7,7 @@ import com.musicplayer.android.data.db.LyricEntity
 import com.musicplayer.android.data.db.MusicHistoryEntry
 import com.musicplayer.android.data.db.PlaylistEntity
 import com.musicplayer.android.data.db.PlaylistHistoryEntry
+import com.musicplayer.android.data.db.PodcastChapterEntity
 import com.musicplayer.android.data.db.PodcastEntity
 import com.musicplayer.android.data.db.PodcastTagEntity
 import com.musicplayer.android.data.db.PodcastTagLink
@@ -110,7 +111,14 @@ object RemoteSync {
             ) {
                 val current = db.lyricDao().byId(row.id)
                 if (current != null) {
-                    db.lyricDao().update(current.copy(songFile = row.songFile, lyrics = row.lyrics))
+                    // Preserve the highlight offset on update (it used to be
+                    // dropped here, desyncing nudged songs after every pull).
+                    db.lyricDao().update(
+                        current.copy(
+                            songFile = row.songFile, lyrics = row.lyrics,
+                            offsetMs = row.offsetMs,
+                        ),
+                    )
                 }
             }
         }
@@ -140,6 +148,25 @@ object RemoteSync {
             db.podcastTagLinkDao().insertIgnore(
                 PodcastTagLink(row.id, row.podcastFile, row.tagId),
             )
+        }
+        // Episode chapters (upsert by id; empty snapshot never wipes local).
+        for (row in snapshot.chapters) {
+            if (db.podcastChapterDao().insertIgnore(
+                    PodcastChapterEntity(
+                        row.id, row.podcastFile, row.name, row.startSecs, row.endSecs,
+                    ),
+                ) == -1L
+            ) {
+                val current = db.podcastChapterDao().byId(row.id)
+                if (current != null) {
+                    db.podcastChapterDao().update(
+                        current.copy(
+                            podcastFile = row.podcastFile, name = row.name,
+                            startSecs = row.startSecs, endSecs = row.endSecs,
+                        ),
+                    )
+                }
+            }
         }
         // Adopt the remote daily mix (same mix of the day on every device),
         // then prune anything older than today (desktop rule).
