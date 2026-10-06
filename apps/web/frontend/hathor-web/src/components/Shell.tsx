@@ -4,12 +4,16 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { usePlayer } from '../store/player'
+import { engine } from '../audio/engine'
+import { handleShortcutKey } from '../utils/shortcuts'
 import PlayerBar from './PlayerBar'
 import LyricsSheet from './LyricsSheet'
 import NowPlaying from './NowPlaying'
 import QueueSheet from './QueueSheet'
 import Brand from './ui/Brand'
 import Icon, { type IconName } from './ui/icons'
+import ShortcutHelp from './ui/ShortcutHelp'
+import { useChapterJump } from './ui/PodcastTimestamps'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `nav-link group flex items-center p-3 rounded-xl transition-all duration-300 relative overflow-hidden ${
@@ -92,36 +96,52 @@ export default function Shell() {
   }, [])
 
   // Keyboard shortcuts (desktop Now Playing & shortcuts): Space play/pause,
-  // ←/→ seek ±10s, ↑/↓ volume. Ignored while typing in inputs.
+  // ←/→ seek ±10s, ↑/↓ volume, n/p chapter-aware next/prev, [ ] chapter-only
+  // jumps, m mute, s/r shuffle/repeat, ? help. Ignored while typing or when
+  // a dialog owns the keyboard. Chapter jumps read a ref: the query cache
+  // fills asynchronously, long after this one-time listener is attached.
+  const [showHelp, setShowHelp] = useState(false)
+  const chapterJump = useChapterJump()
+  const jumpRef = useRef(chapterJump)
+  jumpRef.current = chapterJump
+  const helpRef = useRef(false)
+  helpRef.current = showHelp
   useEffect(() => {
+    const track = (call: Promise<import('../api/client').PlayerState>) =>
+      void call.then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio()
+      })
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null
-      const typing =
-        el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el?.isContentEditable === true
-      if (typing) return
-      const store = usePlayer.getState()
-      if (e.code === 'Space') {
-        e.preventDefault()
-        void store.toggle()
-      } else if (e.key === 'ArrowRight') {
-        void api.seekBy(10).then((s) => {
-          usePlayer.setState(s)
-          store.syncAudio()
-        })
-      } else if (e.key === 'ArrowLeft') {
-        void api.seekBy(-10).then((s) => {
-          usePlayer.setState(s)
-          store.syncAudio()
-        })
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        const v = Math.min(1, store.volume + 0.05)
-        void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        const v = Math.max(0, store.volume - 0.05)
-        void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
+      if (helpRef.current && e.key === 'Escape') {
+        setShowHelp(false)
+        return
       }
+      handleShortcutKey(e, {
+        toggle: () => void usePlayer.getState().toggle(),
+        seekBy: (d) =>
+          void api.seekBy(d).then((s) => {
+            usePlayer.setState(s)
+            usePlayer.getState().syncAudio()
+          }),
+        nudgeVolume: (d) => {
+          const v = Math.min(1, Math.max(0, usePlayer.getState().volume + d))
+          void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
+        },
+        nextTrack: () => track(api.next()),
+        prevTrack: () => track(api.prev()),
+        chapterNext: () => jumpRef.current.next(),
+        chapterPrev: () => jumpRef.current.prev(),
+        shuffle: () => void api.shuffle().then((s) => usePlayer.setState(s)),
+        repeat: () => void api.repeat().then((s) => usePlayer.setState(s)),
+        mute: () => {
+          const store = usePlayer.getState()
+          const v = store.volume > 0 ? 0 : 1.0
+          engine.setVolume(v)
+          void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
+        },
+        toggleHelp: () => setShowHelp((v) => !v),
+      })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -244,6 +264,7 @@ export default function Shell() {
       />
       <QueueSheet open={queueOpen} onClose={() => setQueueOpen(false)} />
       {nowPlayingOpen && <NowPlaying onClose={() => setNowPlayingOpen(false)} />}
+      <ShortcutHelp open={showHelp} onClose={() => setShowHelp(false)} />
     </div>
   )
 }
