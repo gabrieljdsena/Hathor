@@ -38,7 +38,12 @@ if (-not (Test-Path $dll)) {
 
 if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
     [Environment]::SetEnvironmentVariable('ASPNETCORE_ENVIRONMENT', 'Production', 'Machine')
-    [Environment]::SetEnvironmentVariable('ASPNETCORE_URLS', "http://0.0.0.0:$Port", 'Machine')
+
+    # NOTE: never write ASPNETCORE_URLS at Machine scope — it is inherited
+    # by EVERY .NET service on the box (it once hijacked Vroid Remote
+    # Control from :5050 to Hathor's port). The bind address lives on this
+    # service's own command line instead (--urls), refreshed below on every
+    # install.
 
     $jwt = [Environment]::GetEnvironmentVariable('JWT_KEY', 'User')
     if (-not $jwt) { $jwt = [Environment]::GetEnvironmentVariable('JWT_KEY', 'Process') }
@@ -59,13 +64,17 @@ if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
         Write-Host "[warn] HATHOR_DB_PASSWORD not found - service may fail to reach Postgres"
     }
 
-    $binPath = "dotnet `"$dll`""
+    $binPath = "dotnet `"$dll`" --urls http://0.0.0.0:$Port"
     New-Service -Name $ServiceName -BinaryPathName $binPath -StartupType Automatic -DisplayName 'Hathor Music' | Out-Null
 
     Write-Host "[ok] service '$ServiceName' registered (http://localhost:$Port)"
 }
 else {
     Write-Host "[skip] service '$ServiceName' already registered"
+    # Refresh the bind address on every install (port moves without this).
+    $binPath = "dotnet `"$dll`" --urls http://0.0.0.0:$Port"
+    sc.exe config $ServiceName binPath= $binPath | Out-Null
+    Write-Host "[ok] service '$ServiceName' bind refreshed (http://localhost:$Port)"
 }
 
 # Library paths refresh on every install (not just first registration):
