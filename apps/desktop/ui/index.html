@@ -332,6 +332,18 @@
                         <span class="text-xs font-semibold uppercase tracking-[0.2em] hidden sm:inline">Now Playing</span>
                     </button>
                     <div class="flex items-center gap-1">
+                        <div id="np-lyrics-offset" title="Highlight timing correction"
+                            class="hidden sm:flex items-center gap-1 mr-1 text-zinc-500">
+                            <button onclick="window.adjustLyricsOffset(-1000)" title="-1s"
+                                class="px-1.5 py-1 rounded-lg hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer text-xs font-mono">−1s</button>
+                            <button onclick="window.adjustLyricsOffset(-100)" title="-0.1s"
+                                class="px-1.5 py-1 rounded-lg hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer text-xs font-mono">−.1</button>
+                            <span id="np-lyrics-offset-val" class="text-[11px] font-mono text-zinc-400 min-w-12 text-center">+0ms</span>
+                            <button onclick="window.adjustLyricsOffset(100)" title="+0.1s"
+                                class="px-1.5 py-1 rounded-lg hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer text-xs font-mono">+.1</button>
+                            <button onclick="window.adjustLyricsOffset(1000)" title="+1s"
+                                class="px-1.5 py-1 rounded-lg hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer text-xs font-mono">+1s</button>
+                        </div>
                         <button id="np-lq-queue-btn" title="Toggle Queue"
                             class="text-zinc-400 hover:text-white transition-all p-2.5 rounded-xl hover:bg-white/10 focus:outline-none cursor-pointer">
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h8m4-4v8m-4-4h8" /></svg>
@@ -1572,7 +1584,9 @@
                             }
                         }
                         if (typeof window.updateHighlightedLine === 'function' && !document.getElementById("lyrics-container-view").classList.contains("hidden")) {
-                            window.updateHighlightedLine(pos);
+                            const _off = (window.lyricsOffsetFile === (window.current_playing_song && window.current_playing_song.File))
+                                ? (window.lyricsOffsetMs || 0) / 1000 : 0;
+                            window.updateHighlightedLine(pos + _off);
                         }
                     }
                 } catch (err) {
@@ -2265,6 +2279,19 @@
             window.lyricsFetchId = (window.lyricsFetchId || 0) + 1;
             const currentFetchId = window.lyricsFetchId;
 
+            // Persisted highlight-timing correction (web parity, ms ±20000).
+            window.lyricsOffsetMs = 0;
+            window.lyricsOffsetFile = songData.File || null;
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.get_lyrics_offset && songData.File) {
+                    const off = await window.pywebview.api.get_lyrics_offset(songData.File);
+                    if (window.lyricsFetchId === currentFetchId && Number.isFinite(Number(off))) {
+                        window.lyricsOffsetMs = Math.max(-20000, Math.min(20000, Number(off)));
+                    }
+                }
+            } catch (e) { /* offset stays 0 */ }
+            window.paintLyricsOffset();
+
             container.innerHTML = `<p class="text-zinc-500 text-2xl md:text-4xl font-semibold animate-pulse">Loading lyrics for ${songData.Title}...</p>`;
             window.parsedLyrics = [];
 
@@ -2312,6 +2339,34 @@
             } catch (error) {
                 container.innerHTML = '<p class="text-red-400 text-2xl md:text-4xl font-semibold">Failed to load lyrics.</p>';
             }
+        };
+
+        window.paintLyricsOffset = function () {
+            const el = document.getElementById('np-lyrics-offset-val');
+            if (!el) return;
+            const ms = window.lyricsOffsetMs || 0;
+            el.textContent = (ms >= 0 ? "+" : "−") + Math.abs(ms) + "ms";
+            el.classList.toggle("text-orange-400", ms !== 0);
+            el.classList.toggle("text-zinc-400", ms === 0);
+        };
+
+        window.adjustLyricsOffset = async function (delta) {
+            const file = window.lyricsOffsetFile
+                || (window.current_playing_song && window.current_playing_song.File);
+            if (!file) return;
+            const next = Math.max(-20000, Math.min(20000, (window.lyricsOffsetMs || 0) + delta));
+            window.lyricsOffsetMs = next;
+            window.lyricsOffsetFile = file;
+            window.paintLyricsOffset();
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.set_lyrics_offset) {
+                    const saved = await window.pywebview.api.set_lyrics_offset(file, next);
+                    if (Number.isFinite(Number(saved))) {
+                        window.lyricsOffsetMs = Math.max(-20000, Math.min(20000, Number(saved)));
+                        window.paintLyricsOffset();
+                    }
+                }
+            } catch (e) { /* painted optimistically; next fetch reloads */ }
         };
 
         window.update_queue_ui = function () {

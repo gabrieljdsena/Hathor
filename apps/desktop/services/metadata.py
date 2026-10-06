@@ -159,9 +159,11 @@ class MetadataManager:
                 try:
                     with sqlite3.connect(self.api.db_path) as conn:
                         conn.execute("DELETE FROM Podcast_Tag_Links WHERE podcast_file = ?", (filename,))
+                        conn.execute("DELETE FROM Podcast_Chapters WHERE podcast_file = ?", (filename,))
                         conn.execute("DELETE FROM Podcasts WHERE file = ?", (filename,))
                     if getattr(self.api, 'db', None):
                         self.api.db.record_deletion("podcasts", filename)
+                        self.api.db.record_deletion("podcast_chapters", filename)
                 except Exception as db_err:
                     print(f" [Python] Error cleaning up podcast from database: {db_err}")
 

@@ -49,6 +49,7 @@ create table if not exists Settings(
     queue_source text,
     crossfade_enabled integer DEFAULT 0,
     crossfade_seconds real DEFAULT 5,
+    chapter_skip integer DEFAULT 0,
     FOREIGN KEY (current_song) REFERENCES Songs(file)
 );
 
@@ -71,6 +72,7 @@ create table if not exists Lyrics(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     song_file varchar(255) not null,
     lyrics text,
+    offset_ms integer not null default 0,
     FOREIGN KEY (song_file) REFERENCES Songs(file)
 );
 
@@ -117,6 +119,20 @@ create table if not exists Podcast_Tag_Links(
 
 create unique index if not exists idx_podcast_tag_links_pair
     on Podcast_Tag_Links(podcast_file, tag_id);
+
+-- Chapter marks inside a podcast episode (web parity): start offset in
+-- seconds, display name, optional end offset (null = open-ended).
+create table if not exists Podcast_Chapters(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    podcast_file varchar(255) not null,
+    name varchar(255) not null,
+    start_secs real not null,
+    end_secs real null,
+    FOREIGN KEY (podcast_file) REFERENCES Podcasts(file)
+);
+
+create index if not exists idx_podcast_chapters_file
+    on Podcast_Chapters(podcast_file, start_secs);
 
 
 INSERT OR IGNORE INTO Settings(id,current_song, limit_downloads, current_playlist, current_volume, standardize_volume, current_tab, window_width, window_height, background_path, songs_path, browser)

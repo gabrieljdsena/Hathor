@@ -13,5 +13,12 @@ Rules all apps follow:
 - `Playlists.thumbnail`: TEXT (base64/url), BLOB normalized to UTF-8 text for remote
 - Daily mix: newest-wins, prune `< today`
 - Files referenced by `file` key only; binaries on disk/S3, never in DB JSON
+- `lyrics` carries `offset_ms` (INT, ms, ±20000, default 0): highlight-timing
+  correction, upserted with the lyrics row on push, applied on pull
+- `podcast_chapters` (`id`, `podcast_file`, `name`, `start_secs`, `end_secs`
+  NULL = open-ended): full replace scoped to the pusher's own episode files
+  (shared remote, like `song_playlist`); episode delete propagates via a
+  `podcast_chapters` tombstone keyed by file; pull upserts by id and never
+  wipes local rows on empty snapshots
 
 Do not change the wire shape in one app without updating the other two in the same PR.

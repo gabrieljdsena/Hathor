@@ -38,7 +38,8 @@ REMOTE_SCHEMA = [
     CREATE TABLE IF NOT EXISTS lyrics (
         id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         song_file VARCHAR(255) NOT NULL,
-        lyrics TEXT
+        lyrics TEXT,
+        offset_ms INT NOT NULL DEFAULT 0
     )
     """,
     """
@@ -82,6 +83,15 @@ REMOTE_SCHEMA = [
         id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         podcast_file VARCHAR(255) NOT NULL,
         tag_id BIGINT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS podcast_chapters (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        podcast_file VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        start_secs DOUBLE NOT NULL,
+        end_secs DOUBLE NULL
     )
     """,
 ]
@@ -147,6 +157,14 @@ class DatabaseSync:
             try:
                 with conn.cursor() as cur:
                     cur.execute("ALTER TABLE playlists ADD COLUMN thumbnail TEXT")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+            # Migrate existing lyrics tables created before the offset column
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("ALTER TABLE lyrics ADD COLUMN offset_ms INT NOT NULL DEFAULT 0")
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -296,23 +314,51 @@ class DatabaseSync:
         self._align_auto_increment(remote_conn, "podcast_tag_links")
 
     def _sync_lyrics(self, sqlite_conn, remote_conn):
-        """Upsert lyrics."""
-        rows = sqlite_conn.execute("SELECT id, song_file, lyrics FROM Lyrics").fetchall()
+        """Upsert lyrics (+ highlight offset). Tolerates legacy local rows."""
+        try:
+            rows = sqlite_conn.execute("SELECT id, song_file, lyrics, offset_ms FROM Lyrics").fetchall()
+        except Exception:
+            rows = [(r[0], r[1], r[2], 0) for r in
+                    sqlite_conn.execute("SELECT id, song_file, lyrics FROM Lyrics").fetchall()]
         if not rows:
             return
         with remote_conn.cursor() as cur:
             cur.executemany(
                 """
-                INSERT INTO lyrics (id, song_file, lyrics)
-                VALUES (%s, %s, %s)
+                INSERT INTO lyrics (id, song_file, lyrics, offset_ms)
+                VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     song_file = VALUES(song_file),
-                    lyrics = VALUES(lyrics)
+                    lyrics = VALUES(lyrics),
+                    offset_ms = VALUES(offset_ms)
                 """,
                 rows
             )
             remote_conn.commit()
         self._align_auto_increment(remote_conn, "lyrics")
+
+    def _sync_podcast_chapters(self, sqlite_conn, remote_conn):
+        """Replace this library's episode chapters (scoped to our own files —
+        same shared-remote reason as _sync_song_playlist)."""
+        try:
+            rows = sqlite_conn.execute(
+                "SELECT id, podcast_file, name, start_secs, end_secs FROM Podcast_Chapters"
+            ).fetchall()
+            files = [r[0] for r in sqlite_conn.execute("SELECT file FROM Podcasts").fetchall()]
+        except Exception:
+            return
+        with remote_conn.cursor() as cur:
+            if files:
+                placeholders = ", ".join(["%s"] * len(files))
+                cur.execute(f"DELETE FROM podcast_chapters WHERE podcast_file IN ({placeholders})", files)
+            if rows:
+                cur.executemany(
+                    "INSERT INTO podcast_chapters (id, podcast_file, name, start_secs, end_secs) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    rows
+                )
+            remote_conn.commit()
+        self._align_auto_increment(remote_conn, "podcast_chapters")
 
     def _sync_daily_mix(self, sqlite_conn, remote_conn):
         """Push the local daily mix (last writer wins for a given date).
@@ -375,6 +421,7 @@ class DatabaseSync:
             'music_history': 'song_file',
             'playlist_history': 'playlist_id',
             'podcast_tags': 'id',
+            'podcast_chapters': 'podcast_file',
         }
         rows = sqlite_conn.execute("SELECT table_name, row_key FROM Sync_Deletions").fetchall()
         if not rows:
@@ -403,6 +450,7 @@ class DatabaseSync:
             self._sync_song_playlist(sqlite_conn, remote_conn)
             self._sync_podcast_tags(sqlite_conn, remote_conn)
             self._sync_podcast_tag_links(sqlite_conn, remote_conn)
+            self._sync_podcast_chapters(sqlite_conn, remote_conn)
             self._sync_lyrics(sqlite_conn, remote_conn)
             self._sync_daily_mix(sqlite_conn, remote_conn)
             self._sync_history(

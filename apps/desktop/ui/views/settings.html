@@ -186,6 +186,37 @@
                 Save
             </button>
         </div>
+        <!-- Playback: Chapter auto-skip (podcasts) -->
+        <div
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex items-center gap-4">
+                <div
+                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-zinc-200 font-medium">Chapter auto-skip</h3>
+                    <p class="text-xs text-zinc-500 mt-0.5">Podcast episodes start at the first chapter and skip to the next chapter when one ends. Manage chapters from an episode's Chapters… menu.</p>
+                    <div class="flex items-center gap-3 mt-2">
+                        <span class="flex items-center gap-2 text-xs text-zinc-400 select-none">
+                            <input id="chapter_skip_enabled" type="checkbox" class="hidden" tabindex="-1">
+                            <button id="chapter_skip_toggle" type="button" role="switch" aria-checked="false"
+                                aria-label="Enable chapter auto-skip" data-on="0" class="xf-switch">
+                                <span class="xf-knob"></span>
+                            </button>
+                            Enabled
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <button id="saveChapterSkipBtn"
+                onclick="if(window.pywebview && window.pywebview.api) { const en = document.getElementById('chapter_skip_enabled').checked; window.pywebview.api.set_chapter_skip(en).then(on => { if(typeof notyf !== 'undefined') notyf.success(on ? 'Chapter auto-skip on' : 'Chapter auto-skip off'); }); }"
+                class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
+                Save
+            </button>
+        </div>
         <!-- Setting Row 4 -->
         <div
             class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
@@ -290,8 +321,7 @@
     }
 
     // Crossfade controls Live-update the label, then load saved prefs
-    (function initCrossfadeRow() {
-        const slider = document.getElementById('crossfade_seconds');
+    (function initCrossfadeRow() {        const slider = document.getElementById('crossfade_seconds');
         const label = document.getElementById('crossfade_seconds_label');
         const checkbox = document.getElementById('crossfade_enabled');
         const toggle = document.getElementById('crossfade_toggle');
@@ -335,6 +365,42 @@
                 }
             } catch (e) {
                 console.error('Failed to load playback settings:', e);
+            }
+        }
+        if (window.pywebview && window.pywebview.api) {
+            load();
+        } else {
+            window.addEventListener('pywebviewready', load, { once: true });
+        }
+    })();
+
+    // Chapter auto-skip toggle (same switch styling as crossfade)
+    (function initChapterSkipRow() {
+        const checkbox = document.getElementById('chapter_skip_enabled');
+        const toggle = document.getElementById('chapter_skip_toggle');
+        window.paintChapterSkipToggle = function (on) {
+            on = !!on;
+            if (checkbox) checkbox.checked = on;
+            if (toggle) {
+                toggle.dataset.on = on ? '1' : '0';
+                toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+            }
+        };
+        if (toggle) {
+            toggle.addEventListener('click', function (e) {
+                e.preventDefault();
+                window.paintChapterSkipToggle(!(checkbox && checkbox.checked));
+            });
+        }
+        async function load() {
+            try {
+                const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+                if (!api || typeof api.get_playback_settings !== 'function') return;
+                const prefs = await api.get_playback_settings();
+                if (!prefs) return;
+                window.paintChapterSkipToggle(!!prefs.chapter_skip);
+            } catch (e) {
+                console.error('Failed to load chapter-skip setting:', e);
             }
         }
         if (window.pywebview && window.pywebview.api) {

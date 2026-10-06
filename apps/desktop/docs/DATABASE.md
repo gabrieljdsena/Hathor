@@ -80,7 +80,16 @@ Daily_Mix(                                  -- today's generated mix (local only
 Lyrics(
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   song_file VARCHAR(255) NOT NULL -> Songs(file),
-  lyrics    TEXT           -- JSON: { synced: [...], plain: "..." }
+  lyrics    TEXT           -- JSON: { synced: [...], plain: "..." },
+  offset_ms INTEGER NOT NULL DEFAULT 0  -- highlight-timing correction, ms ±20000
+)
+
+Podcast_Chapters(                       -- chapter marks inside an episode
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  podcast_file VARCHAR(255) NOT NULL -> Podcasts(file),
+  name         VARCHAR(255) NOT NULL,
+  start_secs   REAL NOT NULL,            -- media offset in seconds
+  end_secs     REAL NULL                 -- NULL = open-ended, never auto-skipped
 )
 
 Music_History(                              -- every time a song is played
@@ -117,10 +126,12 @@ The remote database mirrors the local one **except `Settings`** (kept local-only
 | `Podcasts` | `podcasts` |
 | `Playlists` | `playlists` |
 | `Song_Playlist` | `song_playlist` |
-| `Lyrics` | `lyrics` |
+| `Lyrics` | `lyrics` (+`offset_ms`) |
 | `Music_History` | `music_history` |
 | `Playlist_History` | `playlist_history` |
 | `Daily_Mix` | `daily_mix` |
+| `Podcast_Tags` / `Podcast_Tag_Links` | `podcast_tags` / `podcast_tag_links` |
+| `Podcast_Chapters` | `podcast_chapters` |
 
 `Sync_Deletions`, `Download_Queue`, and `Daily_Mix`-adjacent housekeeping stay local-only except where noted below (`daily_mix` *is* mirrored — see pull/push rules).
 
@@ -132,18 +143,19 @@ Sync is **manual-only**: no background thread exists. Two directions, both from 
 
 Runs one full `_run_sync()` cycle:
 
-1. **`_apply_deletions`** — read all `Sync_Deletions` rows, `DELETE` the matching remote rows (mapping `songs→file`, `podcasts→file`, `playlists→id`, `lyrics→song_file`, `music_history→song_file`, `playlist_history→playlist_id`), then clear the local tombstone table.
+1. **`_apply_deletions`** — read all `Sync_Deletions` rows, `DELETE` the matching remote rows (mapping `songs→file`, `podcasts→file`, `playlists→id`, `lyrics→song_file`, `music_history→song_file`, `playlist_history→playlist_id`, `podcast_tags→id`, `podcast_chapters→podcast_file`), then clear the local tombstone table.
 2. **`_sync_songs`** — UPSERT all songs (`INSERT ... ON DUPLICATE KEY UPDATE`).
 3. **`_sync_podcasts`** — UPSERT all podcasts, same pattern.
 4. **`_sync_playlists`** — UPSERT all playlists **including `id`**, then `_align_auto_increment` so future `AUTO_INCREMENT` ids don't collide.
 5. **`_sync_song_playlist`** — full replace: `DELETE` all remote `song_playlist` rows, re-insert everything, align auto-increment.
-6. **`_sync_lyrics`** — UPSERT lyrics with explicit ids.
+6. **`_sync_lyrics`** — UPSERT lyrics with explicit ids **including `offset_ms`**.
+7. **`_sync_podcast_chapters`** — scoped replace: `DELETE` remote chapters for our own episode files, re-insert ours, align auto-increment (shared remote, same rule as tag links).
 7. **`_sync_daily_mix`** — UPSERT the local daily mix (last writer wins per `mix_date`) and prune remote mixes older than the newest local one, so an outdated device can never delete a newer mix.
 8. **`_sync_history`** (×2) — *incremental* for `music_history` / `playlist_history`: reads the remote `MAX(id)` and inserts only local rows with `id > max`, using `INSERT IGNORE`.
 
 ### Pull — "Sync Remote" (`DatabaseManager.sync_remote_to_local_and_download`)
 
-Fetches remote songs, podcasts, playlists, lyrics, history, and the daily mix into SQLite (guarded so remote DBs predating `podcasts`/`daily_mix` don't break the pull), then queues downloads for missing files — songs into the songs folder, podcasts into the podcasts folder. Adopting the remote daily mix makes every device play the same mix of the day; locally stored mixes older than today are pruned.
+Fetches remote songs, podcasts, playlists, lyrics (+`offset_ms` where the remote has it), podcast tags/links, chapters, history, and the daily mix into SQLite (guarded so remote DBs predating `podcasts`/`daily_mix`/tags/chapters don't break the pull), then queues downloads for missing files — songs into the songs folder, podcasts into the podcasts folder. Adopting the remote daily mix makes every device play the same mix of the day; locally stored mixes older than today are pruned.
 
 ### Connections
 

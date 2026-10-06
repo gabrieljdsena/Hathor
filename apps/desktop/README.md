@@ -13,15 +13,15 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 - **Playback & queue** — play/pause, next/previous, seek bar, volume with persistence, shuffle and repeat, plus a reorderable "play next" queue per song or playlist. Restarting rebuilds the queue from where you were listening (playlist, mix, artist, …). Optional equal-power **crossfade** (1–12 s) with gapless handoff.
 - **Library management** — scan a local folder for MP3s, edit song metadata (title, artist, album, year, genre, cover art) in place, and delete tracks. Home is a dashboard: full-library view, daily mix, and recently-played/downloaded strips.
 - **Daily Mix** — a fresh 50-song mix every day built from your listening history (favorites-weighted with room for discoveries).
-- **Podcasts / non-music audio** — a fully separate library (own folder, own tables) with its own view, per-episode menu, metadata editing, and two-way sync. Episodes can share the queue with songs in both directions.
+- **Podcasts / non-music audio** — a fully separate library (own folder, own tables) with its own view, per-episode menu, metadata editing, chapter marks with auto-skip, and two-way sync. Episodes can share the queue with songs in both directions.
 - **YouTube downloads** — search YouTube in-app and download audio as 320 kbps MP3 via `yt-dlp` + FFmpeg, with live progress in the UI. A Songs/Podcast toggle routes each download to the right library (podcast downloads skip the iTunes song-match).
 - **Automatic metadata enrichment** — every song download looks up the matching track on the iTunes Search API and writes ID3 tags (`TIT2`, `TPE1`, `TALB`, `TDRC`, `TCON`, `APIC`) and renames the file to the cleaned title.
-- **Lyrics** — synced (LRC-style) and plain lyrics fetched per track, cached locally for offline use, with Japanese-to-romaji romanization via `pykakasi` and a track-only fallback for artist-less songs.
+- **Lyrics** — synced (LRC-style) and plain lyrics fetched per track, cached locally for offline use, with Japanese-to-romaji romanization via `pykakasi`, a per-song highlight-timing correction (±20 s, persisted), and a track-only fallback for artist-less songs.
 - **Playlists** — create/delete playlists, add songs to multiple playlists, attach custom cover art, and play an entire playlist.
 - **History** — download history and playback (played songs / played playlists) with pagination.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
-- **Remote sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics, daily mix, and history to a MySQL or TiDB server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
+- **Remote sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history to a MySQL or TiDB server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
 
 ## Tech stack
 

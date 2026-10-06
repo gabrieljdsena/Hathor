@@ -60,6 +60,7 @@ class Api:
                     'podcasts_path': 'TEXT',
                     'crossfade_enabled': 'INTEGER DEFAULT 0',
                     'crossfade_seconds': 'REAL DEFAULT 5',
+                    'chapter_skip': 'INTEGER DEFAULT 0',
                 }.items():
                     try:
                         conn.execute(f"ALTER TABLE Settings ADD COLUMN {column} {ddl}")
@@ -113,6 +114,23 @@ class Api:
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_podcast_tag_links_pair
                     ON Podcast_Tag_Links(podcast_file, tag_id)
                 """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Chapters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        podcast_file varchar(255) NOT NULL,
+                        name varchar(255) NOT NULL,
+                        start_secs real NOT NULL,
+                        end_secs real NULL
+                    )
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_podcast_chapters_file
+                    ON Podcast_Chapters(podcast_file, start_secs)
+                """)
+                try:
+                    conn.execute("ALTER TABLE Lyrics ADD COLUMN offset_ms INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
                 try:
                     conn.execute("ALTER TABLE Download_Queue ADD COLUMN is_podcast INTEGER DEFAULT 0")
                 except sqlite3.OperationalError:
@@ -342,6 +360,58 @@ class Api:
     def unassign_podcast_tag(self, file, tag_id):
         return self.db.unassign_podcast_tag(file, tag_id)
 
+    # ==========================
+    # Podcast chapters (web parity)
+    # ==========================
+    def get_podcast_chapters(self, file):
+        return self.db.get_podcast_chapters(file)
+
+    def add_podcast_chapter(self, file, name, start_secs, end_secs=None):
+        return self.db.add_podcast_chapter(file, name, start_secs, end_secs)
+
+    def update_podcast_chapter(self, chapter_id, name, start_secs, end_secs=None):
+        return self.db.update_podcast_chapter(chapter_id, name, start_secs, end_secs)
+
+    def delete_podcast_chapter(self, chapter_id):
+        return self.db.delete_podcast_chapter(chapter_id)
+
+    def get_chapter_skip(self):
+        try:
+            return bool(getattr(settings, 'chapter_skip', False))
+        except Exception:
+            return False
+
+    def set_chapter_skip(self, enabled):
+        """Persist chapter auto-skip and apply it live (no restart needed)."""
+        if isinstance(enabled, str):
+            enabled = enabled.lower() in ('1', 'true', 'on', 'yes')
+        else:
+            enabled = bool(enabled)
+        settings.chapter_skip = enabled
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "UPDATE Settings SET chapter_skip = ?",
+                    (int(enabled),),
+                )
+        except Exception as e:
+            print(f" [Python] Database error: {e}")
+        # Refresh the cached state so the current episode obeys immediately.
+        try:
+            self.playback._refresh_chapter_state(getattr(self, 'last_song', None))
+        except Exception:
+            pass
+        return enabled
+
+    # ==========================
+    # Lyrics highlight offset (web parity: ms, clamped ±20000)
+    # ==========================
+    def get_lyrics_offset(self, song_file):
+        return self.db.get_lyrics_offset(song_file)
+
+    def set_lyrics_offset(self, song_file, offset_ms):
+        return self.db.set_lyrics_offset(song_file, offset_ms)
+
     def sync_local_podcasts_to_db(self):
         return self.db.sync_local_podcasts_to_db()
 
@@ -401,7 +471,7 @@ class Api:
             pass
 
     def get_playback_settings(self):
-        """Crossfade prefs for the Settings UI."""
+        """Crossfade + chapter-skip prefs for the Settings UI."""
         try:
             enabled = bool(getattr(settings, 'crossfade_enabled', False))
         except Exception:
@@ -410,7 +480,12 @@ class Api:
             seconds = float(getattr(settings, 'crossfade_seconds', 5) or 0)
         except (TypeError, ValueError):
             seconds = 5.0
-        return {'crossfade_enabled': enabled, 'crossfade_seconds': seconds}
+        try:
+            skip = bool(getattr(settings, 'chapter_skip', False))
+        except Exception:
+            skip = False
+        return {'crossfade_enabled': enabled, 'crossfade_seconds': seconds,
+                'chapter_skip': skip}
 
     def set_crossfade(self, enabled, seconds):
         """Persist crossfade prefs and apply them live."""

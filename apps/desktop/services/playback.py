@@ -54,6 +54,11 @@ class PlaybackController:
         self._xfade_lock = threading.RLock()
         self._threads_started = False
 
+        # --- Podcast chapter-skip state (web parity) ---
+        # Cached on every track change so the 0.2s monitor tick never hits
+        # SQLite: {'file': str, 'chapters': [(start, end_or_None), ...]} or None.
+        self._chapter_state = None
+
     # ==========================
     # Queue persistence
     # ==========================
@@ -457,6 +462,7 @@ class PlaybackController:
                         ramping = False
                     else:
                         continue
+                self._maybe_chapter_skip()
                 if out == 'music':
                     if self._music_ended():
                         self.play_next(auto=True)
@@ -804,6 +810,104 @@ class PlaybackController:
         except Exception:
             pass
 
+    # ==========================
+    # Podcast chapter-skip (web parity)
+    # ==========================
+    def _chapter_skip_enabled(self):
+        try:
+            return bool(getattr(settings, 'chapter_skip', False))
+        except Exception:
+            return False
+
+    def _refresh_chapter_state(self, song):
+        """Cache chapter marks for the new track (podcasts only, skip on)."""
+        self._chapter_state = None
+        try:
+            if not song or not song.get('IsPodcast'):
+                return
+            if not self._chapter_skip_enabled():
+                return
+            db = getattr(self.api, 'db', None)
+            if db is None:
+                return
+            chapters = db.get_podcast_chapters(song.get('File')) or []
+            self._chapter_state = {
+                'file': song.get('File'),
+                'chapters': [
+                    (float(c.get('startSecs') or 0),
+                     None if c.get('endSecs') is None else float(c.get('endSecs')))
+                    for c in chapters
+                ],
+            }
+        except Exception as e:
+            print(f" [Python] Chapter state error: {e}")
+            self._chapter_state = None
+
+    def _seek_to_seconds(self, sec):
+        """Seek the current file (progress_slider_click core, no crossfade)."""
+        try:
+            self._cancel_crossfade()
+        except Exception:
+            pass
+        try:
+            base = settings.podcasts_path if (self.api.last_song or {}).get('IsPodcast') else settings.path
+            pygame.mixer.music.load(os.path.join(base, str(self.api.current_filename)))
+        except Exception as e:
+            print(f" [Python] Could not load file for chapter seek: {e}")
+            return
+        pygame.mixer.music.play(0, float(sec))
+        self.current_time_offset = float(sec)
+        self.last_play_time = time.time()
+        if not self.api.playing:
+            pygame.mixer.music.pause()
+            self.pause_time = float(sec)
+
+    def _maybe_start_at_first_chapter(self, song):
+        """Web parity: timestamped episodes start at the first chapter."""
+        try:
+            state = self._chapter_state
+            if not state or state.get('file') != (song or {}).get('File'):
+                return
+            chapters = state.get('chapters') or []
+            if not chapters:
+                return
+            first_start = chapters[0][0]
+            if first_start > 1.0:
+                self._seek_to_seconds(first_start)
+        except Exception as e:
+            print(f" [Python] First-chapter seek error: {e}")
+
+    def _maybe_chapter_skip(self):
+        """Jump to the next chapter when the current one ends (0.2s tick)."""
+        try:
+            state = self._chapter_state
+            if not state:
+                return
+            current = (self.api.last_song or {}).get('File')
+            if not current or state.get('file') != current:
+                return
+            chapters = state.get('chapters') or []
+            if not chapters:
+                return
+            pos = self.get_current_pos()
+            current_idx = -1
+            for i, (start, _end) in enumerate(chapters):
+                if pos >= start:
+                    current_idx = i
+                else:
+                    break
+            if current_idx < 0:
+                return
+            _start, end = chapters[current_idx]
+            if end is None:
+                return  # open-ended: never auto-jump
+            if pos >= end and current_idx + 1 < len(chapters):
+                next_start = chapters[current_idx + 1][0]
+                if next_start > pos:
+                    self._seek_to_seconds(next_start)
+        except Exception as e:
+            print(f" [Python] Chapter skip error: {e}")
+
     def _commit_new_song_state(self, next_song, shift_queue_ui=True):
         """Shared bookkeeping when a new song takes over (DB/history/UI)."""
         if self.api.last_song and self.api.last_song.get('File'):
@@ -862,6 +966,7 @@ class PlaybackController:
                 self.api.media_controls.set_playing(True)
             except Exception:
                 pass
+        self._refresh_chapter_state(next_song)
         self.api.playing = True
 
     def _complete_ramp_to_channel(self, gen, next_song):
@@ -1092,11 +1197,13 @@ class PlaybackController:
             pygame.mixer.music.play()
             self.current_time_offset = 0
             self.last_play_time = time.time()
-            
+            self._refresh_chapter_state(current_song)
+            self._maybe_start_at_first_chapter(current_song)
+
             if opening:
                 pygame.mixer.music.pause()
                 self.api.playing = False
-                self.pause_time = 0
+                self.pause_time = float(self.current_time_offset or 0)
                 if hasattr(self.api, 'media_controls'):
                     self.api.media_controls.set_playing(False)
                 if getattr(self.api, '_window', None):

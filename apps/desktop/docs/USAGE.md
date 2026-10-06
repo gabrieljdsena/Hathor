@@ -45,7 +45,8 @@ A separate library for podcasts and other spoken audio, kept fully apart from mu
 - **Separate folder** – `%appdata%\musicPlayerPodcasts` by default (changeable in Settings). Files here never show up in All Songs, Daily Mix, or Recently Played.
 - **Downloading** – the Download view has a **Songs / Podcast-Audio** toggle. Podcast downloads skip the iTunes song-match (which would mangle episode names) and keep the uploader's title/author instead. Failed podcast downloads retry as podcasts.
 - **Listing is lightweight** – the view shows filenames/DB titles and dates only. Full metadata (duration, cover) loads on demand: **Get Metadata** in the episode menu, automatically when you press play, or via **Edit Info**.
-- **Episode menu** (⋮ button or right-click) – Play, Play Next, Add to Queue, Get Metadata, Edit Info, Delete.
+- **Episode menu** (⋮ button or right-click) – Play, Play Next, Add to Queue, Get Metadata, Edit Info, Tags…, Chapters…, Delete.
+- **Chapters** – per-episode chapter marks (name + start, optional end; `mm:ss` input). Click a chapter's time chip to jump there. With **Chapter auto-skip** on (Settings), episodes start at the first chapter and skip to the next chapter when one ends; open-ended chapters never auto-jump.
 - **No playlists, but queues merge** – episodes queue among themselves, and Play Next / Add to Queue work in both directions, so one queue can mix songs and episodes. Episode plays don't pollute music history, Daily Mix, or Recently Played.
 - **Editing** – Edit Info opens the shared metadata modal and writes tags to the episode file plus the `Podcasts` table.
 - **Sync** – podcasts sync both ways with the remote DB like songs do (see [Database & remote sync](DATABASE.md)).
@@ -82,6 +83,7 @@ The lyrics panel shows the current song's lyrics.
 - **Local cache** – fetched lyrics are stored in the `Lyrics` table so they work offline.
 - **Unknown artists** – LRCLIB's exact endpoint requires an artist (it answers those requests with HTTP 400), so artist-less songs fall back to a track-only search that is only accepted on an exact track-name match.
 - **Romanization** – for Japanese tracks, a "romaji" toggle converts kana to Hepburn romanization via `pykakasi` (both for timed and plain lyrics).
+- **Highlight timing correction** – if the synced highlighting runs early/late, nudge it with the −1s/−.1s/+.1s/+1s stepper in the lyrics header. Persisted per song (±20 s max) in the `Lyrics` table, so it survives restarts and syncs to other devices.
 
 ## History
 

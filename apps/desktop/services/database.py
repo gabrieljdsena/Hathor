@@ -212,6 +212,177 @@ class DatabaseManager:
             print(f" [Python] Error unassigning podcast tag: {str(e)}")
             return False
 
+    # ==========================
+    # Podcast chapters (web parity)
+    # ==========================
+    @staticmethod
+    def _validate_chapter(name, start_secs, end_secs):
+        """Mirror web validation (PodcastTimestamps Validate). None = valid."""
+        import math
+        clean = (name or "").strip()
+        if not clean:
+            return "Timestamp name can't be blank."
+        if len(clean) > 255:
+            return "Timestamp name is too long (max 255)."
+        try:
+            start = float(start_secs)
+        except (TypeError, ValueError):
+            return "Start time must be zero or later."
+        if math.isnan(start) or math.isinf(start) or start < 0:
+            return "Start time must be zero or later."
+        if end_secs is not None:
+            try:
+                end = float(end_secs)
+            except (TypeError, ValueError):
+                return "End time must be later than the start time."
+            if math.isnan(end) or math.isinf(end) or end <= start:
+                return "End time must be later than the start time."
+        return None
+
+    def _ensure_chapter_schema(self, conn):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS Podcast_Chapters ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "podcast_file varchar(255) NOT NULL, "
+            "name varchar(255) NOT NULL, "
+            "start_secs real NOT NULL, "
+            "end_secs real NULL)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_podcast_chapters_file "
+            "ON Podcast_Chapters(podcast_file, start_secs)"
+        )
+
+    def get_podcast_chapters(self, file):
+        """Chapter marks for one episode, ordered by start. Empty list if none."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                rows = conn.execute(
+                    "SELECT id, podcast_file, name, start_secs, end_secs "
+                    "FROM Podcast_Chapters WHERE podcast_file = ? ORDER BY start_secs",
+                    (file,),
+                ).fetchall()
+                return [
+                    {'id': r[0], 'file': r[1], 'name': r[2],
+                     'startSecs': r[3], 'endSecs': r[4]}
+                    for r in rows
+                ]
+        except Exception as e:
+            print(f" [Python] Error loading podcast chapters: {str(e)}")
+            return []
+
+    def add_podcast_chapter(self, file, name, start_secs, end_secs=None):
+        """Add a chapter. Returns {'ok': True, 'chapter': {...}} or {'ok': False, 'message': ...}."""
+        if not os.path.exists(os.path.join(settings.podcasts_path, file or "")):
+            return {'ok': False, 'message': 'Episode not found.'}
+        error = self._validate_chapter(name, start_secs, end_secs)
+        if error:
+            return {'ok': False, 'message': error}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                cur = conn.execute(
+                    "INSERT INTO Podcast_Chapters (podcast_file, name, start_secs, end_secs) "
+                    "VALUES (?, ?, ?, ?)",
+                    (file, (name or "").strip(), float(start_secs),
+                     None if end_secs is None else float(end_secs)),
+                )
+                chapter_id = cur.lastrowid
+            chapters = self.get_podcast_chapters(file)
+            chapter = next((c for c in chapters if c['id'] == chapter_id), None)
+            return {'ok': True, 'chapter': chapter}
+        except Exception as e:
+            print(f" [Python] Error adding podcast chapter: {str(e)}")
+            return {'ok': False, 'message': 'Could not save the chapter.'}
+
+    def update_podcast_chapter(self, chapter_id, name, start_secs, end_secs=None):
+        """Edit a chapter. Same result shape as add_podcast_chapter."""
+        error = self._validate_chapter(name, start_secs, end_secs)
+        if error:
+            return {'ok': False, 'message': error}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                row = conn.execute(
+                    "SELECT podcast_file FROM Podcast_Chapters WHERE id = ?",
+                    (chapter_id,),
+                ).fetchone()
+                if not row:
+                    return {'ok': False, 'message': 'Chapter not found.'}
+                conn.execute(
+                    "UPDATE Podcast_Chapters SET name = ?, start_secs = ?, end_secs = ? "
+                    "WHERE id = ?",
+                    ((name or "").strip(), float(start_secs),
+                     None if end_secs is None else float(end_secs), chapter_id),
+                )
+            chapters = self.get_podcast_chapters(row[0])
+            chapter = next((c for c in chapters if c['id'] == int(chapter_id)), None)
+            return {'ok': True, 'chapter': chapter}
+        except Exception as e:
+            print(f" [Python] Error updating podcast chapter: {str(e)}")
+            return {'ok': False, 'message': 'Could not save the chapter.'}
+
+    def delete_podcast_chapter(self, chapter_id):
+        """Delete one chapter mark."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                cur = conn.execute("DELETE FROM Podcast_Chapters WHERE id = ?", (chapter_id,))
+                return cur.rowcount > 0
+        except Exception as e:
+            print(f" [Python] Error deleting podcast chapter: {str(e)}")
+            return False
+
+    # ==========================
+    # Lyrics highlight offset (web parity: ±20000 ms, sparse)
+    # ==========================
+    def get_lyrics_offset(self, song_file):
+        """Persisted highlight-timing correction in ms. 0 when unset."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                try:
+                    row = conn.execute(
+                        "SELECT offset_ms FROM Lyrics WHERE song_file = ?", (song_file,)
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    return 0
+                if not row or row[0] is None:
+                    return 0
+                return max(-20000, min(20000, int(row[0])))
+        except Exception as e:
+            print(f" [Python] Error loading lyrics offset: {str(e)}")
+            return 0
+
+    def set_lyrics_offset(self, song_file, offset_ms):
+        """Persist the correction (clamped). Works even with no lyrics row yet."""
+        try:
+            offset = max(-20000, min(20000, int(offset_ms or 0)))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                try:
+                    row = conn.execute(
+                        "SELECT id FROM Lyrics WHERE song_file = ?", (song_file,)
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    return offset
+                if row:
+                    conn.execute(
+                        "UPDATE Lyrics SET offset_ms = ? WHERE song_file = ?",
+                        (offset, song_file),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO Lyrics (song_file, lyrics, offset_ms) VALUES (?, ?, ?)",
+                        (song_file, None, offset),
+                    )
+            return offset
+        except Exception as e:
+            print(f" [Python] Error saving lyrics offset: {str(e)}")
+            return 0
+
     def get_playlist_songs(self, playlist_id):
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -784,6 +955,12 @@ class DatabaseManager:
                 
                 cur.execute("SELECT id, song_file, lyrics FROM lyrics")
                 remote_lyrics = cur.fetchall()
+                # offset_ms is newer (same guard pattern as tags below)
+                try:
+                    cur.execute("SELECT song_file, offset_ms FROM lyrics WHERE offset_ms <> 0")
+                    remote_lyrics_offsets = cur.fetchall()
+                except Exception:
+                    remote_lyrics_offsets = []
                 
                 cur.execute("SELECT id, song_file, date_played FROM music_history")
                 remote_music_history = cur.fetchall()
@@ -816,6 +993,12 @@ class DatabaseManager:
                     remote_podcast_tag_links = cur.fetchall()
                 except Exception:
                     remote_podcast_tag_links = []
+                # podcast_chapters is newest (same guard)
+                try:
+                    cur.execute("SELECT id, podcast_file, name, start_secs, end_secs FROM podcast_chapters")
+                    remote_podcast_chapters = cur.fetchall()
+                except Exception:
+                    remote_podcast_chapters = []
             conn.close()
         except Exception as e:
             return f"Error connecting to remote DB: {e}"
@@ -886,6 +1069,14 @@ class DatabaseManager:
                             song_file = excluded.song_file,
                             lyrics = excluded.lyrics
                     """, row)
+                for song_file, offset_ms in remote_lyrics_offsets:
+                    try:
+                        local_conn.execute(
+                            "UPDATE Lyrics SET offset_ms = ? WHERE song_file = ?",
+                            (offset_ms, song_file),
+                        )
+                    except sqlite3.OperationalError:
+                        pass
                 for row in remote_music_history:
                     local_conn.execute("""
                         INSERT INTO Music_History (id, song_file, date_played) VALUES (?, ?, ?)
@@ -930,6 +1121,30 @@ class DatabaseManager:
                         ON CONFLICT(id) DO UPDATE SET
                             podcast_file = excluded.podcast_file,
                             tag_id = excluded.tag_id
+                    """, row)
+                # Episode chapters (upsert by id; empty snapshot never wipes local)
+                local_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Chapters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        podcast_file varchar(255) NOT NULL,
+                        name varchar(255) NOT NULL,
+                        start_secs real NOT NULL,
+                        end_secs real NULL
+                    )
+                """)
+                local_conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_podcast_chapters_file
+                    ON Podcast_Chapters(podcast_file, start_secs)
+                """)
+                for row in remote_podcast_chapters:
+                    local_conn.execute("""
+                        INSERT INTO Podcast_Chapters (id, podcast_file, name, start_secs, end_secs)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            podcast_file = excluded.podcast_file,
+                            name = excluded.name,
+                            start_secs = excluded.start_secs,
+                            end_secs = excluded.end_secs
                     """, row)
                 # Adopt the remote daily mix (same mix of the day on every device)
                 if remote_daily_mix:
