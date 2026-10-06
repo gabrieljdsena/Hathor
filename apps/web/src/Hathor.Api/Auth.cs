@@ -25,6 +25,10 @@ public sealed class ApiKeyAuthenticationHandler(
         var token = HeaderToken() ?? QueryToken();
         if (token is null) return AuthenticateResult.NoResult();
 
+        // Defense in depth: the Smart selector already routes only hth_
+        // tokens here, but never slice an unprefixed token.
+        if (!token.StartsWith("hth_", StringComparison.Ordinal))
+            return AuthenticateResult.NoResult();
         var body = token["hth_".Length..];
         if (body.Length < 8) return AuthenticateResult.Fail("Malformed API key.");
         var keyPrefix = body[..8];
@@ -41,7 +45,7 @@ public sealed class ApiKeyAuthenticationHandler(
             Logger.LogError(ex, "API-key lookup failed for prefix {Prefix}", keyPrefix);
             return AuthenticateResult.Fail("Authentication service unavailable.");
         }
-        if (stored is null || stored.TokenHash != apiKeys.Hash(token))
+        if (stored is null || !HashCompare.FixedTimeEquals(stored.TokenHash, apiKeys.Hash(token)))
             return AuthenticateResult.Fail("Invalid API key.");
 
         var claims = new List<Claim>
@@ -93,6 +97,12 @@ public static class ScopeAuthorization
     {
         services.AddAuthorization(options =>
         {
+            // Fail closed: every endpoint requires an authenticated user
+            // unless it carries an explicit [AllowAnonymous] (auth bootstrap,
+            // /api/info, manual-token media streams, SPA fallback, dev OpenAPI).
+            options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
             // Reads accept writers of their own surface (a download key must
             // poll job status; a playlist key must list to verify), and
             // player:control stays the legacy superset everywhere.
@@ -120,6 +130,20 @@ public static class ScopeAuthorization
         services.AddSingleton<
             Microsoft.AspNetCore.Authorization.IAuthorizationHandler, AnyScopeHandler>();
     }
+
+    // Single source of truth for "may read the library" (mirrors the
+    // LibraryRead policy above). Manual-token endpoints (media streams,
+    // background image) must use this — never an exact single-scope check —
+    // so header auth and ?token= auth grant identical access.
+    public static readonly string[] LibraryReadScopes =
+        [PlayerControl, LibraryRead, LibraryWrite, PlaylistsWrite];
+
+    public static bool SatisfiesLibraryRead(System.Security.Claims.ClaimsPrincipal principal) =>
+        HasAnyScope(principal, LibraryReadScopes);
+
+    public static bool HasAnyScope(
+        System.Security.Claims.ClaimsPrincipal principal, params string[] scopes) =>
+        scopes.Any(s => principal.HasClaim("scope", s));
 }
 
 // Satisfied when the principal carries ANY of the listed scope claims.
@@ -139,5 +163,16 @@ public sealed class AnyScopeHandler
         if (requirement.Scopes.Any(s => context.User.HasClaim("scope", s)))
             context.Succeed(requirement);
         return Task.CompletedTask;
+    }
+}
+
+internal static class HashCompare
+{
+    // Hex-string compare without early exit (SHA256 hashes only).
+    public static bool FixedTimeEquals(string a, string b)
+    {
+        var ab = System.Text.Encoding.UTF8.GetBytes(a);
+        var bb = System.Text.Encoding.UTF8.GetBytes(b);
+        return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(ab, bb);
     }
 }

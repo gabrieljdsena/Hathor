@@ -231,7 +231,10 @@ public sealed record SetPlayerSettingsRequest(bool CrossfadeEnabled, double Cros
 [Route("api")]
 public sealed class ApiInfoController(IConfiguration config) : ControllerBase
 {
+    // Public metadata only (name/version/capabilities) — no user data.
+    // Explicit opt-out of the global fallback authorization policy.
     [HttpGet("info")]
+    [AllowAnonymous]
     public ActionResult<ApiInfoDto> Info() => Ok(new ApiInfoDto(
         "Hathor",
         config.GetValue("ApiInfo:Version", "1.0.0"),

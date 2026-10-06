@@ -27,7 +27,25 @@ public sealed class RegisterHandler(
     IPlaybackStateRepository playback,
     IUserSettingsRepository settings) : IRequestHandler<RegisterCommand, AuthTokensDto>
 {
+    // Single-account gate: serialize in-process so two concurrent first
+    // registrations cannot both pass the AnyAsync check (DB Username unique
+    // index + the DbUpdateException catch below cover the rest).
+    private static readonly SemaphoreSlim Gate = new(1, 1);
+
     public async Task<AuthTokensDto> Handle(RegisterCommand cmd, CancellationToken ct)
+    {
+        await Gate.WaitAsync(ct);
+        try
+        {
+            return await HandleCoreAsync(cmd, ct);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private async Task<AuthTokensDto> HandleCoreAsync(RegisterCommand cmd, CancellationToken ct)
     {
         if (await users.AnyAsync(ct))
             throw new InvalidOperationException("Registration is closed — this server allows a single account.");
@@ -47,7 +65,17 @@ public sealed class RegisterHandler(
         // Ensure per-user playback + settings rows exist from day one.
         await playback.GetOrCreateAsync(user.Id, ct);
         await settings.GetOrCreateAsync(user.Id, ct);
-        await users.SaveChangesAsync(ct);
+        try
+        {
+            await users.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex.GetType().Name == "DbUpdateException")
+        {
+            // Lost a registration race (duplicate username, or a second
+            // account slipped past the gate): stay closed, never 500.
+            // Matched by name to keep EF out of the Application layer.
+            throw new InvalidOperationException("Registration is closed — this server allows a single account.");
+        }
 
         var (refresh, sessionId) = await AuthHelpers.IssueSessionAsync(
             sessions, user.Id, cmd.RememberMe, cmd.DeviceLabel, null, ct);

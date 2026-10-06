@@ -73,7 +73,7 @@ public sealed class PodcastsController(
         {
             var principal = await tokens.ValidateAsync(token);
             if (principal is not null &&
-                TokenValidator.HasScope(principal, ScopeAuthorization.LibraryRead) &&
+                TokenValidator.SatisfiesLibraryRead(principal) &&
                 Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var tokenUser))
                 userId = tokenUser;
         }
@@ -170,7 +170,7 @@ public sealed class PodcastsController(
     {
         var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (id is null || !User.Identity?.IsAuthenticated == true) return null;
-        if (!User.FindAll("scope").Any(c => c.Value == ScopeAuthorization.LibraryRead)) return null;
+        if (!ScopeAuthorization.SatisfiesLibraryRead(User)) return null;
         return Guid.TryParse(id, out var userId) ? userId : null;
     }
 }

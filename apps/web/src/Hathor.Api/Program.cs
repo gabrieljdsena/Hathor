@@ -24,6 +24,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Hathor");
 if (!Environment.UserInteractive)
     builder.WebHost.UseContentRoot(AppContext.BaseDirectory);
+// No Server: Kestrel version banner on any response.
+builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
 
 // Local secrets (lab-Postgres password, dev overrides): gitignored, optional.
 // Inserted just above appsettings.json — NOT appended — so environment
@@ -91,6 +93,8 @@ builder.Services
             ClockSkew = TimeSpan.Zero,
         };
         // SignalR browsers/players authenticate sockets via query string.
+        // hth_ PATs are handled by the ApiKey scheme (see Smart selector) —
+        // never accept them as JWT bearer tokens here.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -98,7 +102,9 @@ builder.Services
                 if (context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
                 {
                     var token = context.Request.Query["access_token"].ToString();
-                    if (!string.IsNullOrEmpty(token)) context.Token = token;
+                    if (!string.IsNullOrEmpty(token) &&
+                        !token.StartsWith("hth_", StringComparison.Ordinal))
+                        context.Token = token;
                 }
                 return Task.CompletedTask;
             },
@@ -114,6 +120,15 @@ builder.Services.AddRateLimiter(options =>
     options.AddFixedWindowLimiter("Auth", opt =>
     {
         opt.PermitLimit = 5;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+    // Refresh tokens are 64-byte random (un-guessable), but still throttle
+    // replay probing separately from login — 5/min would flake legitimate
+    // multi-device rotation bursts.
+    options.AddFixedWindowLimiter("AuthRefresh", opt =>
+    {
+        opt.PermitLimit = 30;
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });
@@ -166,8 +181,14 @@ HistoryHook.Subscribe(app.Services);
 
 // Every HTTP request in console/file logs (method, path, status, elapsed)
 // so handled 4xx/5xx are visible too — Error/Fatal additionally land in
-// the lab Postgres logs table via the sink.
-app.UseSerilogRequestLogging();
+// the lab Postgres logs table via the sink. The template intentionally uses
+// RequestPath (never Query) so ?token= / ?access_token= credentials for
+// media streams and SignalR never land in logs.
+app.UseSerilogRequestLogging(opts =>
+{
+    opts.MessageTemplate =
+        "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+});
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
@@ -176,6 +197,10 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Request-Id"] = context.TraceIdentifier;
     await next();
 });
+
+// Security headers on every response (API, hubs, streams, wwwroot static,
+// SPA fallback). Registered before static files so they are covered too.
+app.UseMiddleware<SecurityHeadersMiddleware>();
 
 // Self-hosted SPA (Windows-service deploys): the publish pipeline copies
 // frontend/dist into wwwroot. Serves without auth/rate-limit overhead;
@@ -186,7 +211,7 @@ app.UseStaticFiles();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 }
 
 app.UseRateLimiter();
@@ -195,9 +220,11 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers().RequireRateLimiting("Api");
-app.MapHub<PlayerHub>("/hubs/player");
-app.MapHub<DownloadsHub>("/hubs/downloads");
-app.MapFallbackToFile("index.html");
+app.MapHub<PlayerHub>("/hubs/player").RequireAuthorization();
+app.MapHub<DownloadsHub>("/hubs/downloads").RequireAuthorization();
+// SPA fallback serves the public shell (login page) — explicit opt-out of
+// the fallback authorization policy. Static files above bypass auth by design.
+app.MapFallbackToFile("index.html").AllowAnonymous();
 
 app.Run();
 

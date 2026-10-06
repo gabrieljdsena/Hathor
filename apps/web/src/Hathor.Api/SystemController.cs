@@ -69,9 +69,19 @@ public sealed class LogsController(ILogger<LogsController> log) : ControllerBase
     [Authorize]
     public IActionResult Client([FromBody] ClientLogRequest body)
     {
+        // Never persist query-carried credentials (?token= / ?access_token=
+        // used by media streams and SignalR) that may end up in routes.
         log.LogWarning("JS: {Message} route={Route} stack={Stack}",
-            (body.Message ?? "").Length > 2000 ? body.Message![..2000] : body.Message,
-            body.Route, body.Stack);
+            Redact(body.Message, 2000), Redact(body.Route, 500), Redact(body.Stack, 2000));
         return Ok();
+    }
+
+    private static string? Redact(string? value, int max)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        var s = value.Length > max ? value[..max] : value;
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s, @"(?i)(access_token|token)=[^&\s]+", "$1=REDACTED");
+        return s;
     }
 }
