@@ -116,6 +116,21 @@ public sealed class SongsController(
         }
     }
 
+    // Move a song to the podcasts library: file moves on disk, rows migrate
+    // tables (same cleanup as delete), queue entries stay valid.
+    [HttpPost("{file}/move-to-podcasts")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<SongDto>> MoveToPodcasts(string file, CancellationToken ct)
+    {
+        var result = await mediator.Send(new Application.Library.MoveSongToPodcastCommand(CurrentUserId(), file), ct);
+        return result switch
+        {
+            Application.Library.LibraryMoveResult.Moved m => Ok(m.Song),
+            Application.Library.LibraryMoveResult.Conflict c => Conflict(new { message = c.Message }),
+            _ => NotFound(),
+        };
+    }
+
     // Byte-range streaming for web <audio> and external players.
     // Auth: Authorization header (Bearer <jwt|hth_...>) or ?token= query
     // (media elements cannot set headers — validated with identical rules).

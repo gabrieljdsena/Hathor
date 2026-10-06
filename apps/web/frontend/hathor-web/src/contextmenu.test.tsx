@@ -20,6 +20,11 @@ const mockEpisode: Song = {
   isPodcast: true,
 }
 
+const { mockMoveSongToPodcasts, mockMovePodcastToSongs } = vi.hoisted(() => ({
+  mockMoveSongToPodcasts: vi.fn(),
+  mockMovePodcastToSongs: vi.fn(),
+}))
+
 vi.mock('./api/client', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./api/client')>()
   return {
@@ -29,6 +34,8 @@ vi.mock('./api/client', async (importOriginal) => {
       podcasts: async () => [mockEpisode],
       podcastTags: async () => [],
       podcastTagMap: async () => ({}),
+      moveSongToPodcasts: (...args: unknown[]) => mockMoveSongToPodcasts(...args),
+      movePodcastToSongs: (...args: unknown[]) => mockMovePodcastToSongs(...args),
     },
   }
 })
@@ -206,6 +213,59 @@ describe('Podcasts episode menu', () => {
     expect(row).not.toBeNull()
     fireEvent.contextMenu(row!)
     expect(await screen.findByText('Get Metadata')).toBeInTheDocument()
+  })
+
+  it('moves the episode to songs behind a confirmation', async () => {
+    mockMovePodcastToSongs.mockResolvedValue({ ...mockEpisode, isPodcast: false })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
+    )
+    renderPodcasts()
+    expect(await screen.findByText('Episode')).toBeInTheDocument()
+    const row = screen.getByText('Episode').closest('div.grid')
+    expect(row).not.toBeNull()
+    fireEvent.contextMenu(row!)
+    fireEvent.click(await screen.findByText('Move to Songs…'))
+    expect(await screen.findByText('Move to Songs?')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, move it' }))
+    await waitFor(() => expect(mockMovePodcastToSongs).toHaveBeenCalledWith('ep1.mp3'))
+  })
+
+  it('episode menu has no Move to Podcasts entry', async () => {
+    renderPodcasts()
+    expect(await screen.findByText('Episode')).toBeInTheDocument()
+    const row = screen.getByText('Episode').closest('div.grid')
+    expect(row).not.toBeNull()
+    fireEvent.contextMenu(row!)
+    expect(await screen.findByText('Move to Songs…')).toBeInTheDocument()
+    expect(screen.queryByText('Move to Podcasts…')).not.toBeInTheDocument()
+  })
+})
+
+describe('Move between libraries (song menu)', () => {
+  it('song menu moves to podcasts behind a confirmation', async () => {
+    mockMoveSongToPodcasts.mockResolvedValue({ ...songs[0], isPodcast: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
+    )
+    renderTable()
+    const row = screen.getByText('Title').closest('div.grid')
+    expect(row).not.toBeNull()
+    fireEvent.contextMenu(row!, { clientX: 100, clientY: 200 })
+    fireEvent.click(await screen.findByText('Move to Podcasts…'))
+    expect(await screen.findByText('Move to Podcasts?')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, move it' }))
+    await waitFor(() => expect(mockMoveSongToPodcasts).toHaveBeenCalledWith('s.mp3'))
+  })
+
+  it('song menu has no Move to Songs entry', () => {
+    renderTable()
+    const row = screen.getByText('Title').closest('div.grid')
+    expect(row).not.toBeNull()
+    fireEvent.contextMenu(row!, { clientX: 100, clientY: 200 })
+    expect(screen.queryByText('Move to Songs…')).not.toBeInTheDocument()
   })
 })
 

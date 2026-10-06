@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Hathor.Api.Auth;
 using Hathor.Application.Dtos;
 using Hathor.Application.Podcasts;
+using Hathor.Application.PodcastTimestamps;
 using Hathor.Application.Ports;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -90,6 +91,78 @@ public sealed class PodcastsController(
         return Ok(new ScanResultDto(result.Added, result.Updated));
     }
 
+    // Move an episode to the songs library: file moves on disk, rows migrate
+    // tables (same cleanup as delete), queue entries stay valid.
+    [HttpPost("{file}/move-to-songs")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<SongDto>> MoveToSongs(string file, CancellationToken ct)
+    {
+        var result = await mediator.Send(new Application.Library.MovePodcastToSongCommand(CurrentUserId(), file), ct);
+        return result switch
+        {
+            Application.Library.LibraryMoveResult.Moved m => Ok(m.Song),
+            Application.Library.LibraryMoveResult.Conflict c => Conflict(new { message = c.Message }),
+            _ => NotFound(),
+        };
+    }
+
+    // Episode chapter marks ("timestamps"): start offset + name, optional
+    // end offset. Times are media offsets in seconds.
+    [HttpGet("{file}/timestamps")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public async Task<ActionResult<IReadOnlyList<PodcastTimestampDto>>> ListTimestamps(
+        string file, CancellationToken ct)
+    {
+        var rows = await mediator.Send(new ListPodcastTimestampsQuery(CurrentUserId(), file), ct);
+        return rows is null ? NotFound() : Ok(rows);
+    }
+
+    [HttpPost("{file}/timestamps")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<PodcastTimestampDto>> CreateTimestamp(
+        string file, [FromBody] PodcastTimestampRequest body, CancellationToken ct)
+    {
+        var result = await mediator.Send(new CreatePodcastTimestampCommand(
+            CurrentUserId(), file, body.Name ?? "",
+            body.StartSecs ?? -1, body.EndSecs), ct);
+        return MapWriteResult(result, created: true);
+    }
+
+    [HttpPut("{file}/timestamps/{id:long}")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<PodcastTimestampDto>> UpdateTimestamp(
+        string file, long id, [FromBody] PodcastTimestampRequest body, CancellationToken ct)
+    {
+        var result = await mediator.Send(new UpdatePodcastTimestampCommand(
+            CurrentUserId(), file, id, body.Name ?? "",
+            body.StartSecs ?? -1, body.EndSecs), ct);
+        return MapWriteResult(result, created: false);
+    }
+
+    [HttpDelete("{file}/timestamps/{id:long}")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<IActionResult> DeleteTimestamp(string file, long id, CancellationToken ct) =>
+        await mediator.Send(new DeletePodcastTimestampCommand(CurrentUserId(), file, id), ct)
+            ? NoContent()
+            : NotFound();
+
+    private ActionResult<PodcastTimestampDto> MapWriteResult(
+        PodcastTimestampWriteResult result, bool created)
+    {
+        return result switch
+        {
+            PodcastTimestampWriteResult.Created c => created
+                ? CreatedAtAction(
+                    nameof(ListTimestamps), new { file = c.Timestamp.PodcastFile }, c.Timestamp)
+                : Ok(c.Timestamp),
+            PodcastTimestampWriteResult.Updated u => Ok(u.Timestamp),
+            PodcastTimestampWriteResult.EpisodeNotFound => NotFound(),
+            PodcastTimestampWriteResult.TimestampNotFound => NotFound(),
+            PodcastTimestampWriteResult.Invalid i => BadRequest(new { message = i.Message }),
+            _ => BadRequest(new { message = "Invalid timestamp." }),
+        };
+    }
+
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
@@ -103,4 +176,5 @@ public sealed class PodcastsController(
 }
 
 public sealed record UpdatePodcastRequest(string? Title, string? Artist, string? CoverArt);
+public sealed record PodcastTimestampRequest(string? Name, double? StartSecs, double? EndSecs);
 public sealed record ScanResultDto(int Added, int Updated);

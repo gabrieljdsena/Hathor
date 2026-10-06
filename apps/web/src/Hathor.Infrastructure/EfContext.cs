@@ -19,6 +19,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<SongPlaylist> SongPlaylists => Set<SongPlaylist>();
     public DbSet<PodcastTag> PodcastTags => Set<PodcastTag>();
     public DbSet<PodcastTagLink> PodcastTagLinks => Set<PodcastTagLink>();
+    public DbSet<PodcastTimestamp> PodcastTimestamps => Set<PodcastTimestamp>();
     public DbSet<DownloadJob> DownloadJobs => Set<DownloadJob>();
     public DbSet<Lyric> Lyrics => Set<Lyric>();
     public DbSet<MusicHistoryEntry> MusicHistory => Set<MusicHistoryEntry>();
@@ -97,6 +98,15 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
             e.HasIndex(x => new { x.UserId, x.PodcastFile, x.TagId }).IsUnique();
+        });
+        b.Entity<PodcastTimestamp>(e =>
+        {
+            e.ToTable("Podcast_Timestamps");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.PodcastFile).HasMaxLength(255);
+            e.Property(x => x.Name).HasMaxLength(255);
+            e.HasIndex(x => new { x.UserId, x.PodcastFile });
         });
         b.Entity<DownloadJob>(e =>
         {

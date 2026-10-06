@@ -331,6 +331,40 @@ namespace Hathor.Migrations.MySql.Migrations
                     b.ToTable("Podcast_Tag_Links", (string)null);
                 });
 
+            modelBuilder.Entity("Hathor.Domain.Entities.PodcastTimestamp", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<double?>("EndSecs")
+                        .HasColumnType("double");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("PodcastFile")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<double>("StartSecs")
+                        .HasColumnType("double");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "PodcastFile");
+
+                    b.ToTable("Podcast_Timestamps", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Domain.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -543,6 +577,9 @@ namespace Hathor.Migrations.MySql.Migrations
 
                     b.Property<string>("Browser")
                         .HasColumnType("longtext");
+
+                    b.Property<bool>("ChapterSkip")
+                        .HasColumnType("tinyint(1)");
 
                     b.Property<bool>("CrossfadeEnabled")
                         .HasColumnType("tinyint(1)");

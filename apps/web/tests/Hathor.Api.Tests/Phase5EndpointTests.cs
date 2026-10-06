@@ -32,6 +32,78 @@ public sealed class Phase5EndpointTests : IAsyncLifetime
         File.WriteAllBytes(Path.Combine(_lib.PodcastsDir, file), [0x49, 0x44, 0x33, 0x00]);
     }
 
+    private void DropSong(string file)
+    {
+        File.WriteAllBytes(Path.Combine(_lib.SongsDir, file), [0x49, 0x44, 0x33, 0x00]);
+    }
+
+    [Fact]
+    public async Task LibraryMove_BetweenSongsAndPodcasts()
+    {
+        var (token, _) = await RegisterAsync($"mv-{Guid.NewGuid():N}");
+        DropSong("move.mp3");
+
+        async Task<HttpStatusCode> Post(string url, object? _ = null)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.Authorization = Bearer(token);
+            return (await _client.SendAsync(req)).StatusCode;
+        }
+
+        // Song → podcast: 200 with the episode DTO, gone from songs.
+        HttpResponseMessage movedRes;
+        using (var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/songs/move.mp3/move-to-podcasts"))
+        {
+            req.Headers.Authorization = Bearer(token);
+            movedRes = await _client.SendAsync(req);
+        }
+        movedRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        var moved = (await movedRes.Content.ReadFromJsonAsync<MovedSong>())!;
+        moved.File.Should().Be("move.mp3");
+        moved.IsPodcast.Should().BeTrue();
+
+        using (var gone = new HttpRequestMessage(HttpMethod.Get, "/api/v1/songs?search=move"))
+        {
+            gone.Headers.Authorization = Bearer(token);
+            var goneRes = await _client.SendAsync(gone);
+            goneRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await goneRes.Content.ReadFromJsonAsync<List<MovedSong>>()).Should().BeEmpty();
+        }
+        using (var listed = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasts"))
+        {
+            listed.Headers.Authorization = Bearer(token);
+            var eps = (await (await _client.SendAsync(listed)).Content.ReadFromJsonAsync<List<MovedSong>>())!;
+            eps.Should().ContainSingle(e => e.File == "move.mp3");
+        }
+
+        // Already moved: 404 on the song side.
+        (await Post("/api/v1/songs/move.mp3/move-to-podcasts")).Should().Be(HttpStatusCode.NotFound);
+
+        // Podcast → song: back to a song DTO.
+        HttpResponseMessage backRes;
+        using (var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/podcasts/move.mp3/move-to-songs"))
+        {
+            req.Headers.Authorization = Bearer(token);
+            backRes = await _client.SendAsync(req);
+        }
+        backRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        var back = (await backRes.Content.ReadFromJsonAsync<MovedSong>())!;
+        back.File.Should().Be("move.mp3");
+        back.IsPodcast.Should().BeFalse();
+
+        // Missing on both sides: 404.
+        (await Post("/api/v1/songs/nope.mp3/move-to-podcasts")).Should().Be(HttpStatusCode.NotFound);
+        (await Post("/api/v1/podcasts/nope.mp3/move-to-songs")).Should().Be(HttpStatusCode.NotFound);
+
+        // Filename taken on the destination side: 409 both ways.
+        DropSong("clash.mp3");
+        DropEpisode("clash.mp3");
+        (await Post("/api/v1/songs/clash.mp3/move-to-podcasts")).Should().Be(HttpStatusCode.Conflict);
+        (await Post("/api/v1/podcasts/clash.mp3/move-to-songs")).Should().Be(HttpStatusCode.Conflict);
+    }
+
+    private sealed record MovedSong(string File, bool IsPodcast, string Title);
+
     [Fact]
     public async Task Podcasts_FullCycle_WithLiveTagCounts()
     {
@@ -102,12 +174,18 @@ public sealed class Phase5EndpointTests : IAsyncLifetime
 
         using var put = new HttpRequestMessage(HttpMethod.Put, "/api/v1/settings");
         put.Headers.Authorization = Bearer(token);
-        put.Content = JsonContent.Create(new { volume = 0.5, limitDownloads = 5, crossfadeEnabled = true, crossfadeSeconds = 8.0 });
+        put.Content = JsonContent.Create(new { volume = 0.5, limitDownloads = 5, crossfadeEnabled = true, crossfadeSeconds = 8.0, chapterSkip = true });
         var putRes = await _client.SendAsync(put);
         putRes.StatusCode.Should().Be(HttpStatusCode.OK);
         var updated = (await putRes.Content.ReadFromJsonAsync<Settings>())!;
         updated.Volume.Should().Be(0.5);
         updated.CrossfadeSeconds.Should().Be(8);
+        updated.ChapterSkip.Should().BeTrue();
+
+        using var getAfter = new HttpRequestMessage(HttpMethod.Get, "/api/v1/settings");
+        getAfter.Headers.Authorization = Bearer(token);
+        (await (await _client.SendAsync(getAfter)).Content.ReadFromJsonAsync<Settings>())!
+            .ChapterSkip.Should().BeTrue();
 
         using var bad = new HttpRequestMessage(HttpMethod.Put, "/api/v1/settings");
         bad.Headers.Authorization = Bearer(token);
@@ -215,6 +293,93 @@ public sealed class Phase5EndpointTests : IAsyncLifetime
         body.State.Should().BeOneOf("idle", "ready");
     }
 
+    [Fact]
+    public async Task PodcastTimestamps_FullCycle()
+    {
+        var (token, _) = await RegisterAsync($"ts-{Guid.NewGuid():N}");
+        DropEpisode("chap.mp3");
+
+        // Missing episode → 404 everywhere.
+        using var missingList = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasts/nope.mp3/timestamps");
+        missingList.Headers.Authorization = Bearer(token);
+        (await _client.SendAsync(missingList)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Two chapters, created out of order; list comes back sorted by start.
+        async Task<Timestamp> Create(object body, HttpStatusCode expect)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/podcasts/chap.mp3/timestamps");
+            req.Headers.Authorization = Bearer(token);
+            req.Content = JsonContent.Create(body);
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(expect);
+            return (await res.Content.ReadFromJsonAsync<Timestamp>())!;
+        }
+        var second = await Create(new { name = "Second", startSecs = 120.0, endSecs = (double?)null },
+            HttpStatusCode.Created);
+        var first = await Create(new { name = "Intro", startSecs = 0.0, endSecs = 60.0 },
+            HttpStatusCode.Created);
+        first.StartSecs.Should().Be(0);
+        first.EndSecs.Should().Be(60);
+
+        // Validation → 400 (blank name, negative start, end <= start).
+        await Create(new { name = " ", startSecs = 10.0, endSecs = (double?)null },
+            HttpStatusCode.BadRequest);
+        await Create(new { name = "Bad", startSecs = -5.0, endSecs = (double?)null },
+            HttpStatusCode.BadRequest);
+        await Create(new { name = "Bad", startSecs = 30.0, endSecs = 30.0 },
+            HttpStatusCode.BadRequest);
+        await Create(new { name = "Bad", startSecs = 30.0, endSecs = 10.0 },
+            HttpStatusCode.BadRequest);
+
+        using var list = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasts/chap.mp3/timestamps");
+        list.Headers.Authorization = Bearer(token);
+        var listRes = await _client.SendAsync(list);
+        listRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        var rows = (await listRes.Content.ReadFromJsonAsync<List<Timestamp>>())!;
+        rows.Select(r => r.Name).Should().Equal("Intro", "Second");
+
+        // Update + update-missing → 404.
+        using var put = new HttpRequestMessage(
+            HttpMethod.Put, $"/api/v1/podcasts/chap.mp3/timestamps/{first.Id}");
+        put.Headers.Authorization = Bearer(token);
+        put.Content = JsonContent.Create(new { name = "Cold open", startSecs = 5.0, endSecs = (double?)null });
+        var putRes = await _client.SendAsync(put);
+        putRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await putRes.Content.ReadFromJsonAsync<Timestamp>())!.Name.Should().Be("Cold open");
+
+        using var putMissing = new HttpRequestMessage(
+            HttpMethod.Put, "/api/v1/podcasts/chap.mp3/timestamps/999999");
+        putMissing.Headers.Authorization = Bearer(token);
+        putMissing.Content = JsonContent.Create(new { name = "Ghost", startSecs = 5.0, endSecs = (double?)null });
+        (await _client.SendAsync(putMissing)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Delete one, verify the other survives.
+        using var del = new HttpRequestMessage(
+            HttpMethod.Delete, $"/api/v1/podcasts/chap.mp3/timestamps/{first.Id}");
+        del.Headers.Authorization = Bearer(token);
+        (await _client.SendAsync(del)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+        using var delAgain = new HttpRequestMessage(
+            HttpMethod.Delete, $"/api/v1/podcasts/chap.mp3/timestamps/{first.Id}");
+        delAgain.Headers.Authorization = Bearer(token);
+        (await _client.SendAsync(delAgain)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        using var list2 = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasts/chap.mp3/timestamps");
+        list2.Headers.Authorization = Bearer(token);
+        (await (await _client.SendAsync(list2)).Content.ReadFromJsonAsync<List<Timestamp>>())!
+            .Should().ContainSingle().Which.Id.Should().Be(second.Id);
+
+        // Deleting the episode cascades its timestamps.
+        using var delEp = new HttpRequestMessage(HttpMethod.Delete, "/api/v1/podcasts/chap.mp3");
+        delEp.Headers.Authorization = Bearer(token);
+        (await _client.SendAsync(delEp)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var list3 = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasts/chap.mp3/timestamps");
+        list3.Headers.Authorization = Bearer(token);
+        (await _client.SendAsync(list3)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    private sealed record Timestamp(long Id, string PodcastFile, string Name, double StartSecs, double? EndSecs);
+
     private sealed record DownloadStatus(string State, double Progress, string? Exe, string? Error);
 
     private sealed record Tokens(string AccessToken, string RefreshToken, string Username);
@@ -222,6 +387,7 @@ public sealed class Phase5EndpointTests : IAsyncLifetime
     private sealed record TagCount(long Id, string Name, int EpisodeCount);
     private sealed record Settings(
         double Volume, int LimitDownloads, string? BackgroundPath,
-        bool CrossfadeEnabled, double CrossfadeSeconds, string? LastRoute, string? Browser);
+        bool CrossfadeEnabled, double CrossfadeSeconds, string? LastRoute, string? Browser,
+        bool ChapterSkip = false);
     private sealed record PlayerPrefs(bool CrossfadeEnabled, double CrossfadeSeconds);
 }

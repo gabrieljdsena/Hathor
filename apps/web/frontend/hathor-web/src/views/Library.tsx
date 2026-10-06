@@ -67,7 +67,9 @@ export function Artists() {
 
 export function ArtistDetail() {
   const { name } = useParams()
-  const artist = decodeURIComponent(name ?? '')
+  // useParams already decodes percent-encoding; a second
+  // decodeURIComponent would corrupt names and throw on literals like '%'.
+  const artist = name ?? ''
   const playSong = usePlayer((s) => s.playSong)
   const { data: songs, isLoading } = useQuery({
     queryKey: ['artist-songs', artist],
@@ -138,7 +140,8 @@ export function Albums() {
 
 export function AlbumDetail() {
   const { title } = useParams()
-  const album = decodeURIComponent(title ?? '')
+  // useParams already decodes percent-encoding (see ArtistDetail).
+  const album = title ?? ''
   const playSong = usePlayer((s) => s.playSong)
   const { data: songs, isLoading } = useQuery({
     queryKey: ['album-songs', album],

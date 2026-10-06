@@ -54,7 +54,8 @@ public sealed record UserSettingsDto(
     bool CrossfadeEnabled,
     double CrossfadeSeconds,
     string? LastRoute,
-    string? Browser);
+    string? Browser,
+    bool ChapterSkip);
 
 // Player-scoped prefs (crossfade lives server-side for all clients).
 public sealed record PlayerSettingsDto(bool CrossfadeEnabled, double CrossfadeSeconds);
@@ -74,6 +75,15 @@ public sealed record PlaylistWithCountDto(
 
 // Podcast tags mirror playlists (plan §1.4): unique names + live episode counts.
 public sealed record PodcastTagDto(long Id, string Name, int EpisodeCount);
+
+// Podcast chapter marks ("timestamps"): media offsets in seconds with a
+// display name; EndSecs null means the chapter runs open-ended.
+public sealed record PodcastTimestampDto(
+    long Id,
+    string PodcastFile,
+    string Name,
+    double StartSecs,
+    double? EndSecs);
 
 // History rows: song + play/download date + re-download source link (G17).
 public sealed record HistoryItemDto(

@@ -115,6 +115,19 @@ public sealed class PodcastTagLink
     public long TagId { get; set; }
 }
 
+// Chapter marks inside a podcast episode (podcast "timestamps"):
+// start offset in seconds, display name, optional end offset. Times are
+// media offsets (not wall-clock); EndSecs null means "runs open-ended".
+public sealed class PodcastTimestamp
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public string PodcastFile { get; set; } = "";
+    public string Name { get; set; } = "";
+    public double StartSecs { get; set; }
+    public double? EndSecs { get; set; }
+}
+
 public sealed class DownloadJob
 {
     public long Id { get; set; }
@@ -200,4 +213,7 @@ public sealed class UserSettings
     public double CrossfadeSeconds { get; set; } = 5; // 1..12
     public string? LastRoute { get; set; } // ex-current_tab
     public string? Browser { get; set; } // yt-dlp --cookies-from-browser
+    // Podcast chapter auto-skip: when on, timestamped episodes start at the
+    // first chapter and jump to the next chapter at each end time.
+    public bool ChapterSkip { get; set; }
 }

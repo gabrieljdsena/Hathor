@@ -115,6 +115,16 @@ public interface IPodcastTagRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
+// Podcast-timestamp (chapter) writes (EF).
+public interface IPodcastTimestampRepository
+{
+    Task<List<PodcastTimestamp>> ListAsync(Guid userId, string file, CancellationToken ct = default);
+    Task<PodcastTimestamp?> GetAsync(Guid userId, string file, long id, CancellationToken ct = default);
+    Task AddAsync(PodcastTimestamp timestamp, CancellationToken ct = default);
+    void Remove(PodcastTimestamp timestamp);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
 // Songs-table writes (EF). File metadata itself is TagLib + filesystem;
 // the materialized columns mirror it so lists/search never open MP3s.
 public interface ISongRecordRepository
@@ -141,6 +151,7 @@ public interface IPodcastRecordRepository
 {
     Task EnsureAsync(Guid userId, string file, string title, string? artist,
         string? link, CancellationToken ct = default);
+    Task<string?> GetDownloadLinkAsync(Guid userId, string file, CancellationToken ct = default);
     Task<bool> DeleteCascadeAsync(Guid userId, string file, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }

@@ -8,6 +8,7 @@ import Icon from '../components/ui/icons'
 import { claimMenu, releaseMenu, subscribeMenu } from '../components/ui/menuBus'
 import Modal from '../components/ui/Modal'
 import { AssignTagsModal, TagManagerModal, TagPills } from '../components/ui/PodcastTags'
+import { TimestampManagerModal } from '../components/ui/PodcastTimestamps'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { fuzzyFields } from '../utils/fuzzy'
 import { EmptyState, LoadingState } from '../components/ui/states'
@@ -29,6 +30,9 @@ export default function Podcasts() {
   const [assignFile, setAssignFile] = useState<Song | null>(null)
   const [editSong, setEditSong] = useState<Song | null>(null)
   const [deleteSong, setDeleteSong] = useState<Song | null>(null)
+  const [chaptersFile, setChaptersFile] = useState<Song | null>(null)
+  const [moveSong, setMoveSong] = useState<Song | null>(null)
+  const [moving, setMoving] = useState(false)
   const menuFileRef = useRef<string | null>(null)
   menuFileRef.current = menuFile
 
@@ -188,6 +192,8 @@ export default function Podcasts() {
                         onPlay={() => playEpisode(song)}
                         onEdit={() => setEditSong({ ...song, isPodcast: true })}
                         onTags={() => setAssignFile({ ...song, isPodcast: true })}
+                        onChapters={() => setChaptersFile({ ...song, isPodcast: true })}
+                        onMove={() => setMoveSong({ ...song, isPodcast: true })}
                         onDelete={() => setDeleteSong({ ...song, isPodcast: true })}
                         onGetMetadata={() =>
                           void api
@@ -219,6 +225,16 @@ export default function Podcasts() {
           title={assignFile.title}
           onClose={() => {
             setAssignFile(null)
+            refresh()
+          }}
+        />
+      )}
+      {chaptersFile && (
+        <TimestampManagerModal
+          file={chaptersFile.file}
+          episodeTitle={chaptersFile.title}
+          onClose={() => {
+            setChaptersFile(null)
             refresh()
           }}
         />
@@ -257,6 +273,35 @@ export default function Podcasts() {
           </PrimaryButton>
         </div>
       </Modal>
+      <Modal open={moveSong !== null} onClose={() => setMoveSong(null)} title="Move to Songs?">
+        <p className="text-sm text-zinc-400">
+          <span className="text-zinc-200 font-medium">{moveSong?.title}</span> will play as a song from
+          now on. Its tags and chapters will be removed. The file itself is kept.
+        </p>
+        <div className="flex justify-end gap-3 pt-4 mt-4 border-t border-white/10">
+          <GhostButton onClick={() => setMoveSong(null)}>Cancel</GhostButton>
+          <PrimaryButton
+            loading={moving}
+            onClick={() => {
+              const f = moveSong
+              if (!f) return
+              setMoving(true)
+              void api
+                .movePodcastToSongs(f.file)
+                .then(() => {
+                  setMoveSong(null)
+                  evictCoverCache(f.file)
+                  refresh()
+                  void usePlayer.getState().refresh()
+                })
+                .catch(() => setMoveSong(null))
+                .finally(() => setMoving(false))
+            }}
+          >
+            {moving ? 'Moving…' : 'Yes, move it'}
+          </PrimaryButton>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -276,6 +321,8 @@ function EpisodeMenu({
   onPlay,
   onEdit,
   onTags,
+  onChapters,
+  onMove,
   onDelete,
   onGetMetadata,
 }: {
@@ -284,12 +331,14 @@ function EpisodeMenu({
   onPlay: () => void
   onEdit: () => void
   onTags: () => void
+  onChapters: () => void
+  onMove: () => void
   onDelete: () => void
   onGetMetadata: () => void
 }) {
   const entry = (
     label: string,
-    icon: 'play' | 'next' | 'list' | 'search' | 'gear' | 'tag' | 'x',
+    icon: 'play' | 'next' | 'list' | 'search' | 'gear' | 'tag' | 'clock' | 'musicNote' | 'x',
     run: () => void,
     danger = false,
   ) => (
@@ -320,6 +369,8 @@ function EpisodeMenu({
       {entry('Get Metadata', 'search', onGetMetadata)}
       {entry('Edit Info', 'gear', onEdit)}
       {entry('Tags…', 'tag', onTags)}
+      {entry('Chapters…', 'clock', onChapters)}
+      {entry('Move to Songs…', 'musicNote', onMove)}
       {entry('Delete', 'x', onDelete, true)}
     </div>
   )

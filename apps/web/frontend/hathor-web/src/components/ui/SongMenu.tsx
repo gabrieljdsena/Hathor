@@ -33,6 +33,8 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
   const [playlistsOpen, setPlaylistsOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [moveOpen, setMoveOpen] = useState(false)
+  const [moving, setMoving] = useState(false)
   const queryClient = useQueryClient()
   const playSong = usePlayer((s) => s.playSong)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -141,6 +143,23 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
         ]
       : []),
     { key: 'playlists', label: 'Add to Playlist…', icon: 'plus' as const, run: () => { close(); setPlaylistsOpen(true) } },
+    ...(song.isPodcast
+      ? [
+          {
+            key: 'move-song',
+            label: 'Move to Songs…',
+            icon: 'musicNote' as const,
+            run: () => { close(); setMoveOpen(true) },
+          },
+        ]
+      : [
+          {
+            key: 'move-podcast',
+            label: 'Move to Podcasts…',
+            icon: 'mic' as const,
+            run: () => { close(); setMoveOpen(true) },
+          },
+        ]),
     { key: 'delete', label: 'Delete', icon: 'x' as const, danger: true, run: () => { close(); setDeleteOpen(true) } },
   ]
 
@@ -236,6 +255,39 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
             }}
           >
             {deleting ? 'Deleting…' : 'Yes, delete it'}
+          </PrimaryButton>
+        </div>
+      </Modal>
+      <Modal
+        open={moveOpen}
+        onClose={() => setMoveOpen(false)}
+        title={song.isPodcast ? 'Move to Songs?' : 'Move to Podcasts?'}
+      >
+        <p className="text-sm text-zinc-400">
+          <span className="text-zinc-200 font-medium">{song.title}</span>{' '}
+          {song.isPodcast
+            ? 'will play as a song from now on. Its tags and chapters will be removed.'
+            : 'will play as a podcast episode from now on. Its playlist entries, lyrics and play history will be removed.'}{' '}
+          The file itself is kept.
+        </p>
+        <div className="flex justify-end gap-3 pt-4 mt-4 border-t border-white/10">
+          <GhostButton onClick={() => setMoveOpen(false)}>Cancel</GhostButton>
+          <PrimaryButton
+            loading={moving}
+            onClick={() => {
+              setMoving(true)
+              void (song.isPodcast ? api.movePodcastToSongs(song.file) : api.moveSongToPodcasts(song.file))
+                .then(() => {
+                  setMoveOpen(false)
+                  evictCoverCache(song.file)
+                  refresh()
+                  void usePlayer.getState().refresh()
+                })
+                .catch(() => setMoveOpen(false))
+                .finally(() => setMoving(false))
+            }}
+          >
+            {moving ? 'Moving…' : 'Yes, move it'}
           </PrimaryButton>
         </div>
       </Modal>

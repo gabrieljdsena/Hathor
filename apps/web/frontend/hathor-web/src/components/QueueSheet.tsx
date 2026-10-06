@@ -4,6 +4,7 @@ import { usePlayer } from '../store/player'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import Pagination from './ui/Pagination'
+import { ChapterSkip } from './ui/PodcastTimestamps'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Up Next queue panel (desktop #queue-sidebar): jump-to-position,
@@ -17,7 +18,8 @@ export const QUEUE_PAGE_SIZE = 50
 export default function QueueSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queue = usePlayer((s) => s.queue)
   const queueTotal = usePlayer((s) => s.queueTotal)
-  const currentFile = usePlayer((s) => s.currentSong?.file)
+  const currentSong = usePlayer((s) => s.currentSong)
+  const currentFile = currentSong?.file
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
   const [page, setPage] = useState(1)
@@ -75,6 +77,12 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
         </div>
       </div>
       <div className="p-3 overflow-y-auto flex-1">
+        {/* Podcast chapters for what's playing now: skip without leaving the queue. */}
+        {currentSong?.isPodcast && currentFile && (
+          <div className="mb-3 rounded-2xl bg-black/20 backdrop-blur-2xl border border-white/5 p-3">
+            <ChapterSkip file={currentFile} />
+          </div>
+        )}
         <div id="queue-body" className="flex flex-col gap-1">
           {queue.length === 0 && <p className="text-sm text-zinc-500 text-center py-8">Queue is empty</p>}
           {queue

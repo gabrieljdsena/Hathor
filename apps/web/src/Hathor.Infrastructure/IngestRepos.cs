@@ -128,6 +128,27 @@ public sealed class EfLyricsRepository(HathorDbContext db) : ILyricsRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }
 
+public sealed class EfPodcastTimestampRepository(HathorDbContext db) : IPodcastTimestampRepository
+{
+    public Task<List<PodcastTimestamp>> ListAsync(Guid userId, string file, CancellationToken ct = default) =>
+        db.PodcastTimestamps
+            .Where(t => t.UserId == userId && t.PodcastFile == file)
+            .OrderBy(t => t.StartSecs)
+            .ThenBy(t => t.Id)
+            .ToListAsync(ct);
+
+    public Task<PodcastTimestamp?> GetAsync(Guid userId, string file, long id, CancellationToken ct = default) =>
+        db.PodcastTimestamps
+            .FirstOrDefaultAsync(t => t.UserId == userId && t.PodcastFile == file && t.Id == id, ct);
+
+    public async Task AddAsync(PodcastTimestamp timestamp, CancellationToken ct = default) =>
+        await db.PodcastTimestamps.AddAsync(timestamp, ct);
+
+    public void Remove(PodcastTimestamp timestamp) => db.PodcastTimestamps.Remove(timestamp);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
+}
+
 public sealed class EfPodcastRecordRepository(HathorDbContext db) : IPodcastRecordRepository
 {
     public async Task EnsureAsync(Guid userId, string file, string title,
@@ -154,11 +175,24 @@ public sealed class EfPodcastRecordRepository(HathorDbContext db) : IPodcastReco
         }
     }
 
+    public async Task<string?> GetDownloadLinkAsync(Guid userId, string file, CancellationToken ct = default)
+    {
+        var row = await db.Podcasts
+            .FirstOrDefaultAsync(p => p.UserId == userId && p.File == file, ct);
+        return row?.DownloadedLink;
+    }
+
     public async Task<bool> DeleteCascadeAsync(Guid userId, string file, CancellationToken ct = default)
     {
         var existed = await db.Podcasts.AnyAsync(p => p.UserId == userId && p.File == file, ct);
         await db.PodcastTagLinks
             .Where(l => l.UserId == userId && l.PodcastFile == file)
+            .ExecuteDeleteAsync(ct);
+        // Timestamps are episode children with no remote-table counterpart:
+        // drop them with the episode (no tombstone — desktop sync only
+        // understands the podcasts/podcast_tags tables).
+        await db.PodcastTimestamps
+            .Where(t => t.UserId == userId && t.PodcastFile == file)
             .ExecuteDeleteAsync(ct);
         await db.Podcasts
             .Where(p => p.UserId == userId && p.File == file)

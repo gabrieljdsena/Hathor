@@ -35,11 +35,12 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
     {
         var handler = new SettingsHandlers(new EfUserSettingsRepository(_db));
         var dto = await handler.Handle(new UpdateSettingsCommand(
-            _userId, Volume: 5, LimitDownloads: 99, null, 99, null, null),
+            _userId, Volume: 5, LimitDownloads: 99, null, 99, null, null, ChapterSkip: true),
             CancellationToken.None);
         dto.Volume.Should().Be(1);
         dto.LimitDownloads.Should().Be(20);
         dto.CrossfadeSeconds.Should().Be(12);
+        dto.ChapterSkip.Should().BeTrue();
     }
 
     [Fact]
@@ -123,5 +124,117 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
             NSubstitute.Substitute.For<Ports.ISongReadModel>());
         (await handler.Handle(new DeletePodcastCommand(_userId, "nope.mp3"), CancellationToken.None))
             .Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PodcastTimestamps_FullCycle_OrderedByStart()
+    {
+        var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
+        storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(true);
+        var repo = new EfPodcastTimestampRepository(_db);
+        var create = new PodcastTimestamps.CreatePodcastTimestampHandler(storage, repo);
+        var list = new PodcastTimestamps.ListPodcastTimestampsHandler(storage, repo);
+
+        var second = await create.Handle(
+            new PodcastTimestamps.CreatePodcastTimestampCommand(_userId, "e.mp3", "Second", 120, null),
+            CancellationToken.None);
+        second.Should().BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Created>();
+        var first = await create.Handle(
+            new PodcastTimestamps.CreatePodcastTimestampCommand(_userId, "e.mp3", "Intro", 0, 60),
+            CancellationToken.None);
+        var firstCreated = first.Should()
+            .BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Created>().Subject;
+        firstCreated.Timestamp.Id.Should().BeGreaterThan(0);
+        var firstId = firstCreated.Timestamp.Id;
+
+        var rows = (await list.Handle(
+            new PodcastTimestamps.ListPodcastTimestampsQuery(_userId, "e.mp3"),
+            CancellationToken.None))!;
+        rows.Select(r => r.Name).Should().Equal("Intro", "Second");
+        rows.First().EndSecs.Should().Be(60);
+
+        var update = new PodcastTimestamps.UpdatePodcastTimestampHandler(storage, repo);
+        var updated = await update.Handle(
+            new PodcastTimestamps.UpdatePodcastTimestampCommand(
+                _userId, "e.mp3", firstId, "Cold open", 5, null),
+            CancellationToken.None);
+        updated.Should().BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Updated>();
+
+        var missing = await update.Handle(
+            new PodcastTimestamps.UpdatePodcastTimestampCommand(
+                _userId, "e.mp3", 999999, "Ghost", 5, null),
+            CancellationToken.None);
+        missing.Should().BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.TimestampNotFound>();
+
+        var delete = new PodcastTimestamps.DeletePodcastTimestampHandler(storage, repo);
+        (await delete.Handle(
+            new PodcastTimestamps.DeletePodcastTimestampCommand(_userId, "e.mp3", firstId),
+            CancellationToken.None)).Should().BeTrue();
+        _db.PodcastTimestamps.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task PodcastTimestamps_Create_RejectsBadInput()
+    {
+        var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
+        storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(true);
+        var handler = new PodcastTimestamps.CreatePodcastTimestampHandler(
+            storage, new EfPodcastTimestampRepository(_db));
+        async Task<PodcastTimestamps.PodcastTimestampWriteResult> Create(
+            string name, double start, double? end) =>
+            await handler.Handle(
+                new PodcastTimestamps.CreatePodcastTimestampCommand(_userId, "e.mp3", name, start, end),
+                CancellationToken.None);
+        (await Create("", 10, null)).Should()
+            .BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Invalid>();
+        (await Create("   ", 10, null)).Should()
+            .BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Invalid>();
+        (await Create("Ok", -1, null)).Should()
+            .BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Invalid>();
+        (await Create("Ok", 30, 30)).Should()
+            .BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Invalid>();
+        (await Create("Ok", 30, 10)).Should()
+            .BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.Invalid>();
+        _db.PodcastTimestamps.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PodcastTimestamps_MissingEpisode_ReturnsNotFound()
+    {
+        var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
+        storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(false);
+        var repo = new EfPodcastTimestampRepository(_db);
+        var list = new PodcastTimestamps.ListPodcastTimestampsHandler(storage, repo);
+        (await list.Handle(
+            new PodcastTimestamps.ListPodcastTimestampsQuery(_userId, "gone.mp3"),
+            CancellationToken.None)).Should().BeNull();
+        var create = new PodcastTimestamps.CreatePodcastTimestampHandler(storage, repo);
+        (await create.Handle(
+            new PodcastTimestamps.CreatePodcastTimestampCommand(_userId, "gone.mp3", "X", 1, null),
+            CancellationToken.None))
+            .Should().BeOfType<PodcastTimestamps.PodcastTimestampWriteResult.EpisodeNotFound>();
+    }
+
+    [Fact]
+    public async Task DeletePodcast_RemovesTimestamps()
+    {
+        var records = new EfPodcastRecordRepository(_db);
+        await records.EnsureAsync(_userId, "e.mp3", "Ep", "Host", null);
+        await records.SaveChangesAsync();
+        _db.PodcastTimestamps.Add(new PodcastTimestamp
+        { UserId = _userId, PodcastFile = "e.mp3", Name = "Intro", StartSecs = 0 });
+        await _db.SaveChangesAsync();
+
+        var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
+        storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(false);
+        var handler = new DeletePodcastHandler(
+            storage, records,
+            new EfTombstoneRepository(_db),
+            new EfPlaybackStateRepository(_db),
+            NSubstitute.Substitute.For<Ports.IPlaybackHub>(),
+            NSubstitute.Substitute.For<Ports.ISongReadModel>());
+        (await handler.Handle(new DeletePodcastCommand(_userId, "e.mp3"), CancellationToken.None))
+            .Should().BeTrue();
+        _db.PodcastTimestamps.Should().BeEmpty();
     }
 }

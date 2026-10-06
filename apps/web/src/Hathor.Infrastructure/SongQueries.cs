@@ -310,7 +310,7 @@ public sealed class DapperSongReadModel(
         var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
             $"{factory.Quote("Artist")}, {factory.Quote("Album")}, {factory.Quote("Year")}, " +
             $"{factory.Quote("Genre")}, {factory.Quote("DurationSecs")}, " +
-            $"{factory.Quote("DateDownloadUtc")} " +
+            $"{factory.Quote("LoudnessDb")}, {factory.Quote("DateDownloadUtc")} " +
             $"FROM {factory.Quote("Songs")} WHERE {factory.UserIdPredicate()} " +
             $"AND UPPER({factory.Quote("Artist")}) = UPPER(@Artist)";
         using var conn = factory.Create();
@@ -326,7 +326,7 @@ public sealed class DapperSongReadModel(
         return rows
             .Where(r => live.Contains(r.File))
             .Select(ToDto)
-            .Where(s => string.Equals(s.Artist, artist, StringComparison.Ordinal))
+            .Where(s => string.Equals(s.Artist, artist, StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => s.Album, StringComparer.OrdinalIgnoreCase)
             .ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -395,7 +395,7 @@ public sealed class DapperSongReadModel(
         var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
             $"{factory.Quote("Artist")}, {factory.Quote("Album")}, {factory.Quote("Year")}, " +
             $"{factory.Quote("Genre")}, {factory.Quote("DurationSecs")}, " +
-            $"{factory.Quote("DateDownloadUtc")} " +
+            $"{factory.Quote("LoudnessDb")}, {factory.Quote("DateDownloadUtc")} " +
             $"FROM {factory.Quote("Songs")} WHERE {factory.UserIdPredicate()} " +
             $"AND UPPER({factory.Quote("Album")}) = UPPER(@Album)";
         using var conn = factory.Create();
@@ -411,7 +411,7 @@ public sealed class DapperSongReadModel(
         return rows
             .Where(r => live.Contains(r.File))
             .Select(ToDto)
-            .Where(s => string.Equals(s.Album, album, StringComparison.Ordinal))
+            .Where(s => string.Equals(s.Album, album, StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => s.Artist, StringComparer.OrdinalIgnoreCase)
             .ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();

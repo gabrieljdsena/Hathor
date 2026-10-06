@@ -123,6 +123,7 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Domain.Repositories.IDownloadJobRepository, Repositories.EfDownloadJobRepository>();
         services.AddScoped<Domain.Repositories.ILyricsRepository, Repositories.EfLyricsRepository>();
         services.AddScoped<Domain.Repositories.IPodcastRecordRepository, Repositories.EfPodcastRecordRepository>();
+        services.AddScoped<Domain.Repositories.IPodcastTimestampRepository, Repositories.EfPodcastTimestampRepository>();
         services.AddScoped<Application.Ports.IPodcastReadModel, Library.DapperPodcastReadModel>();
         services.AddSingleton<Application.Ports.ISystemProbe, Maintenance.SystemProbe>();
         services.AddSingleton<Maintenance.IFfmpegInstaller, Maintenance.FfmpegInstaller>();

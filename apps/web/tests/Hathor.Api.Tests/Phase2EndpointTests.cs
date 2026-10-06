@@ -164,6 +164,58 @@ public sealed class Phase2EndpointTests : IAsyncLifetime
         song!.Artist.Should().Be("New Artist");
     }
 
+    [Fact]
+    public async Task Artist_And_Album_Songs_RoundTrip()
+    {
+        var token = await TokenForAsync($"detail-{Guid.NewGuid():N}");
+        DropSong("detail.mp3");
+
+        using var scan = new HttpRequestMessage(HttpMethod.Post, "/api/v1/songs/scan");
+        scan.Headers.Authorization = Bearer(token);
+        (await _client.SendAsync(scan)).EnsureSuccessStatusCode();
+
+        using var patch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/songs/detail.mp3");
+        patch.Headers.Authorization = Bearer(token);
+        patch.Content = JsonContent.Create(new
+        {
+            title = "Detail Song",
+            artist = "Detail Artist",
+            album = "Detail Album",
+            year = (string?)null,
+            genre = (string?)null,
+            coverArt = (string?)null,
+        });
+        (await _client.SendAsync(patch)).EnsureSuccessStatusCode();
+
+        using var artists = new HttpRequestMessage(HttpMethod.Get, "/api/v1/artists");
+        artists.Headers.Authorization = Bearer(token);
+        (await (await _client.SendAsync(artists)).Content.ReadFromJsonAsync<List<string>>())!
+            .Should().Contain("Detail Artist");
+
+        using var artistSongs = new HttpRequestMessage(
+            HttpMethod.Get, "/api/v1/artists/Detail%20Artist/songs");
+        artistSongs.Headers.Authorization = Bearer(token);
+        var artistRes = await _client.SendAsync(artistSongs);
+        artistRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await artistRes.Content.ReadFromJsonAsync<List<DetailSong>>())!
+            .Should().ContainSingle().Which.Title.Should().Be("Detail Song");
+
+        using var albums = new HttpRequestMessage(HttpMethod.Get, "/api/v1/albums");
+        albums.Headers.Authorization = Bearer(token);
+        (await (await _client.SendAsync(albums)).Content.ReadFromJsonAsync<List<string>>())!
+            .Should().Contain("Detail Album");
+
+        using var albumSongs = new HttpRequestMessage(
+            HttpMethod.Get, "/api/v1/albums/Detail%20Album/songs");
+        albumSongs.Headers.Authorization = Bearer(token);
+        var albumRes = await _client.SendAsync(albumSongs);
+        albumRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await albumRes.Content.ReadFromJsonAsync<List<DetailSong>>())!
+            .Should().ContainSingle().Which.Title.Should().Be("Detail Song");
+    }
+
+    private sealed record DetailSong(string File, string Artist, string Title);
+
     private void DropSong(string file)
     {
         // Minimal valid MPEG frame TagLibSharp round-trips (see MetadataWriterTests).

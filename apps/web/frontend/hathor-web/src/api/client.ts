@@ -38,6 +38,14 @@ export interface PodcastTag {
   episodeCount: number
 }
 
+export interface PodcastTimestamp {
+  id: number
+  podcastFile: string
+  name: string
+  startSecs: number
+  endSecs: number | null
+}
+
 export interface UserSettings {
   volume: number
   limitDownloads: number
@@ -46,6 +54,7 @@ export interface UserSettings {
   crossfadeSeconds: number
   lastRoute: string | null
   browser: string | null
+  chapterSkip: boolean
 }
 
 export interface PlayerSettings {
@@ -595,6 +604,25 @@ export const api = {
   // podcasts
   podcasts: () => request<Song[]>('/podcasts'),
   podcastDetails: (file: string) => request<Song>(`/podcasts/${encodeURIComponent(file)}`),
+  // Episode chapter marks ("timestamps"): media offsets in seconds.
+  podcastTimestamps: (file: string) =>
+    request<PodcastTimestamp[]>(`/podcasts/${encodeURIComponent(file)}/timestamps`),
+  createPodcastTimestamp: (file: string, input: { name: string; startSecs: number; endSecs?: number | null }) =>
+    request<PodcastTimestamp>(`/podcasts/${encodeURIComponent(file)}/timestamps`, {
+      method: 'POST',
+      body: JSON.stringify({ Name: input.name, StartSecs: input.startSecs, EndSecs: input.endSecs ?? null }),
+    }),
+  updatePodcastTimestamp: (
+    file: string,
+    id: number,
+    input: { name: string; startSecs: number; endSecs?: number | null },
+  ) =>
+    request<PodcastTimestamp>(`/podcasts/${encodeURIComponent(file)}/timestamps/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ Name: input.name, StartSecs: input.startSecs, EndSecs: input.endSecs ?? null }),
+    }),
+  deletePodcastTimestamp: (file: string, id: number) =>
+    request<void>(`/podcasts/${encodeURIComponent(file)}/timestamps/${id}`, { method: 'DELETE' }),
   patchPodcast: (file: string, patch: { title?: string | null; artist?: string | null; coverArt?: string | null }) =>
     request<Song>(`/podcasts/${encodeURIComponent(file)}`, {
       method: 'PATCH',
@@ -606,6 +634,10 @@ export const api = {
     }),
   deletePodcast: (file: string) =>
     request<void>(`/podcasts/${encodeURIComponent(file)}`, { method: 'DELETE' }),
+  movePodcastToSongs: (file: string) =>
+    request<Song>(`/podcasts/${encodeURIComponent(file)}/move-to-songs`, { method: 'POST' }),
+  moveSongToPodcasts: (file: string) =>
+    request<Song>(`/songs/${encodeURIComponent(file)}/move-to-podcasts`, { method: 'POST' }),
   scanPodcasts: () => request<{ added: number; updated: number }>('/podcasts/scan', { method: 'POST' }),
   scanSongs: () => request<{ added: number; updated: number }>('/songs/scan', { method: 'POST' }),
   // Loudness backfill (resumable: repeat until remaining hits 0).
@@ -624,6 +656,7 @@ export const api = {
     crossfadeSeconds?: number
     lastRoute?: string | null
     browser?: string | null
+    chapterSkip?: boolean
   }) =>
     request<UserSettings>('/settings', {
       method: 'PUT',
@@ -634,6 +667,7 @@ export const api = {
         CrossfadeSeconds: patch.crossfadeSeconds ?? null,
         LastRoute: patch.lastRoute ?? null,
         Browser: patch.browser ?? null,
+        ChapterSkip: patch.chapterSkip ?? null,
       }),
     }),
   playerSettings: () => request<PlayerSettings>('/player/settings'),

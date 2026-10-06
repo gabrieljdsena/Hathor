@@ -6,6 +6,7 @@ import { formatTime, usePlayer } from '../store/player'
 import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
+import { useChapterAutoSkip, useChapterJump } from './ui/PodcastTimestamps'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Self-ticking progress row (engine media time; display-only).
@@ -132,6 +133,9 @@ export default function PlayerBar({
   const toggle = usePlayer((s) => s.toggle)
   const boot = usePlayer((s) => s.boot)
   const navigate = useNavigate()
+  // Podcast chapters: auto-skip pump + chapter-aware transport arrows.
+  useChapterAutoSkip()
+  const chapterJump = useChapterJump()
   const songMenuRef = useRef<SongMenuHandle | null>(null)
   const openSongMenu = (x: number, y: number) => songMenuRef.current?.openAt(x, y)
   const goArtist = (e: React.MouseEvent, artist: string) => {
@@ -197,16 +201,24 @@ export default function PlayerBar({
 
   const song = currentSong
 
-  const doNext = () =>
+  const doNext = () => {
+    // Podcasts with chapters: the arrow jumps to the next chapter start
+    // (chapter seek, not a track change) — even with auto-skip off. Past
+    // the last chapter it falls through to the next track.
+    if (chapterJump.next()) return
     void api.next().then((s) => {
       usePlayer.setState(s)
       usePlayer.getState().syncAudio() // hard switch; cancels any fade
     })
-  const doPrev = () =>
+  }
+  const doPrev = () => {
+    // Same deal backwards (restarts the chapter when well inside it).
+    if (chapterJump.prev()) return
     void api.prev().then((s) => {
       usePlayer.setState(s)
       usePlayer.getState().syncAudio() // hard switch; cancels any fade
     })
+  }
   const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
   const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))
   const doMute = () => {

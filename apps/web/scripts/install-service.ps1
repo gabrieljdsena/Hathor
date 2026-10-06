@@ -4,7 +4,7 @@
 #   .\scripts\install-service.ps1 -Uninstall
 param(
     [string]$ServiceName = 'Hathor',
-    [int]$Port = 5050,
+    [int]$Port = 5051,
     # The service runs as LocalSystem, whose %APPDATA% is NOT yours — without
     # these the API would serve an empty library from the SYSTEM profile.
     # Defaults to this user's desktop folders (same ones the desktop app uses).

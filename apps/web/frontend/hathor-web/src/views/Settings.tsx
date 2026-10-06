@@ -416,6 +416,30 @@ export default function Settings() {
         <Row
           icon={
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+          title="Auto-skip podcast chapters"
+          hint="Timestamped episodes start at the first chapter and jump to the next chapter at each end time. Applies automatically to every episode with chapters."
+          extra={
+            <div className="flex items-center gap-3 mt-2">
+              <span className="flex items-center gap-2 text-xs text-zinc-400 select-none">
+                <ToggleSwitch
+                  checked={usePlayer((s) => s.chapterSkip)}
+                  onChange={(v) => usePlayer.getState().setChapterSkip(v)}
+                  label="Auto-skip podcast chapters"
+                />
+                Enabled
+              </span>
+            </div>
+          }
+        >
+          <span className="text-xs text-zinc-600 uppercase tracking-widest">Instant · saved to your account</span>
+        </Row>
+
+        <Row
+          icon={
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
             </svg>
           }

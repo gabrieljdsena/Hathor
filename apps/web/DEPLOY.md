@@ -8,7 +8,7 @@ The API self-hosts the React SPA (same origin, no vite/nginx needed).
 ```powershell
 cd C:\Users\gabriel\code\Hathor\apps\web
 .\scripts\build.ps1
-.\scripts\install-service.ps1        # registers service 'Hathor' on :5050
+.\scripts\install-service.ps1        # registers service 'Hathor' on :5051
 ```
 
 `install-service.ps1` pins machine env vars from your current session when
@@ -24,7 +24,7 @@ cd C:\Users\gabriel\code\Hathor\apps\web
 Restart-Service Hathor
 ```
 
-Open `http://localhost:5050` (API + UI same origin).
+Open `http://localhost:5051` (API + UI same origin).
 
 ## Notes
 

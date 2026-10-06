@@ -32,7 +32,7 @@ public sealed class SettingsController(
             return Ok(await mediator.Send(new UpdateSettingsCommand(
                 CurrentUserId(), body.Volume, body.LimitDownloads,
                 body.CrossfadeEnabled, body.CrossfadeSeconds,
-                body.LastRoute, body.Browser), ct));
+                body.LastRoute, body.Browser, body.ChapterSkip), ct));
         }
         catch (FluentValidation.ValidationException ex)
         {
@@ -142,5 +142,6 @@ public sealed record UpdateSettingsRequest(
     bool? CrossfadeEnabled,
     double? CrossfadeSeconds,
     string? LastRoute,
-    string? Browser);
+    string? Browser,
+    bool? ChapterSkip);
 public sealed record BackgroundDto(string Filename);

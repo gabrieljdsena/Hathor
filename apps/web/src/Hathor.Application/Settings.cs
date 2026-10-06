@@ -13,7 +13,8 @@ public sealed record UpdateSettingsCommand(
     bool? CrossfadeEnabled,
     double? CrossfadeSeconds,
     string? LastRoute,
-    string? Browser) : IRequest<UserSettingsDto>;
+    string? Browser,
+    bool? ChapterSkip) : IRequest<UserSettingsDto>;
 
 public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCommand>
 {
@@ -44,13 +45,14 @@ public sealed class SettingsHandlers(IUserSettingsRepository settings) :
             s.CrossfadeSeconds = Math.Clamp(cmd.CrossfadeSeconds.Value, 1, 12);
         if (cmd.LastRoute is not null) s.LastRoute = cmd.LastRoute;
         if (cmd.Browser is not null) s.Browser = cmd.Browser;
+        if (cmd.ChapterSkip.HasValue) s.ChapterSkip = cmd.ChapterSkip.Value;
         await settings.SaveChangesAsync(ct);
         return ToDto(s);
     }
 
     internal static UserSettingsDto ToDto(Domain.Entities.UserSettings s) => new(
         s.Volume, s.LimitDownloads, s.BackgroundPath,
-        s.CrossfadeEnabled, s.CrossfadeSeconds, s.LastRoute, s.Browser);
+        s.CrossfadeEnabled, s.CrossfadeSeconds, s.LastRoute, s.Browser, s.ChapterSkip);
 }
 
 public sealed record GetPlayerSettingsQuery(Guid UserId) : IRequest<PlayerSettingsDto>;

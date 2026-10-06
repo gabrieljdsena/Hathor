@@ -17,16 +17,30 @@ interface PlayerStore extends PlayerState {
   // synced — no server setting exists for it (unlike volume/crossfade).
   normalize: boolean
   setNormalize: (enabled: boolean) => void
+  // Podcast chapter auto-skip: when a chapter plays to its end time, jump
+  // to the next chapter. Browser-local like normalize (no server setting);
+  // the transport arrows jump chapter boundaries regardless of this flag.
+  chapterSkip: boolean
+  setChapterSkip: (enabled: boolean) => void
 }
 
 const NORMALIZE_KEY = 'hathor:normalize'
+const CHAPTER_SKIP_KEY = 'hathor:chapterskip'
 
-function loadNormalize(): boolean {
+function loadFlag(key: string): boolean {
   try {
-    return localStorage.getItem(NORMALIZE_KEY) === '1'
+    return localStorage.getItem(key) === '1'
   } catch {
     return false
   }
+}
+
+function loadNormalize(): boolean {
+  return loadFlag(NORMALIZE_KEY)
+}
+
+function loadChapterSkip(): boolean {
+  return loadFlag(CHAPTER_SKIP_KEY)
 }
 
 function toTrack(song: Song) {
@@ -116,6 +130,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   firstPlay: true,
   queueTotal: 0,
   normalize: loadNormalize(),
+  chapterSkip: loadChapterSkip(),
 
   setNormalize: (enabled: boolean) => {
     try {
@@ -125,6 +140,18 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     }
     set({ normalize: enabled })
     engine.setNormalize(enabled)
+  },
+
+  setChapterSkip: (enabled: boolean) => {
+    try {
+      localStorage.setItem(CHAPTER_SKIP_KEY, enabled ? '1' : '0')
+    } catch {
+      // private-mode storage may reject writes — the flag still applies
+    }
+    set({ chapterSkip: enabled })
+    // Persist account-wide so any timestamped podcast auto-skips on every
+    // device; the local flag already applies instantly if this fails.
+    void api.updateSettings({ chapterSkip: enabled }).catch(() => {})
   },
 
   refresh: async () => {
@@ -149,6 +176,14 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     try {
       const settings = await api.settings()
       engine.setCrossfade(settings.crossfadeEnabled, settings.crossfadeSeconds)
+      // Server wins at startup: the account setting drives auto-skip on
+      // every device; the browser copy is only a pre-login fallback.
+      set({ chapterSkip: settings.chapterSkip ?? get().chapterSkip })
+      try {
+        localStorage.setItem(CHAPTER_SKIP_KEY, get().chapterSkip ? '1' : '0')
+      } catch {
+        // ignore private-mode write failures
+      }
     } catch {
       // settings fetch must never break boot; engine stays faded off
     }

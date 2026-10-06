@@ -5,6 +5,7 @@ import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { ControlButton } from './ui/buttons'
 import { VolumeSlider } from './PlayerBar'
+import { ChapterSkip, useChapterJump } from './ui/PodcastTimestamps'
 import SyncedLyrics, { useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
 
 // Fullscreen Now Playing overlay (desktop Now Playing view): large art,
@@ -27,8 +28,12 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   // sidebar, no bottom bar — the overlay covers both); the toggle reveals
   // cover + transport instead.
   const [showLyrics, setShowLyrics] = useState(true)
+  // Chapter-aware arrows (same rule as the player bar): podcasts jump
+  // chapter boundaries, everything else changes track.
+  const chapterJump = useChapterJump()
 
   const step = (which: 'prev' | 'next') => () => {
+    if (chapterJump[which]()) return
     const call = which === 'prev' ? api.prev() : api.next()
     void call
       .then((s) => {
@@ -109,6 +114,11 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
             <ControlButton icon="next" title="Next" onClick={step('next')} />
           </div>
           <VolumeSlider volume={volume} className="w-56 cursor-pointer outline-none" />
+          {song.isPodcast && (
+            <div className="w-full max-w-xl rounded-2xl bg-black/20 backdrop-blur-2xl border border-white/5 p-3">
+              <ChapterSkip file={song.file} />
+            </div>
+          )}
         </div>
       )}
     </div>

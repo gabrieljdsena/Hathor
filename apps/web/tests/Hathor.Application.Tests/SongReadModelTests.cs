@@ -166,7 +166,30 @@ public sealed class SongReadModelTests : IAsyncLifetime
         (await model.GetArtistsAsync(_userId)).Should().Equal("Queen");
         var songs = await model.GetSongsByArtistAsync(_userId, "Queen");
         songs.Select(s => s.Title).Should().BeEquivalentTo("T1", "T2");
-        (await model.GetSongsByArtistAsync(_userId, "queen")).Should().BeEmpty();
+        // SQL matches case-insensitively, so the C# post-filter must too.
+        (await model.GetSongsByArtistAsync(_userId, "queen"))
+            .Select(s => s.Title).Should().BeEquivalentTo("T1", "T2");
+    }
+
+    [Fact]
+    public async Task Albums_And_SongsByAlbum_ComeFromColumns()
+    {
+        await Seed(
+            Row("a1.mp3", "T1", artist: "Queen", album: "Opera"),
+            Row("a2.mp3", "T2", artist: "Mozart", album: "Opera"));
+        _db.Songs.First(s => s.File == "a1.mp3").LoudnessDb = -8.5;
+        await _db.SaveChangesAsync();
+        // Detach so the read-model serves Dapper rows, not tracked entities.
+        foreach (var e in _db.ChangeTracker.Entries()) e.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+        var storage = Storage("a1.mp3", "a2.mp3");
+        var model = ReadModel(storage, Metadata(storage));
+
+        (await model.GetAlbumsAsync(_userId)).Should().Equal("Opera");
+        var songs = await model.GetSongsByAlbumAsync(_userId, "Opera");
+        songs.Select(s => s.Title).Should().BeEquivalentTo("T1", "T2");
+        songs.First(s => s.File == "a1.mp3").LoudnessDb.Should().Be(-8.5);
+        (await model.GetSongsByAlbumAsync(_userId, "opera"))
+            .Select(s => s.Title).Should().BeEquivalentTo("T1", "T2");
     }
 
     [Fact]
