@@ -63,6 +63,8 @@ public sealed class SongsController(
     // Metadata edit (desktop update_song_metadata): null = keep existing,
     // CoverArt = data: URL | http(s) URL | "REMOVE" | null. Returns resumeSec
     // when the edited file is currently playing (client seeks back after reload).
+    // 202 when the file is playing: the payload is stashed and applies on
+    // track change (gapless playback), with Pending = true.
     [HttpPatch("{file}")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<ActionResult<UpdateSongMetadataResult>> Patch(
@@ -82,7 +84,8 @@ public sealed class SongsController(
             var result = await mediator.Send(new UpdateSongMetadataCommand(
                 CurrentUserId(), file, body.Title, body.Artist, body.Album,
                 body.Year, body.Genre, body.CoverArt), ct);
-            return result is null ? NotFound() : Ok(result);
+            if (result is null) return NotFound();
+            return result.Pending ? Accepted(result) : Ok(result);
         }
         catch (FluentValidation.ValidationException ex)
         {

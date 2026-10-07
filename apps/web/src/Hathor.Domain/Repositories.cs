@@ -125,6 +125,17 @@ public interface IPodcastTimestampRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
+// Deferred metadata edits (EF): one pending payload per file (last wins),
+// applied when the track changes so playback never gaps.
+public interface IPendingEditRepository
+{
+    Task<PendingMetadataEdit?> GetAsync(Guid userId, string file, CancellationToken ct = default);
+    Task<List<PendingMetadataEdit>> ListAsync(Guid userId, CancellationToken ct = default);
+    Task UpsertAsync(PendingMetadataEdit edit, CancellationToken ct = default);
+    Task<bool> DeleteAsync(Guid userId, string file, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
 // Songs-table writes (EF). File metadata itself is TagLib + filesystem;
 // the materialized columns mirror it so lists/search never open MP3s.
 public interface ISongRecordRepository

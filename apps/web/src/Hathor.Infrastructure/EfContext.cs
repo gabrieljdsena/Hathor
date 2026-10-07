@@ -22,6 +22,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<PodcastTimestamp> PodcastTimestamps => Set<PodcastTimestamp>();
     public DbSet<DownloadJob> DownloadJobs => Set<DownloadJob>();
     public DbSet<Lyric> Lyrics => Set<Lyric>();
+    public DbSet<PendingMetadataEdit> PendingMetadataEdits => Set<PendingMetadataEdit>();
     public DbSet<MusicHistoryEntry> MusicHistory => Set<MusicHistoryEntry>();
     public DbSet<PlaylistHistoryEntry> PlaylistHistory => Set<PlaylistHistoryEntry>();
     public DbSet<SyncDeletion> SyncDeletions => Set<SyncDeletion>();
@@ -120,6 +121,20 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.ToTable("Lyrics");
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
+        });
+        b.Entity<PendingMetadataEdit>(e =>
+        {
+            e.ToTable("Pending_Metadata_Edits");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.File).HasMaxLength(255);
+            e.Property(x => x.Title).HasMaxLength(255);
+            e.Property(x => x.Artist).HasMaxLength(255);
+            e.Property(x => x.Album).HasMaxLength(255);
+            e.Property(x => x.Year).HasMaxLength(16);
+            e.Property(x => x.Genre).HasMaxLength(64);
+            // CoverArt holds data: URLs (often 100KB+) — unlimited text.
+            e.HasIndex(x => new { x.UserId, x.File }).IsUnique();
         });
         b.Entity<MusicHistoryEntry>(e =>
         {

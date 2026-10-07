@@ -159,6 +159,27 @@ public sealed class Lyric
     public int OffsetMs { get; set; }
 }
 
+// Deferred metadata edit: PATCH on the currently-playing file stores the
+// payload here instead of rewriting tags mid-stream (playback stays
+// gapless — the streamer holds the file open and tag-size changes would
+// shift audio offsets under the playing element). Applied when the track
+// changes (PendingMetadataApplier); last write wins per file.
+public sealed class PendingMetadataEdit
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public string File { get; set; } = "";
+    public bool IsPodcast { get; set; }
+    public string? Title { get; set; }
+    public string? Artist { get; set; }
+    public string? Album { get; set; }
+    public string? Year { get; set; }
+    public string? Genre { get; set; }
+    // data: URL | http(s) URL | REMOVE sentinel | null (keep).
+    public string? CoverArt { get; set; }
+    public DateTime CreatedUtc { get; set; }
+}
+
 public sealed class MusicHistoryEntry
 {
     public long Id { get; set; }

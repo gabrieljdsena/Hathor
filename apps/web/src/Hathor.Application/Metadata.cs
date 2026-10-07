@@ -1,6 +1,7 @@
 using FluentValidation;
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
+using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
 using MediatR;
 
@@ -21,7 +22,7 @@ public sealed record UpdateSongMetadataCommand(
     string? Genre,
     string? CoverArt) : IRequest<UpdateSongMetadataResult?>;
 
-public sealed record UpdateSongMetadataResult(SongDto Song, double ResumeSec);
+public sealed record UpdateSongMetadataResult(SongDto Song, double ResumeSec, bool Pending = false);
 
 public sealed class UpdateSongMetadataValidator : AbstractValidator<UpdateSongMetadataCommand>
 {
@@ -41,7 +42,8 @@ public sealed class UpdateSongMetadataHandler(
     IMetadataWriter writer,
     ISongRecordRepository records,
     ISongReadModel songs,
-    IPlaybackStateRepository playback) : IRequestHandler<UpdateSongMetadataCommand, UpdateSongMetadataResult?>
+    IPlaybackStateRepository playback,
+    IPendingEditRepository pending) : IRequestHandler<UpdateSongMetadataCommand, UpdateSongMetadataResult?>
 {
     public async Task<UpdateSongMetadataResult?> Handle(UpdateSongMetadataCommand cmd, CancellationToken ct)
     {
@@ -51,7 +53,29 @@ public sealed class UpdateSongMetadataHandler(
         // so the client can resume after the tag rewrite (desktop G8 behavior).
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         var isCurrent = string.Equals(state.CurrentFile, cmd.File, StringComparison.OrdinalIgnoreCase);
-        var resumeSec = isCurrent ? state.EstimatedPositionSec(DateTime.UtcNow) : 0;
+        if (isCurrent)
+        {
+            // Gapless playback: the streamer holds the file open and tag
+            // rewrites shift audio offsets under the playing element — stash
+            // the payload instead (applied on track change). Last wins.
+            await pending.UpsertAsync(new PendingMetadataEdit
+            {
+                UserId = cmd.UserId,
+                File = cmd.File,
+                IsPodcast = false,
+                Title = cmd.Title,
+                Artist = cmd.Artist,
+                Album = cmd.Album,
+                Year = cmd.Year,
+                Genre = cmd.Genre,
+                CoverArt = cmd.CoverArt,
+                CreatedUtc = DateTime.UtcNow,
+            }, ct);
+            await pending.SaveChangesAsync(ct);
+            var current = await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);
+            return current is null ? null : new UpdateSongMetadataResult(current, 0, Pending: true);
+        }
+        var resumeSec = state.EstimatedPositionSec(DateTime.UtcNow);
 
         await writer.WriteSongAsync(cmd.UserId, cmd.File,
             cmd.Title, cmd.Artist, cmd.Album, cmd.Year, cmd.Genre, cmd.CoverArt, ct);

@@ -170,3 +170,15 @@ public sealed record LyricsHitDto(
 
 // Lyrics payload (desktop {synced, plain}).
 public sealed record LyricsDto(string? Synced, string? Plain);
+
+// Deferred metadata edit (stashed PATCH payload for the playing file).
+public sealed record PendingEditDto(
+    string File,
+    bool IsPodcast,
+    string? Title,
+    string? Artist,
+    string? Album,
+    string? Year,
+    string? Genre,
+    string? CoverArt,
+    DateTime CreatedUtc);

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Hathor.Application.Metadata;
 using Hathor.Application.Player;
 using Hathor.Application.Ports;
 using Hathor.Domain.Playback;
@@ -9,6 +10,19 @@ namespace Hathor.Application.Tests;
 
 public sealed class PlayHandlerTests
 {
+    // Track-change hook with no stashed edits: oldFile is null/unchanged in
+    // these tests, so the applier never fires — substitutes only.
+    private static PendingMetadataApplier NoOpApplier() =>
+        new(
+            Substitute.For<IPendingEditRepository>(),
+            Substitute.For<IMetadataWriter>(),
+            Substitute.For<ILibraryStorage>(),
+            Substitute.For<ISongRecordRepository>(),
+            Substitute.For<ISongReadModel>(),
+            Substitute.For<IPodcastRecordRepository>(),
+            Substitute.For<IPodcastReadModel>(),
+            Substitute.For<IPlaybackStateRepository>(),
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<PendingMetadataApplier>>());
     [Fact]
     public async Task Play_WithNoFileAndEmptyState_ReturnsStateWithoutPlaying()
     {
@@ -19,7 +33,7 @@ public sealed class PlayHandlerTests
         playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
             .Returns(state);
 
-        var dto = await new PlayHandler(playback, songs, hub)
+        var dto = await new PlayHandler(playback, songs, NoOpApplier(), hub)
             .Handle(new PlayCommand(state.UserId, null, null, null), CancellationToken.None);
 
         dto.IsPlaying.Should().BeFalse();
@@ -41,7 +55,7 @@ public sealed class PlayHandlerTests
         var raised = new List<(Guid, string, long?)>();
         PlayerEvents.SongPlayed += (u, f, p) => raised.Add((u, f, p));
 
-        var dto = await new PlayHandler(playback, songs, hub)
+        var dto = await new PlayHandler(playback, songs, NoOpApplier(), hub)
             .Handle(new PlayCommand(userId, "song.mp3", false, null), CancellationToken.None);
 
         try
@@ -75,7 +89,7 @@ public sealed class PlayHandlerTests
         };
         playback.GetOrCreateAsync(userId, Arg.Any<CancellationToken>()).Returns(state);
 
-        var dto = await new NextHandler(playback, songs, hub)
+        var dto = await new NextHandler(playback, songs, NoOpApplier(), hub)
             .Handle(new NextCommand(userId, Auto: true), CancellationToken.None);
 
         dto.IsPlaying.Should().BeTrue();

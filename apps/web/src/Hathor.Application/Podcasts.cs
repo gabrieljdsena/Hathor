@@ -1,5 +1,6 @@
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
+using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
 using MediatR;
 
@@ -23,24 +24,46 @@ public sealed class PodcastQueryHandlers(IPodcastReadModel podcasts) :
 
 public sealed record UpdatePodcastMetadataCommand(
     Guid UserId, string File, string? Title, string? Artist, string? CoverArt)
-    : IRequest<SongDto?>;
+    : IRequest<UpdatePodcastMetadataResult?>;
+
+public sealed record UpdatePodcastMetadataResult(SongDto Song, bool Pending = false);
 
 public sealed class UpdatePodcastMetadataHandler(
     ILibraryStorage storage,
     IMetadataWriter writer,
     IPodcastRecordRepository records,
-    IPodcastReadModel podcasts) : IRequestHandler<UpdatePodcastMetadataCommand, SongDto?>
+    IPodcastReadModel podcasts,
+    IPlaybackStateRepository playback,
+    IPendingEditRepository pending) : IRequestHandler<UpdatePodcastMetadataCommand, UpdatePodcastMetadataResult?>
 {
-    public async Task<SongDto?> Handle(UpdatePodcastMetadataCommand cmd, CancellationToken ct)
+    public async Task<UpdatePodcastMetadataResult?> Handle(UpdatePodcastMetadataCommand cmd, CancellationToken ct)
     {
         if (!storage.PodcastExists(cmd.UserId, cmd.File)) return null;
+        var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
+        if (string.Equals(state.CurrentFile, cmd.File, StringComparison.OrdinalIgnoreCase))
+        {
+            // Same gapless rule as songs: stash, applied on track change.
+            await pending.UpsertAsync(new PendingMetadataEdit
+            {
+                UserId = cmd.UserId,
+                File = cmd.File,
+                IsPodcast = true,
+                Title = cmd.Title,
+                Artist = cmd.Artist,
+                CoverArt = cmd.CoverArt,
+                CreatedUtc = DateTime.UtcNow,
+            }, ct);
+            await pending.SaveChangesAsync(ct);
+            var current = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
+            return current is null ? null : new UpdatePodcastMetadataResult(current, Pending: true);
+        }
         await writer.WritePathAsync(storage.PodcastPath(cmd.UserId, cmd.File),
             cmd.Title, cmd.Artist, null, null, null, cmd.CoverArt, ct);
         var updated = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
         if (updated is not null)
             await records.EnsureAsync(cmd.UserId, cmd.File, updated.Title, updated.Artist, null, ct);
         await records.SaveChangesAsync(ct);
-        return updated;
+        return updated is null ? null : new UpdatePodcastMetadataResult(updated);
     }
 }
 

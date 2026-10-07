@@ -99,14 +99,19 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
         readModel.GetByFileAsync(_userId, "e.mp3", Arg.Any<CancellationToken>())
             .Returns(new Dtos.SongDto("e.mp3", "Host", "New Title", "", "", 60, null, null, true));
         var records = new EfPodcastRecordRepository(_db);
+        var playback = NSubstitute.Substitute.For<Domain.Repositories.IPlaybackStateRepository>();
+        playback.GetOrCreateAsync(_userId, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Playback.PlaybackState { UserId = _userId });
+        var pending = NSubstitute.Substitute.For<Domain.Repositories.IPendingEditRepository>();
 
-        var handler = new UpdatePodcastMetadataHandler(storage, writer, records, readModel);
+        var handler = new UpdatePodcastMetadataHandler(storage, writer, records, readModel, playback, pending);
         var updated = await handler.Handle(
             new UpdatePodcastMetadataCommand(_userId, "e.mp3", "New Title", "Host", null),
             CancellationToken.None);
 
         updated.Should().NotBeNull();
-        updated!.Title.Should().Be("New Title");
+        updated!.Pending.Should().BeFalse();
+        updated!.Song.Title.Should().Be("New Title");
         await writer.Received(1).WritePathAsync(
             Arg.Any<string>(), "New Title", "Host",
             Arg.Is<string?>(x => x == null), Arg.Is<string?>(x => x == null),

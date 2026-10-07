@@ -30,16 +30,18 @@ public sealed class PodcastsController(
         return episode is null ? NotFound() : Ok(episode);
     }
 
+    // 202 when the episode is playing: stashed, applies on track change.
     [HttpPatch("{file}")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<SongDto>> Patch(
+    public async Task<ActionResult<UpdatePodcastMetadataResult>> Patch(
         string file, [FromBody] UpdatePodcastRequest body, CancellationToken ct)
     {
         try
         {
             var updated = await mediator.Send(new UpdatePodcastMetadataCommand(
                 CurrentUserId(), file, body.Title, body.Artist, body.CoverArt), ct);
-            return updated is null ? NotFound() : Ok(updated);
+            if (updated is null) return NotFound();
+            return updated.Pending ? Accepted(updated) : Ok(updated);
         }
         catch (InvalidOperationException ex)
         {

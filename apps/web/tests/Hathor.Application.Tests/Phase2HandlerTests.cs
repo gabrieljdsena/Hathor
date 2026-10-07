@@ -105,7 +105,7 @@ public sealed class Phase2HandlerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UpdateSongMetadata_PreservesGenre_ReturnsResumeSecWhenCurrent()
+    public async Task UpdateSongMetadata_PreservesGenre_WritesImmediatelyWhenNotCurrent()
     {
         var storage = Substitute.For<ILibraryStorage>();
         storage.SongExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(true);
@@ -114,18 +114,49 @@ public sealed class Phase2HandlerTests : IAsyncLifetime
         songs.GetByFileAsync(_userId, "s.mp3", true, Arg.Any<CancellationToken>())
             .Returns(new Dtos.SongDto("s.mp3", "Artist", "Title", "Album", "2020", 180, null, null, false, "Rock"));
         var playback = Substitute.For<IPlaybackStateRepository>();
-        var state = new PlaybackState { UserId = _userId, CurrentFile = "s.mp3", IsPlaying = true, FirstPlay = false };
+        var state = new PlaybackState { UserId = _userId, CurrentFile = "other.mp3", IsPlaying = true, FirstPlay = false };
         playback.GetOrCreateAsync(_userId, Arg.Any<CancellationToken>()).Returns(state);
+        var pending = Substitute.For<IPendingEditRepository>();
 
-        var handler = new UpdateSongMetadataHandler(storage, writer, Records, songs, playback);
+        var handler = new UpdateSongMetadataHandler(storage, writer, Records, songs, playback, pending);
         var result = await handler.Handle(new UpdateSongMetadataCommand(
             _userId, "s.mp3", "New Title", null, null, null, null, null), CancellationToken.None);
 
         result.Should().NotBeNull();
+        result!.Pending.Should().BeFalse();
         result!.Song.Genre.Should().Be("Rock"); // null genre kept existing
-        result.ResumeSec.Should().BeGreaterThanOrEqualTo(0);
         await writer.Received(1).WriteSongAsync(
             _userId, "s.mp3", "New Title", null, null, null, null, null, Arg.Any<CancellationToken>());
+        await pending.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task UpdateSongMetadata_CurrentFile_StashesInsteadOfWriting()
+    {
+        // Gapless rule: the streamer holds the playing file, so the payload
+        // waits for the track change instead of rewriting tags mid-stream.
+        var storage = Substitute.For<ILibraryStorage>();
+        storage.SongExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(true);
+        var writer = Substitute.For<IMetadataWriter>();
+        var songs = Substitute.For<ISongReadModel>();
+        songs.GetByFileAsync(_userId, "s.mp3", true, Arg.Any<CancellationToken>())
+            .Returns(new Dtos.SongDto("s.mp3", "Artist", "Title", "Album", "2020", 180, null, null, false));
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var state = new PlaybackState { UserId = _userId, CurrentFile = "s.mp3", IsPlaying = true, FirstPlay = false };
+        playback.GetOrCreateAsync(_userId, Arg.Any<CancellationToken>()).Returns(state);
+        var pending = Substitute.For<IPendingEditRepository>();
+
+        var handler = new UpdateSongMetadataHandler(storage, writer, Records, songs, playback, pending);
+        var result = await handler.Handle(new UpdateSongMetadataCommand(
+            _userId, "s.mp3", "New Title", null, null, null, null, null), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Pending.Should().BeTrue();
+        await writer.DidNotReceiveWithAnyArgs().WriteSongAsync(
+            default!, default!, default, default, default, default, default, default, default);
+        await pending.Received(1).UpsertAsync(
+            Arg.Is<PendingMetadataEdit>(p => p.File == "s.mp3" && p.Title == "New Title" && !p.IsPodcast),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -138,7 +169,8 @@ public sealed class Phase2HandlerTests : IAsyncLifetime
             Substitute.For<IMetadataWriter>(),
             Records,
             Substitute.For<ISongReadModel>(),
-            Substitute.For<IPlaybackStateRepository>());
+            Substitute.For<IPlaybackStateRepository>(),
+            Substitute.For<IPendingEditRepository>());
         (await handler.Handle(new UpdateSongMetadataCommand(
             _userId, "gone.mp3", "T", null, null, null, null, null), CancellationToken.None))
             .Should().BeNull();

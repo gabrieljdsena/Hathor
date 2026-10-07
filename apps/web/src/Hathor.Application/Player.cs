@@ -2,6 +2,7 @@ using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
 using Hathor.Domain.Playback;
 using Hathor.Domain.Repositories;
+using Hathor.Application.Metadata;
 using MediatR;
 
 namespace Hathor.Application.Player;
@@ -29,12 +30,14 @@ public sealed record PlayCommand(Guid UserId, string? File, bool? IsPodcast, str
 public sealed class PlayHandler(
     IPlaybackStateRepository playback,
     ISongReadModel songs,
+    PendingMetadataApplier pendingEdits,
     IPlaybackHub hub) : IRequestHandler<PlayCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(PlayCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         var now = DateTime.UtcNow;
+        var oldFile = state.CurrentFile;
 
         if (cmd.File is null)
         {
@@ -71,6 +74,7 @@ public sealed class PlayHandler(
                 PlayerEvents.RaiseSongPlayed(cmd.UserId, cmd.File, state.CurrentPlaylistId);
         }
 
+        await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -80,11 +84,11 @@ public sealed class PlayHandler(
 
 public sealed record ToggleCommand(Guid UserId) : IRequest<PlayerStateDto>;
 
-public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
+public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IPlaybackHub hub)
     : IRequestHandler<ToggleCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(ToggleCommand cmd, CancellationToken ct)
-        => await new PlayHandler(playback, songs, hub)
+        => await new PlayHandler(playback, songs, pendingEdits, hub)
             .Handle(new PlayCommand(cmd.UserId, null, null, null), ct);
 }
 
@@ -106,13 +110,14 @@ public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadMod
     }
 }
 
-public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
+public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IPlaybackHub hub)
     : IRequestHandler<NextCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(NextCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         var now = DateTime.UtcNow;
+        var oldFile = state.CurrentFile;
 
         // Repeat replays the current song on auto-advance (desktop play_next auto+repeat).
         if (state.Repeat && cmd.Auto && state.CurrentFile is not null)
@@ -138,6 +143,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
             }
         }
 
+        await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -146,18 +152,20 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
     }
 }
 
-public sealed class PrevHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
+public sealed class PrevHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IPlaybackHub hub)
     : IRequestHandler<PrevCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(PrevCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
+        var oldFile = state.CurrentFile;
         var prev = state.Rewind();
         if (prev is not null)
         {
             var resolved = await songs.GetByFileAsync(cmd.UserId, prev, includeCover: false, ct);
             state.StartPlaying(prev, resolved?.IsPodcast ?? false, DateTime.UtcNow);
         }
+        await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -291,6 +299,20 @@ public sealed class GetQueuePageHandler(
         var items = await songs.GetManyAsync(q.UserId, slice, includeCover: false, ct);
         return new QueuePageDto(items, state.NextFiles.Count, page, pageSize);
     }
+}
+
+// Deferred-edit hook for track changes: applies the stashed metadata edit
+// for the file that just stopped being current. No-op on toggles, pauses,
+// and repeat-one replays where the file didn't change — the still-playing
+// file keeps its deferral until it really leaves.
+internal static class PendingEditHooks
+{
+    internal static Task ApplyForLeftFileAsync(
+        PendingMetadataApplier applier, Guid userId, string? oldFile, string? newFile,
+        CancellationToken ct) =>
+        string.Equals(oldFile, newFile, StringComparison.OrdinalIgnoreCase)
+            ? Task.CompletedTask
+            : applier.ApplyForFileAsync(userId, oldFile, ct);
 }
 
 public sealed class QueueHandler(
