@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -13,6 +13,7 @@ import QueueSheet from './QueueSheet'
 import Brand from './ui/Brand'
 import Icon, { type IconName } from './ui/icons'
 import ShortcutHelp from './ui/ShortcutHelp'
+import RouteErrorBoundary from './ui/RouteErrorBoundary'
 import { useChapterJump } from './ui/PodcastTimestamps'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -67,6 +68,8 @@ export default function Shell() {
   )
   const rootRef = useRef<HTMLDivElement>(null)
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.settings })
+  // RouteErrorBoundary reset source: navigating always clears a view crash.
+  const { pathname } = useLocation()
 
   useEffect(() => {
     const onResize = () => {
@@ -245,7 +248,12 @@ export default function Shell() {
 
         <div className="flex flex-col flex-grow min-w-0 p-4 sm:p-8 lg:p-12 bg-transparent relative">
           <div className="overflow-y-auto overflow-x-hidden flex-grow" id="main">
-            <Outlet />
+            {/* A crashing view must never take the player bar (or the whole
+                app) down with it: the boundary shows recovery UI and resets
+                on every navigation. */}
+            <RouteErrorBoundary resetKey={pathname}>
+              <Outlet />
+            </RouteErrorBoundary>
           </div>
           {/* Inside the content column (like the original #lyrics-container-view):
               inset-x-0 spans content only so the sidebar stays visible; the

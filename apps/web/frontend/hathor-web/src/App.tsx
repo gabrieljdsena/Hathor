@@ -1,33 +1,45 @@
-import { Suspense, lazy, type JSX } from 'react'
+import { Suspense, type JSX } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import Shell from './components/Shell'
 import { LoadingState } from './components/ui/states'
+import { lazyWithRetry } from './utils/lazyRetry'
 
 // Route-level code splitting: each view loads on first navigation instead
 // of bloating the initial bundle (player shell stays eager so audio + bar
 // render instantly). Named-export views map to default for lazy().
-const ApiKeys = lazy(() => import('./views/ApiKeys'))
-const Discover = lazy(() => import('./views/Discover'))
-const History = lazy(() => import('./views/History'))
-const Home = lazy(() => import('./views/Home'))
-const Download = lazy(() => import('./views/Download'))
-const Login = lazy(() => import('./views/Login'))
-const Mix = lazy(() => import('./views/Mix'))
-const PlaylistDetail = lazy(() => import('./views/PlaylistDetail'))
-const Playlists = lazy(() => import('./views/Playlists'))
-const Podcasts = lazy(() => import('./views/Podcasts'))
-const Settings = lazy(() => import('./views/Settings'))
-const Songs = lazy(() => import('./views/Songs'))
-const Artists = lazy(() => import('./views/Library').then((m) => ({ default: m.Artists })))
-const ArtistDetail = lazy(() => import('./views/Library').then((m) => ({ default: m.ArtistDetail })))
-const Albums = lazy(() => import('./views/Library').then((m) => ({ default: m.Albums })))
-const AlbumDetail = lazy(() => import('./views/Library').then((m) => ({ default: m.AlbumDetail })))
+// lazyWithRetry: a stale hashed chunk after a deploy reloads once instead
+// of white-screening (see utils/lazyRetry).
+const ApiKeys = lazyWithRetry(() => import('./views/ApiKeys'))
+const Discover = lazyWithRetry(() => import('./views/Discover'))
+const History = lazyWithRetry(() => import('./views/History'))
+const Home = lazyWithRetry(() => import('./views/Home'))
+const Download = lazyWithRetry(() => import('./views/Download'))
+const Login = lazyWithRetry(() => import('./views/Login'))
+const Mix = lazyWithRetry(() => import('./views/Mix'))
+const PlaylistDetail = lazyWithRetry(() => import('./views/PlaylistDetail'))
+const Playlists = lazyWithRetry(() => import('./views/Playlists'))
+const Podcasts = lazyWithRetry(() => import('./views/Podcasts'))
+const Settings = lazyWithRetry(() => import('./views/Settings'))
+const Songs = lazyWithRetry(() => import('./views/Songs'))
+const Artists = lazyWithRetry(() => import('./views/Library').then((m) => ({ default: m.Artists })))
+const ArtistDetail = lazyWithRetry(() => import('./views/Library').then((m) => ({ default: m.ArtistDetail })))
+const Albums = lazyWithRetry(() => import('./views/Library').then((m) => ({ default: m.Albums })))
+const AlbumDetail = lazyWithRetry(() => import('./views/Library').then((m) => ({ default: m.AlbumDetail })))
+
+function storedToken(): string | null {
+  try {
+    return localStorage.getItem('hathor:token')
+  } catch {
+    // Locked-down storage (private mode without access) must not crash boot.
+    return null
+  }
+}
 
 function Guard({ children }: { children: JSX.Element }) {
   const { username, ready } = useAuth()
   if (!ready) return <div className="min-h-screen bg-zinc-950" />
-  if (!username && !localStorage.getItem('hathor:token')) return <Navigate to="/login" replace />
+  if (!username && !storedToken()) return <Navigate to="/login" replace />
   return children
 }
 
