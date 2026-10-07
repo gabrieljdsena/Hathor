@@ -102,6 +102,28 @@ public sealed class YoutubeExplodeEngine(
         }
     }
 
+    public async Task<string?> GetPreviewUrlAsync(string url, CancellationToken ct = default)
+    {
+        // Previews are best-effort by contract: never throw, never Error-log
+        // (Warning only — the DB logs table stays for operational failures).
+        try
+        {
+            var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
+            var audio = manifest.GetAudioOnlyStreams().TryGetWithHighestBitrate();
+            if (audio is null)
+            {
+                log.LogWarning("No preview audio stream for {Url}", url);
+                return null;
+            }
+            return audio.Url;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Preview stream resolve failed for {Url}", url);
+            return null;
+        }
+    }
+
     private async Task TranscodeAsync(string sourcePath, string destMp3Path, CancellationToken ct)
     {
         var ffmpeg = LocateFFmpeg();

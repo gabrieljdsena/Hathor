@@ -449,6 +449,11 @@ export const api = {
   // ingest
   youtubeSearch: (q: string, limit = 5) =>
     request<VideoHit[]>(`/youtube/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  // Embeddability probe + direct-audio fallback for blocked embeds.
+  youtubePreview: (id: string) =>
+    request<{ id: string; embeddable: boolean; audioUrl: string | null }>(
+      `/youtube/preview?id=${encodeURIComponent(id)}`,
+    ),
   // Already-in-library pre-check (normalized title+artist, live files only).
   checkDownload: (title: string, artist: string | null) =>
     request<{ owned: boolean; file: string | null }>(

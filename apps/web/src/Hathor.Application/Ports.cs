@@ -174,6 +174,10 @@ public interface IDownloadEngine
     // Progress is 0..1 (scaled to 0..90 by the caller, desktop convention).
     Task DownloadAudioAsync(string url, string destMp3Path,
         Action<double> progress, CancellationToken ct = default);
+    // Best-effort direct audio stream URL for previews (no download, no
+    // transcode). Null when unresolvable (age-restricted/private/deleted).
+    // URLs expire (~6h) and are loosely IP-bound: resolve on demand.
+    Task<string?> GetPreviewUrlAsync(string url, CancellationToken ct = default);
 }
 
 public sealed record VideoInfoDto(

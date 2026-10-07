@@ -5,6 +5,7 @@ import CoverArt from '../components/ui/CoverArt'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Icon from '../components/ui/icons'
 import Modal from '../components/ui/Modal'
+import VideoPreview from '../components/ui/VideoPreview'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
@@ -321,17 +322,7 @@ export default function Discover() {
         title={preview ? `Preview: ${preview.title}` : 'Preview'}
         wide
       >
-        {preview && (
-          <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-            <iframe
-              className="absolute top-0 left-0 w-full h-full rounded-lg"
-              src={`https://www.youtube.com/embed/${preview.id}?autoplay=1`}
-              title="YouTube video player"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
-          </div>
-        )}
+        {preview && <VideoPreview id={preview.id} title={preview.title} />}
       </Modal>
 
       <ConfirmModal

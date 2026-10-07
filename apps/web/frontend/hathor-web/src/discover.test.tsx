@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import Discover from './views/Discover'
 import type { Discover as DiscoverPayload } from './api/client'
@@ -120,17 +120,26 @@ describe('Discover view', () => {
   })
 
   it('opens a YouTube preview for a suggestion', async () => {
-    stubFetch((input) =>
-      String(input).includes('/youtube/search')
-        ? [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
-        : payload,
-    )
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: null }
+      }
+      return payload
+    })
     renderDiscover()
     await screen.findByText('Midnight City')
 
     fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
-    const frame = await screen.findByTitle('YouTube video player')
-    expect(frame.getAttribute('src')).toBe('https://www.youtube.com/embed/vid123?autoplay=1')
+    let frame: HTMLIFrameElement | null = null
+    await waitFor(() => {
+      frame = document.querySelector('iframe')
+      expect(frame).not.toBeNull()
+    })
+    expect(frame!.getAttribute('src')).toBe('https://www.youtube.com/embed/vid123?autoplay=1')
   })
 
   it('shows a notice when no preview exists', async () => {

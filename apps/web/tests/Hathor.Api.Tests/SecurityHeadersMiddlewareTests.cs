@@ -41,6 +41,10 @@ public sealed class SecurityHeadersMiddlewareTests
         csp.Should().Contain("frame-ancestors 'none'");
         csp.Should().Contain("script-src 'self'");
         csp.Should().NotContain("unsafe-inline; object"); // no script unsafe-inline
+        // YouTube preview iframes (Download + Discover) must stay frameable.
+        csp.Should().Contain("frame-src 'self' https://www.youtube.com");
+        // Direct-audio preview fallback streams from the Google video CDN.
+        csp.Should().Contain("media-src 'self' blob: https://*.googlevideo.com");
         context.Response.Headers.Should().NotContainKey("Strict-Transport-Security");
     }
 

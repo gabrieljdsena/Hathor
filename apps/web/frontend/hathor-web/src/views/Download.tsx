@@ -4,6 +4,7 @@ import { api, type DownloadJob, type VideoHit } from '../api/client'
 import Icon from '../components/ui/icons'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Modal from '../components/ui/Modal'
+import VideoPreview from '../components/ui/VideoPreview'
 import { formatDuration } from '../lyrics'
 
 // Download view cloned from ui/views/download_songs.html:
@@ -256,17 +257,7 @@ export default function Download() {
       </div>
 
       <Modal open={previewId !== null} onClose={() => setPreviewId(null)} title="Preview" wide>
-        {previewId && (
-          <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-            <iframe
-              className="absolute top-0 left-0 w-full h-full rounded-lg"
-              src={`https://www.youtube.com/embed/${previewId}?autoplay=1`}
-              title="YouTube video player"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
-          </div>
-        )}
+        {previewId && <VideoPreview id={previewId} />}
       </Modal>
 
       <ConfirmModal

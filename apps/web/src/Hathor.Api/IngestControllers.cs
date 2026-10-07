@@ -14,7 +14,10 @@ namespace Hathor.Api.Controllers;
 [ApiController]
 [Route("api/v1/youtube")]
 [Authorize(Policy = ScopeAuthorization.LibraryRead)]
-public sealed class YoutubeController(IDownloadEngine engine) : ControllerBase
+public sealed class YoutubeController(
+    IDownloadEngine engine,
+    IHttpClientFactory httpFactory,
+    ILogger<YoutubeController> log) : ControllerBase
 {
     // Flat search, no download (desktop search_yt).
     [HttpGet("search")]
@@ -32,7 +35,49 @@ public sealed class YoutubeController(IDownloadEngine engine) : ControllerBase
             return BadRequest(new { message = $"Search failed: {ex.Message}" });
         }
     }
+
+    // Preview fallback for embedding-disabled videos (error 153 / "Watch on
+    // YouTube"): probes YouTube oEmbed, then resolves a direct audio stream
+    // URL for an <audio> element. embeddable=false → play audioUrl;
+    // audioUrl=null → neither works (show a watch link instead). Stream URLs
+    // expire and are loosely IP-bound: clients must use them immediately.
+    [HttpGet("preview")]
+    public async Task<ActionResult<PreviewDto>> Preview(
+        [FromQuery] string id, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 32 || !id.All(c =>
+                char.IsLetterOrDigit(c) || c is '-' or '_'))
+            return BadRequest(new { message = "A valid video id is required." });
+        var pageUrl = $"https://www.youtube.com/watch?v={id}";
+        var embeddable = await IsEmbeddableAsync(pageUrl, ct);
+        var audioUrl = embeddable
+            ? null
+            : await engine.GetPreviewUrlAsync(pageUrl, ct);
+        return Ok(new PreviewDto(id, embeddable, audioUrl));
+    }
+
+    private async Task<bool> IsEmbeddableAsync(string pageUrl, CancellationToken ct)
+    {
+        // oEmbed answers 200 for embeddable videos, 401/404 for blocked ones.
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var http = httpFactory.CreateClient("metadata");
+            using var res = await http.GetAsync(
+                "https://www.youtube.com/oembed?url=" + Uri.EscapeDataString(pageUrl),
+                timeout.Token);
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "oEmbed probe failed, assuming embeddable");
+            return true;
+        }
+    }
 }
+
+public sealed record PreviewDto(string Id, bool Embeddable, string? AudioUrl);
 
 [ApiController]
 [Route("api/v1/metadata")]
