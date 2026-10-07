@@ -88,7 +88,11 @@ export default function SongRow({
             e.stopPropagation()
             onAlbumClick(song.album)
           }}
-          className="text-sm text-zinc-400 truncate text-left hover:text-orange-400 transition-colors cursor-pointer"
+          // Grid items stretch to fill the cell: without justify-self-start
+          // the whole column (including empty space around short names)
+          // becomes one big album button. Shrink to the text so only the
+          // name navigates; the rest of the cell plays the song per the row.
+          className="min-w-0 max-w-full justify-self-start text-sm text-zinc-400 truncate text-left hover:text-orange-400 transition-colors cursor-pointer"
         >
           {song.album}
         </button>

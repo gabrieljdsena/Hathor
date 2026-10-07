@@ -78,6 +78,13 @@ describe('SongRow', () => {
     expect(screen.getByText('Album').tagName).toBe('BUTTON')
   })
 
+  it('sizes the album button to its text, not the whole column', () => {
+    // Regression: as a grid item the button stretched to fill the cell,
+    // so clicks on empty column space navigated to the album.
+    render(<SongRow song={song} active={false} onPlay={() => {}} onAlbumClick={() => {}} />)
+    expect(screen.getByText('Album')).toHaveClass('justify-self-start', 'max-w-full')
+  })
+
   it('shows the formatted added date, or a dash without one', () => {
     const { rerender } = render(
       <SongRow song={{ ...song, dateDownload: '2026-10-04T12:00:00Z' }} active={false} onPlay={() => {}} />,
