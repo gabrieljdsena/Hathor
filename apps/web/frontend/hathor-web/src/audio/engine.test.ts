@@ -1,14 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AudioEngine, fadeGains, type AudioContextLike, type AudioElementLike, type EngineTrack } from './engine'
+import {
+  AudioEngine,
+  END_EPSILON_SEC,
+  clampSeekTarget,
+  fadeGains,
+  type AudioContextLike,
+  type AudioElementLike,
+  type EngineTrack,
+} from './engine'
 
 class FakeEl implements AudioElementLike {
   src = ''
   currentTime = 0
   duration = Number.NaN
   paused = true
+  seeking = false
   volume = 1
   plays = 0
+  pauses = 0
   private ended: Array<() => void> = []
+  private errored: Array<() => void> = []
 
   play() {
     this.plays += 1
@@ -17,15 +28,25 @@ class FakeEl implements AudioElementLike {
   }
 
   pause() {
+    this.pauses += 1
     this.paused = true
   }
 
-  addEventListener(_type: 'ended', fn: () => void) {
-    this.ended.push(fn)
+  load() {
+    this.currentTime = 0
+  }
+
+  addEventListener(type: 'ended' | 'error', fn: () => void) {
+    if (type === 'error') this.errored.push(fn)
+    else this.ended.push(fn)
   }
 
   fireEnded() {
     for (const fn of this.ended) fn()
+  }
+
+  fireError() {
+    for (const fn of this.errored) fn()
   }
 }
 
@@ -443,5 +464,101 @@ describe('AudioEngine per-track loudness gain', () => {
     expect(gainForDb(-8)).toBeCloseTo(Math.pow(10, -8 / 20), 5)
     expect(gainForDb(30)).toBeCloseTo(Math.pow(10, 12 / 20), 5)
     expect(gainForDb(-30)).toBeCloseTo(Math.pow(10, -12 / 20), 5)
+  })
+})
+
+describe('clampSeekTarget', () => {
+  it('stops short of a known duration', () => {
+    expect(clampSeekTarget(20000, 10800)).toBeCloseTo(10800 - END_EPSILON_SEC, 5)
+    expect(clampSeekTarget(100, 200)).toBe(100)
+    expect(clampSeekTarget(-5, 200)).toBe(0)
+  })
+
+  it('passes through when duration is unknown', () => {
+    expect(clampSeekTarget(5000, Number.NaN)).toBe(5000)
+    expect(clampSeekTarget(5000, 0)).toBe(5000)
+    expect(clampSeekTarget(Number.NaN, 200)).toBe(0)
+  })
+})
+
+describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
+  function playingThreeHourTrack() {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 3600
+    return s
+  }
+
+  it('clamps far seeks short of the duration edge', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.engine.seek(20000)
+    expect(s.els[0].currentTime).toBeCloseTo(10800 - END_EPSILON_SEC, 5)
+  })
+
+  it('treats ended right after an inside-range seek as spurious', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    await s.advance(200)
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(5000)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('still advances on a genuine finish after a seek', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    await s.advance(2000) // past the spurious-end window
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended'])
+  })
+
+  it('recovers a failed element at the last good position', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.els[0].currentTime = 5000
+    await s.advance(250) // tick records lastGoodTime = 5000
+    const plays = s.els[0].plays
+    s.els[0].currentTime = 9999 // glitch state before the error surfaces
+    s.els[0].fireError()
+    expect(s.els[0].currentTime).toBe(5000)
+    expect(s.els[0].plays).toBeGreaterThan(plays)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('gives up (pauses) after repeated failures instead of spinning', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    for (let i = 0; i < 3; i += 1) s.els[0].fireError()
+    expect(s.els[0].paused).toBe(false)
+    s.els[0].fireError()
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('rescues a frozen clock via the stall watchdog', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    const plays = s.els[0].plays
+    // Clock frozen (buffering stall, no error event): 11s without advance.
+    await s.advance(11000)
+    expect(s.els[0].plays).toBeGreaterThan(plays)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('does not mistake a fresh load for a stall', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    // Frozen from the start, but the watchdog grace starts at load.
+    await s.advance(5000)
+    expect(s.els[0].paused).toBe(false)
   })
 })

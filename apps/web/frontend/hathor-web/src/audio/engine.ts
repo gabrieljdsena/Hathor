@@ -57,10 +57,12 @@ export interface AudioElementLike {
   currentTime: number
   duration: number
   paused: boolean
+  seeking: boolean
   volume: number
   play(): Promise<void> | void
   pause(): void
-  addEventListener(type: 'ended', fn: () => void): void
+  load(): void
+  addEventListener(type: 'ended' | 'error', fn: () => void): void
 }
 
 export interface GainParamLike {
@@ -102,6 +104,7 @@ interface Slot {
   file: string | null
   isPodcast: boolean
   baseGain: number
+  recoveries: number
 }
 
 interface Fade {
@@ -116,6 +119,24 @@ const TICK_MS = 200
 const PRELOAD_AHEAD_SEC = 10
 const MIN_FADE_SEC = 1
 const MAX_FADE_SEC = 12
+// Stay this far from the duration edge: landing exactly on it fires
+// `ended` and the track advances away (the long-podcast seek stall).
+export const END_EPSILON_SEC = 0.25
+// An `ended` this soon after a seek whose target was safely inside the
+// track is a spurious end (bad range past EOF), not a real finish.
+const SPURIOUS_END_WINDOW_MS = 1500
+// A playing element whose clock freezes this long gets one recovery seek;
+// then we give up (pause) instead of fake-playing forever.
+const STALL_TIMEOUT_MS = 10000
+const MAX_RECOVERIES = 3
+
+// Clamp a seek target into playable range. Duration-unknown (NaN, metadata
+// not loaded yet) keeps the old behavior — nothing better is knowable.
+export function clampSeekTarget(sec: number, duration: number): number {
+  if (!Number.isFinite(sec)) return 0
+  if (!Number.isFinite(duration) || duration <= 0) return Math.max(0, sec)
+  return Math.min(Math.max(0, sec), Math.max(0, duration - END_EPSILON_SEC))
+}
 
 // Equal-power gains at progress t ∈ [0, 1]: [outgoing, incoming].
 // Midpoint is -3 dB each — constant total power, no middle dip.
@@ -142,6 +163,12 @@ export class AudioEngine {
   private beginNext: (expected: EngineTrack) => Promise<EngineTrack | null> = async () => null
   private endedCb: () => void = () => {}
   private timer: ReturnType<typeof setInterval> | null = null
+  // Last position known to actually play (recovery target) + last seek
+  // (spurious-end guard). Wall clock via deps.now() for testability.
+  private lastGoodTime = 0
+  private lastAdvanceAt = 0
+  private lastSeekAt = -Infinity
+  private lastSeekTarget = 0
 
   constructor(deps?: Partial<EngineDeps>) {
     const createElement =
@@ -160,12 +187,14 @@ export class AudioEngine {
       createContext: contextFactory,
       now: deps?.now ?? (() => performance.now()),
     }
-    const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, isPodcast: false, baseGain: 1 })
+    const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, isPodcast: false, baseGain: 1, recoveries: 0 })
     this.a = mkSlot()
     this.b = mkSlot()
     this.active = this.a
     this.a.el.addEventListener('ended', () => this.handleEnded(this.a))
     this.b.el.addEventListener('ended', () => this.handleEnded(this.b))
+    this.a.el.addEventListener('error', () => this.handleSlotError(this.a))
+    this.b.el.addEventListener('error', () => this.handleSlotError(this.b))
   }
 
   // ---- configuration -------------------------------------------------
@@ -295,6 +324,8 @@ export class AudioEngine {
       this.active.el.pause()
       this.active.el.src = ''
       this.active.file = null
+      this.lastGoodTime = 0
+      this.lastSeekAt = -Infinity
       this.stopTimer()
       return
     }
@@ -304,16 +335,21 @@ export class AudioEngine {
       this.active.file = track.file
       this.active.isPodcast = track.isPodcast
       this.active.baseGain = gainForDb(track.gainDb)
+      this.active.recoveries = 0
+      this.lastGoodTime = 0
+      this.lastSeekAt = -Infinity
     }
     this.setSlotGain(this.active, 1)
     if (autoplay) safelyPlay(this.active.el)
     else this.active.el.pause()
+    this.lastAdvanceAt = this.deps.now()
     this.startTimer()
   }
 
   play() {
     this.ensureContext()
     this.startTimer()
+    this.lastAdvanceAt = this.deps.now()
     // Resuming a paused fade shifts its start so progress freezes cleanly.
     if (this.fading && this.fading.pauseBeganAt !== null) {
       this.fading.start += this.deps.now() - this.fading.pauseBeganAt
@@ -331,8 +367,18 @@ export class AudioEngine {
 
   seek(sec: number) {
     if (this.fading) this.cancelToIncoming()
+    // Clamp into playable range (element duration is the ground truth —
+    // metadata estimates can overshoot it on huge VBR files, and landing
+    // on/past duration fires `ended` and skips away from the episode).
+    // lastGoodTime deliberately keeps the last *actually playing* position
+    // (updated by the tick): error recovery returns there, not to a seek
+    // target that may itself be poisoned.
+    const target = clampSeekTarget(sec, this.active.el.duration)
+    this.lastSeekAt = this.deps.now()
+    this.lastSeekTarget = target
+    this.lastAdvanceAt = this.deps.now()
     try {
-      this.active.el.currentTime = Math.max(0, sec)
+      this.active.el.currentTime = target
     } catch {
       /* a failed seek must never break playback */
     }
@@ -384,7 +430,54 @@ export class AudioEngine {
       if (slot === this.fading.out) this.finishFade()
       return
     }
+    if (slot === this.active && this.isSpuriousEnd()) {
+      // A seek just landed us here but the target was safely inside the
+      // track (bad byte range past EOF on a huge file): re-seek the target
+      // instead of advancing away from the user's episode. `ended` only
+      // fires out of playing state, so resuming here is always correct.
+      try {
+        slot.el.currentTime = this.lastSeekTarget
+        safelyPlay(slot.el)
+        return
+      } catch {
+        /* fall through to normal handling below */
+      }
+    }
     if (slot === this.active) this.endedCb()
+  }
+
+  // True when `ended` fired suspiciously soon after a seek whose target was
+  // safely inside the known duration — i.e. not a real finish.
+  private isSpuriousEnd(): boolean {
+    if (this.deps.now() - this.lastSeekAt > SPURIOUS_END_WINDOW_MS) return false
+    const dur = this.active.el.duration
+    if (!Number.isFinite(dur) || dur <= 0) return false
+    return this.lastSeekTarget < dur - 2
+  }
+
+  // An element-level failure (bad range/416/decode stall after a far seek
+  // on a huge file): re-seek the last good position and resume if it was
+  // playing. Bounded — a genuinely broken file pauses instead of spinning.
+  private handleSlotError(slot: Slot) {
+    const wasPlaying = !slot.el.paused
+    if (slot.recoveries >= MAX_RECOVERIES) {
+      try {
+        slot.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    slot.recoveries += 1
+    try {
+      slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastSeekAt = this.deps.now()
+      this.lastSeekTarget = Math.max(0, this.lastGoodTime)
+      this.lastAdvanceAt = this.deps.now()
+      if (wasPlaying) safelyPlay(slot.el)
+    } catch {
+      /* a failed recovery must never break playback */
+    }
   }
 
   private cancelFade() {
@@ -420,6 +513,26 @@ export class AudioEngine {
     this.setSlotGain(incoming, 1)
     this.active = incoming
     this.fading = null
+  }
+
+  // Frozen-clock watchdog: a playing element whose time stops advancing
+  // (stalled range request on a huge file, no error event) gets a recovery
+  // seek; the error listener covers hard failures. Seeking state never
+  // counts as stalled — the clock legitimately holds still mid-seek.
+  private watchStall() {
+    const el = this.active.el
+    const t = el.currentTime
+    const now = this.deps.now()
+    if (el.seeking || !Number.isFinite(t) || t < 0) return
+    if (t > this.lastGoodTime) {
+      this.lastGoodTime = t
+      this.lastAdvanceAt = now
+      return
+    }
+    if (now - this.lastAdvanceAt > STALL_TIMEOUT_MS) {
+      this.lastAdvanceAt = now
+      this.handleSlotError(this.active)
+    }
   }
 
   private startTimer() {
@@ -458,6 +571,8 @@ export class AudioEngine {
       }
       return
     }
+    // Silent-stall watchdog (skipped mid-fade so ramps keep their timing).
+    if (!this.fading) this.watchStall()
     if (this.fading) {
       const f = this.fading
       const elapsed = (this.deps.now() - f.start) / 1000
