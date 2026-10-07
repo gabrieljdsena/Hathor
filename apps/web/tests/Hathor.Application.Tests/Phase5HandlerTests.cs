@@ -69,7 +69,7 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
         var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
         storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(false);
         var handler = new DeletePodcastHandler(
-            storage, records,
+            storage, records, new EfLyricsRepository(_db),
             new EfTombstoneRepository(_db),
             new EfPlaybackStateRepository(_db),
             NSubstitute.Substitute.For<Ports.IPlaybackHub>(),
@@ -79,8 +79,11 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
 
         _db.Podcasts.Should().BeEmpty();
         _db.PodcastTagLinks.Should().BeEmpty();
-        _db.SyncDeletions.Should().ContainSingle(d =>
+        _db.SyncDeletions.Should().Contain(d =>
             d.TableName == "podcasts" && d.RowKey == "e.mp3");
+        // Episode lyrics rows (previously leaked) are cleaned + tombstoned.
+        _db.SyncDeletions.Should().Contain(d =>
+            d.TableName == "lyrics" && d.RowKey == "e.mp3");
         // Tag itself survives (desktop keeps tags on episode delete).
         _db.PodcastTags.Should().ContainSingle();
     }
@@ -117,7 +120,7 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
     {        var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
         storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(false);
         var handler = new DeletePodcastHandler(
-            storage, records: new EfPodcastRecordRepository(_db),
+            storage, records: new EfPodcastRecordRepository(_db), new EfLyricsRepository(_db),
             new EfTombstoneRepository(_db),
             new EfPlaybackStateRepository(_db),
             NSubstitute.Substitute.For<Ports.IPlaybackHub>(),
@@ -228,7 +231,7 @@ public sealed class Phase5HandlerTests : IAsyncLifetime
         var storage = NSubstitute.Substitute.For<Ports.ILibraryStorage>();
         storage.PodcastExists(Arg.Any<Guid>(), Arg.Any<string>()).Returns(false);
         var handler = new DeletePodcastHandler(
-            storage, records,
+            storage, records, new EfLyricsRepository(_db),
             new EfTombstoneRepository(_db),
             new EfPlaybackStateRepository(_db),
             NSubstitute.Substitute.For<Ports.IPlaybackHub>(),

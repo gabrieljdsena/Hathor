@@ -333,7 +333,12 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
     {
         var existed = await db.Songs.AnyAsync(s => s.UserId == userId && s.File == file, ct);
         await db.SongPlaylists.Where(l => l.UserId == userId && l.SongFile == file).ExecuteDeleteAsync(ct);
-        await db.Lyrics.Where(l => l.UserId == userId && l.SongFile == file).ExecuteDeleteAsync(ct);
+        // Base row plus per-chapter cache rows ("{file}::chapter:{id}").
+        // Filenames may hold LIKE wildcards: escape before prefix use.
+        var chapterPrefix = EfLyricsRepository.LikeEscape(file) + "::chapter:";
+        await db.Lyrics.Where(l => l.UserId == userId
+            && (l.SongFile == file || EF.Functions.Like(l.SongFile, chapterPrefix + "%")))
+            .ExecuteDeleteAsync(ct);
         await db.MusicHistory.Where(h => h.UserId == userId && h.SongFile == file).ExecuteDeleteAsync(ct);
         await db.Songs.Where(s => s.UserId == userId && s.File == file).ExecuteDeleteAsync(ct);
         return existed;

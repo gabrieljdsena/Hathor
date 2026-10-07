@@ -40,8 +40,7 @@ function seekTo(secs: number) {
 // Chapter-boundary transport for the current podcast episode. Returns true
 // when a chapter seek happened (caller falls back to prev/next track).
 // Works whether or not auto-skip is enabled.
-export function useChapterJump() {
-  const file = usePlayer((s) => s.currentSong?.file)
+export function useChapterJump() {  const file = usePlayer((s) => s.currentSong?.file)
   const isPodcast = usePlayer((s) => s.currentSong?.isPodcast)
   const { data } = usePodcastChapters(isPodcast ? file : null)
   const chapters = useMemo(() => sortChapters(data ?? []), [data])
@@ -63,6 +62,29 @@ export function useChapterJump() {
       },
     }
   }, [isPodcast, chapters])
+}
+
+// Active chapter for lyrics + highlight: last chapter at or before the
+// engine clock, polled like the auto-skip pump. Null when not a podcast
+// or when the episode has no named chapters (callers fall back to the
+// file flow). Name is guaranteed non-blank by backend validation.
+export function useActiveChapter(file: string | null | undefined, isPodcast: boolean | undefined) {
+  const { data } = usePodcastChapters(isPodcast ? file : null)
+  const chapters = useMemo(() => sortChapters(data ?? []), [data])
+  const [now, setNow] = useState(() => engine.time())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(engine.time()), 500)
+    return () => window.clearInterval(id)
+  }, [])
+  return useMemo(() => {
+    if (!isPodcast || !file) return null
+    let active: (typeof chapters)[number] | null = null
+    for (const c of chapters) {
+      if (now >= c.startSecs && c.name.trim().length > 0) active = c
+      else if (now < c.startSecs) break
+    }
+    return active
+  }, [isPodcast, file, chapters, now])
 }
 
 // Auto-skip pump: while enabled and a podcast episode plays, jump into the

@@ -167,7 +167,7 @@ public sealed class Phase2HandlerTests : IAsyncLifetime
         var hub = Substitute.For<IPlaybackHub>();
         var songs = Substitute.For<ISongReadModel>();
 
-        var handler = new DeleteSongHandler(storage, Records, Tombstones, playback, hub, songs);
+        var handler = new DeleteSongHandler(storage, Records, new EfLyricsRepository(_db), Tombstones, playback, hub, songs);
         (await handler.Handle(new DeleteSongCommand(_userId, "s.mp3"), CancellationToken.None))
             .Should().BeTrue();
 

@@ -181,5 +181,8 @@ public interface ILyricsRepository
     Task<int> GetOffsetAsync(Guid userId, string file, CancellationToken ct = default);
     // Zero removes the row when it holds no lyrics (sparse storage).
     Task SetOffsetAsync(Guid userId, string file, int offsetMs, CancellationToken ct = default);
+    // Per-chapter cache keys ("{file}::chapter:{id}") for one episode, for
+    // tombstoning on delete/move (the remote applier is exact-match).
+    Task<IReadOnlyList<string>> ListChapterKeysAsync(Guid userId, string file, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }

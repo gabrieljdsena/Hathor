@@ -5,7 +5,7 @@ import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { ControlButton } from './ui/buttons'
 import { VolumeSlider } from './PlayerBar'
-import { ChapterSkip, useChapterJump } from './ui/PodcastTimestamps'
+import { ChapterSkip, useActiveChapter, useChapterJump } from './ui/PodcastTimestamps'
 import SyncedLyrics, { useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
 
 // Fullscreen Now Playing overlay (desktop Now Playing view): large art,
@@ -16,14 +16,16 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   const volume = usePlayer((s) => s.volume)
   const toggle = usePlayer((s) => s.toggle)
   const syncAudio = usePlayer((s) => s.syncAudio)
+  const { offsetMs } = useLyricsOffset(song?.file)
+  const chapter = useActiveChapter(song?.file, song?.isPodcast)
   const { data: lyrics, isLoading: lyricsLoading } = useSongLyrics(
     song?.file,
-    song?.title ?? '',
-    song?.artist ?? '',
+    chapter?.name ?? song?.title ?? '',
+    chapter ? '' : (song?.artist ?? ''),
     song?.duration,
     true,
+    chapter?.id ?? null,
   )
-  const { offsetMs } = useLyricsOffset(song?.file)
   // Lyrics-first like the original: fullscreen opens on lyrics only (no
   // sidebar, no bottom bar — the overlay covers both); the toggle reveals
   // cover + transport instead.
@@ -85,6 +87,7 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
             plain={lyrics?.plain}
             isLoading={lyricsLoading}
             offsetMs={offsetMs}
+            chapterStartSecs={chapter?.startSecs ?? 0}
           />
         </div>
       ) : (

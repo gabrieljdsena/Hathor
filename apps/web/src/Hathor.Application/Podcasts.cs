@@ -51,6 +51,7 @@ public sealed record DeletePodcastCommand(Guid UserId, string File) : IRequest<b
 public sealed class DeletePodcastHandler(
     ILibraryStorage storage,
     IPodcastRecordRepository records,
+    ILyricsRepository lyrics,
     ITombstoneRepository tombstones,
     IPlaybackStateRepository playback,
     IPlaybackHub hub,
@@ -59,6 +60,7 @@ public sealed class DeletePodcastHandler(
     public async Task<bool> Handle(DeletePodcastCommand cmd, CancellationToken ct)
     {
         var onDisk = storage.PodcastExists(cmd.UserId, cmd.File);
+        var chapterKeys = await lyrics.ListChapterKeysAsync(cmd.UserId, cmd.File, ct);
         var removed = await records.DeleteCascadeAsync(cmd.UserId, cmd.File, ct);
         if (!onDisk && !removed) return false;
 
@@ -69,6 +71,11 @@ public sealed class DeletePodcastHandler(
         }
 
         await tombstones.RecordAsync(cmd.UserId, "podcasts", cmd.File, ct);
+        // Episode lyrics rows (previously leaked on episode delete) plus
+        // per-chapter cache rows, one tombstone each for exact-match remotes.
+        await tombstones.RecordAsync(cmd.UserId, "lyrics", cmd.File, ct);
+        foreach (var key in chapterKeys)
+            await tombstones.RecordAsync(cmd.UserId, "lyrics", key, ct);
 
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.NextFiles.RemoveAll(f => string.Equals(f, cmd.File, StringComparison.OrdinalIgnoreCase));

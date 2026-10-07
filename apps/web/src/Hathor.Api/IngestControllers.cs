@@ -159,16 +159,19 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
 {
     // Cached lyrics for one file, fetching + caching on miss.
     // refresh=true skips the cache and re-fetches (wrong cached lyrics).
+    // chapterId selects per-chapter podcast lyrics (track = chapter name,
+    // artist empty); unknown ids fall back to the file flow.
     [HttpGet]
     public async Task<ActionResult<LyricsDto>> Get(
         string file, [FromQuery] string track, [FromQuery] string artist,
         [FromQuery] string? album, [FromQuery] int? duration,
-        [FromQuery] bool refresh = false, CancellationToken ct = default)
+        [FromQuery] bool refresh = false, [FromQuery] long? chapterId = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(track))
             return BadRequest(new { message = "Track is required." });
         var dto = await mediator.Send(new GetLyricsQuery(
-            CurrentUserId(), file, track, artist ?? "", album, duration, refresh), ct);
+            CurrentUserId(), file, track, artist ?? "", album, duration, refresh, chapterId), ct);
         return dto is null ? NotFound() : Ok(dto);
     }
 

@@ -498,11 +498,18 @@ export const api = {
     ),
 
   // lyrics
-  songLyrics: (file: string, track: string, artist: string, durationSec?: number, refresh = false) =>
+  songLyrics: (
+    file: string,
+    track: string,
+    artist: string,
+    durationSec?: number,
+    refresh = false,
+    chapterId?: number | null,
+  ) =>
     request<Lyrics>(
       `/songs/${encodeURIComponent(file)}/lyrics?track=${encodeURIComponent(track)}&artist=${encodeURIComponent(artist)}${
         durationSec ? `&duration=${Math.round(durationSec)}` : ''
-      }${refresh ? '&refresh=true' : ''}`,
+      }${refresh ? '&refresh=true' : ''}${chapterId != null ? `&chapterId=${chapterId}` : ''}`,
     ),
   searchLyrics: (track: string, artist: string) =>
     request<LyricsHit[]>('/lyrics/search', {

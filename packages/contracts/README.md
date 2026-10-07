@@ -15,6 +15,9 @@ Rules all apps follow:
 - Files referenced by `file` key only; binaries on disk/S3, never in DB JSON
 - `lyrics` carries `offset_ms` (INT, ms, ±20000, default 0): highlight-timing
   correction, upserted with the lyrics row on push, applied on pull
+- Per-chapter lyric cache rows use `song_file = "{file}::chapter:{id}"`
+  (desktop, web, mobile alike): exact file lookups never match them;
+  episode delete/move drops them and tombstones each key
 - `podcast_chapters` (`id`, `podcast_file`, `name`, `start_secs`, `end_secs`
   NULL = open-ended): full replace scoped to the pusher's own episode files
   (shared remote, like `song_playlist`); episode delete propagates via a

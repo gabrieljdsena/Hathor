@@ -74,6 +74,7 @@ public sealed record DeleteSongCommand(Guid UserId, string File) : IRequest<bool
 public sealed class DeleteSongHandler(
     ILibraryStorage storage,
     ISongRecordRepository records,
+    ILyricsRepository lyrics,
     ITombstoneRepository tombstones,
     IPlaybackStateRepository playback,
     IPlaybackHub hub,
@@ -82,6 +83,7 @@ public sealed class DeleteSongHandler(
     public async Task<bool> Handle(DeleteSongCommand cmd, CancellationToken ct)
     {
         var onDisk = storage.SongExists(cmd.UserId, cmd.File);
+        var chapterKeys = await lyrics.ListChapterKeysAsync(cmd.UserId, cmd.File, ct);
         var removed = await records.DeleteCascadeAsync(cmd.UserId, cmd.File, ct);
         if (!onDisk && !removed) return false;
 
@@ -93,6 +95,8 @@ public sealed class DeleteSongHandler(
 
         await tombstones.RecordAsync(cmd.UserId, "songs", cmd.File, ct);
         await tombstones.RecordAsync(cmd.UserId, "lyrics", cmd.File, ct);
+        foreach (var key in chapterKeys)
+            await tombstones.RecordAsync(cmd.UserId, "lyrics", key, ct);
         await tombstones.RecordAsync(cmd.UserId, "music_history", cmd.File, ct);
 
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);

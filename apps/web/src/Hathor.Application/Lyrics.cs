@@ -12,15 +12,46 @@ namespace Hathor.Application.Lyrics;
 
 public sealed record GetLyricsQuery(
     Guid UserId, string File, string Track, string Artist, string? Album, int? DurationSec,
-    bool Refresh = false)
+    bool Refresh = false, long? ChapterId = null)
     : IRequest<LyricsDto?>;
 
 public sealed class GetLyricsHandler(
     ILyricsRepository cache,
-    ILrclibClient lrclib) : IRequestHandler<GetLyricsQuery, LyricsDto?>
+    ILrclibClient lrclib,
+    IPodcastTimestampRepository timestamps) : IRequestHandler<GetLyricsQuery, LyricsDto?>
 {
+    // Chapter key format (shared with desktop/mobile sync): per-chapter
+    // cache rows that exact file lookups never match.
+    internal static string ChapterKey(string file, long chapterId) =>
+        $"{file}::chapter:{chapterId}";
+
     public async Task<LyricsDto?> Handle(GetLyricsQuery q, CancellationToken ct)
     {
+        // Podcast chapter lyrics: track = chapter name, artist always empty
+        // (track-only search). The chapter must belong to this file.
+        if (q.ChapterId.HasValue)
+        {
+            var chapter = await timestamps.GetAsync(q.UserId, q.File, q.ChapterId.Value, ct);
+            var name = chapter?.Name?.Trim();
+            if (chapter is not null && !string.IsNullOrEmpty(name))
+            {
+                var key = ChapterKey(q.File, chapter.Id);
+                if (!q.Refresh)
+                {
+                    var hit = await cache.GetByFileAsync(q.UserId, key, ct);
+                    var parsedHit = hit?.LyricsJson is not null ? Parse(hit.LyricsJson) : null;
+                    if (parsedHit is not null) return parsedHit;
+                }
+                var chapterFetched = await lrclib.SearchTrackOnlyAsync(name, null, ct);
+                if (chapterFetched?.Synced is null && chapterFetched?.Plain is null) return null;
+                await cache.UpsertAsync(q.UserId, key,
+                    System.Text.Json.JsonSerializer.Serialize(chapterFetched), ct);
+                await cache.SaveChangesAsync(ct);
+                return chapterFetched;
+            }
+            // Unknown chapter (or blank name): fall through to the file flow.
+        }
+
         if (!q.Refresh)
         {
             var cached = await cache.GetByFileAsync(q.UserId, q.File, ct);
@@ -87,7 +118,8 @@ public sealed class SaveLyricsHandler(ILyricsRepository cache)
 }
 
 // Per-song highlight timing correction, persisted server-side (sparse:
-// zero removes the row when it holds no lyrics). Clamped to ±10 seconds.
+// zero removes the row when it holds no lyrics). Clamped to ±20 seconds
+// (desktop/mobile parity).
 public sealed record GetLyricsOffsetQuery(Guid UserId, string File) : IRequest<int>;
 
 public sealed class GetLyricsOffsetHandler(ILyricsRepository cache)

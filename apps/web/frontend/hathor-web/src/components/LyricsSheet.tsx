@@ -5,6 +5,7 @@ import { usePlayer } from '../store/player'
 import Icon from './ui/icons'
 import { LoadingState } from './ui/states'
 import SyncedLyrics, { LYRICS_OFFSET_STEP_MS, useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
+import { useActiveChapter } from './ui/PodcastTimestamps'
 
 // Timing correction beside Romaji: −/+ steppers (250ms), numeric input
 // with native arrows, persisted server-side per song (0 = none, deleted).
@@ -81,12 +82,17 @@ export default function LyricsSheet({
   const [showSearch, setShowSearch] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
+  // Podcast chapter lyrics: track = active chapter name, artist always
+  // empty (track-only search). Chapter flips refetch under a new query key;
+  // the loading state covers the swap so highlight and base never mismatch.
+  const chapter = useActiveChapter(song?.file, song?.isPodcast)
   const { data: lyrics, isLoading } = useSongLyrics(
     song?.file,
-    song?.title ?? '',
-    song?.artist ?? '',
+    chapter?.name ?? song?.title ?? '',
+    chapter ? '' : (song?.artist ?? ''),
     song?.duration,
     open,
+    chapter?.id ?? null,
   )
 
   // Short content hash for the romanization key: the raw synced/plain
@@ -175,8 +181,8 @@ export default function LyricsSheet({
         ) : showSearch ? (
           <LyricsSearchPanel
             songFile={song.file}
-            initialTrack={song.title}
-            initialArtist={song.artist === 'Unknown' ? '' : song.artist}
+            initialTrack={chapter?.name ?? song.title}
+            initialArtist={chapter ? '' : song.artist === 'Unknown' ? '' : song.artist}
             durationSec={song.duration}
             hasLyrics={hasLyrics}
             notice={notice}
@@ -189,6 +195,7 @@ export default function LyricsSheet({
             plain={plain}
             isLoading={isLoading}
             offsetMs={offsetMs}
+            chapterStartSecs={chapter?.startSecs ?? 0}
             emptySlot={
               <div className="flex flex-col items-center gap-4">
                 <p className="text-zinc-500 text-xl font-semibold">No lyrics found.</p>
