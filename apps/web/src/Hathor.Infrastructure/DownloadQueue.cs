@@ -363,7 +363,10 @@ public sealed class DownloadQueueService(
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "Download {Qid} failed", qid);
+            // Error (not Warning): a failed job is user-visible and needs
+            // operator attention — the lab Postgres sink only persists
+            // Error/Fatal, so Warning here never reached the logs table.
+            log.LogError(ex, "Download {Qid} failed", qid);
             job.Status = "failed";
             job.Error = $"Download failed: {ex.Message}";
             job.UpdatedAtUtc = DateTime.UtcNow;

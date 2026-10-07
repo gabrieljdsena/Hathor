@@ -4,6 +4,7 @@ using Hathor.Application.Ports;
 using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace Hathor.Application.Auth;
 
@@ -25,7 +26,8 @@ public sealed class RegisterHandler(
     ISessionRepository sessions,
     IJwtTokenService jwt,
     IPlaybackStateRepository playback,
-    IUserSettingsRepository settings) : IRequestHandler<RegisterCommand, AuthTokensDto>
+    IUserSettingsRepository settings,
+    ILogger<RegisterHandler> log) : IRequestHandler<RegisterCommand, AuthTokensDto>
 {
     // Single-account gate: serialize in-process so two concurrent first
     // registrations cannot both pass the AnyAsync check (DB Username unique
@@ -48,7 +50,13 @@ public sealed class RegisterHandler(
     private async Task<AuthTokensDto> HandleCoreAsync(RegisterCommand cmd, CancellationToken ct)
     {
         if (await users.AnyAsync(ct))
+        {
+            // Audited (file logs): on a single-account server any
+            // registration attempt after the first is someone probing.
+            log.LogWarning("Rejected registration for {Username}: single-account server",
+                cmd.Username.Trim());
             throw new InvalidOperationException("Registration is closed — this server allows a single account.");
+        }
         var username = cmd.Username.Trim();
         if (await users.GetByUsernameAsync(username, ct) is not null)
             throw new InvalidOperationException("Username is already taken.");
@@ -91,13 +99,20 @@ public sealed record LoginCommand(string Username, string Password, bool Remembe
 public sealed class LoginHandler(
     IUserRepository users,
     ISessionRepository sessions,
-    IJwtTokenService jwt) : IRequestHandler<LoginCommand, AuthTokensDto>
+    IJwtTokenService jwt,
+    ILogger<LoginHandler> log) : IRequestHandler<LoginCommand, AuthTokensDto>
 {
     public async Task<AuthTokensDto> Handle(LoginCommand cmd, CancellationToken ct)
     {
         var user = await users.GetByUsernameAsync(cmd.Username.Trim(), ct);
         if (user is null || !BCrypt.Net.BCrypt.Verify(cmd.Password, user.PasswordHash))
+        {
+            // Audited (file logs): failed logins are rare on a single-user
+            // box and always worth a look. Never logs the password.
+            // Warning, not Error: the DB table is for operational failures.
+            log.LogWarning("Failed login for {Username}", cmd.Username.Trim());
             throw new UnauthorizedAccessException("Invalid credentials.");
+        }
 
         var (refresh, sessionId) = await AuthHelpers.IssueSessionAsync(
             sessions, user.Id, cmd.RememberMe, cmd.DeviceLabel, null, ct);

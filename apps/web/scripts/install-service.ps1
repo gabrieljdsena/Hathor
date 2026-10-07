@@ -64,6 +64,20 @@ if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
         Write-Host "[warn] HATHOR_DB_PASSWORD not found - service may fail to reach Postgres"
     }
 
+    # Error sink (lab Postgres `logs` table): without this, Serilog Error/Fatal
+    # rows never leave the local log files. Same server/user as the app DB,
+    # so the DB password doubles when no dedicated logs password is set.
+    $logsPassword = [Environment]::GetEnvironmentVariable('HATHOR_LOGS_DB_PASSWORD', 'User')
+    if (-not $logsPassword) { $logsPassword = [Environment]::GetEnvironmentVariable('HATHOR_LOGS_DB_PASSWORD', 'Process') }
+    if (-not $logsPassword) { $logsPassword = $dbPassword }
+    if ($logsPassword) {
+        [Environment]::SetEnvironmentVariable('HATHOR_LOGS_DB_PASSWORD', $logsPassword, 'Machine')
+        Write-Host "[ok] logs DB password pinned as machine env (HATHOR_LOGS_DB_PASSWORD)"
+    }
+    else {
+        Write-Host "[warn] no logs DB password - Error rows stay in local log files only"
+    }
+
     $binPath = "dotnet `"$dll`" --urls http://0.0.0.0:$Port"
     New-Service -Name $ServiceName -BinaryPathName $binPath -StartupType Automatic -DisplayName 'Hathor Music' | Out-Null
 
