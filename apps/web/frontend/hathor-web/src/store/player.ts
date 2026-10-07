@@ -162,8 +162,18 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
 
   // Startup: pull state, then rebuild an empty queue from the persisted
   // queue_source (desktop load_current_song → _rebuild_queue_from_source).
+  // A refresh never resumes audio: if the server still shows playing (the
+  // tab died mid-song), pause it first so UI, engine and API agree.
   boot: async () => {
-    const state = await api.playerState()
+    const pulled = await api.playerState()
+    let state = pulled
+    if (pulled.isPlaying && pulled.currentSong) {
+      try {
+        state = await api.pause()
+      } catch {
+        state = { ...pulled, isPlaying: false }
+      }
+    }
     set(state)
     if (state.queue.length === 0 && state.source && state.currentSong && !state.firstPlay) {
       try {

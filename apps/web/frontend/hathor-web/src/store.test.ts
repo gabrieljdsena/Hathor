@@ -1,14 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
 import { engine } from './audio/engine'
 import { usePlayer } from './store/player'
+import type { PlayerState } from './api/client'
 
-const { mockUpdateSettings } = vi.hoisted(() => ({ mockUpdateSettings: vi.fn() }))
+const { mockUpdateSettings, mockPlayerState, mockPause, mockSettings } = vi.hoisted(() => ({
+  mockUpdateSettings: vi.fn(),
+  mockPlayerState: vi.fn(),
+  mockPause: vi.fn(),
+  mockSettings: vi.fn(),
+}))
 
 vi.mock('./api/client', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./api/client')>()
   return {
     ...mod,
-    api: { ...mod.api, updateSettings: (...args: unknown[]) => mockUpdateSettings(...args) },
+    api: {
+      ...mod.api,
+      updateSettings: (...args: unknown[]) => mockUpdateSettings(...args),
+      playerState: (...args: unknown[]) => mockPlayerState(...args),
+      pause: (...args: unknown[]) => mockPause(...args),
+      settings: (...args: unknown[]) => mockSettings(...args),
+    },
   }
 })
 
@@ -21,6 +33,59 @@ describe('normalize preference (browser-local)', () => {
     usePlayer.getState().setNormalize(false)
     expect(localStorage.getItem('hathor:normalize')).toBe('0')
     expect(engine.isNormalize()).toBe(false)
+  })
+})
+
+describe('boot (page refresh)', () => {
+  const song = {
+    file: 's.mp3',
+    artist: 'Artist',
+    title: 'Title',
+    album: 'Album',
+    year: '2020',
+    duration: 180,
+    coverArt: null,
+    dateDownload: null,
+    isPodcast: false,
+  }
+
+  function playerState(over: Partial<PlayerState>): PlayerState {
+    return {
+      currentSong: null,
+      isPlaying: false,
+      positionSec: 0,
+      volume: 0.7,
+      shuffle: false,
+      repeat: false,
+      queue: [],
+      source: null,
+      isCustomQueue: false,
+      firstPlay: true,
+      queueTotal: 0,
+      ...over,
+    }
+  }
+
+  it('pauses server playback left running instead of resuming it', async () => {
+    mockPlayerState.mockResolvedValue(
+      playerState({ isPlaying: true, firstPlay: false, currentSong: song as PlayerState['currentSong'] }),
+    )
+    mockPause.mockImplementation(async () =>
+      playerState({ isPlaying: false, firstPlay: false, currentSong: song as PlayerState['currentSong'] }),
+    )
+    mockSettings.mockResolvedValue({ crossfadeEnabled: false, crossfadeSeconds: 5, chapterSkip: false })
+    await usePlayer.getState().boot()
+    expect(mockPause).toHaveBeenCalledOnce()
+    expect(usePlayer.getState().isPlaying).toBe(false)
+  })
+
+  it('leaves an already-paused server alone', async () => {
+    mockPlayerState.mockResolvedValue(playerState({ isPlaying: false }))
+    mockPause.mockClear()
+    mockSettings.mockResolvedValue({ crossfadeEnabled: false, crossfadeSeconds: 5, chapterSkip: false })
+    await usePlayer.getState().boot()
+    expect(mockPause).not.toHaveBeenCalled()
+    expect(usePlayer.getState().isPlaying).toBe(false)
   })
 })
 
