@@ -6,6 +6,7 @@ import Icon from './ui/icons'
 import { LoadingState } from './ui/states'
 import SyncedLyrics, { LYRICS_OFFSET_STEP_MS, useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
 import { useActiveChapter } from './ui/PodcastTimestamps'
+import { splitChapterName } from '../utils/timestamps'
 
 // Timing correction beside Romaji: −/+ steppers (250ms), numeric input
 // with native arrows, persisted server-side per song (0 = none, deleted).
@@ -86,6 +87,10 @@ export default function LyricsSheet({
   // empty (track-only search). Chapter flips refetch under a new query key;
   // the loading state covers the swap so highlight and base never mismatch.
   const chapter = useActiveChapter(song?.file, song?.isPodcast)
+  // Chapter search prefill: split "Title - Artist" into the right fields
+  // (the backend would read the whole name as the track and split it
+  // backwards). Non-chapter songs keep their own metadata.
+  const chapterSplit = chapter ? splitChapterName(chapter.name) : null
   const { data: lyrics, isLoading } = useSongLyrics(
     song?.file,
     chapter?.name ?? song?.title ?? '',
@@ -181,8 +186,8 @@ export default function LyricsSheet({
         ) : showSearch ? (
           <LyricsSearchPanel
             songFile={song.file}
-            initialTrack={chapter?.name ?? song.title}
-            initialArtist={chapter ? '' : song.artist === 'Unknown' ? '' : song.artist}
+            initialTrack={chapterSplit?.title ?? song.title}
+            initialArtist={chapterSplit?.artist ?? (song.artist === 'Unknown' ? '' : song.artist)}
             durationSec={song.duration}
             hasLyrics={hasLyrics}
             notice={notice}

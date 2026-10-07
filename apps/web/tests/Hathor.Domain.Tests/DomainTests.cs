@@ -132,4 +132,20 @@ public sealed class LyricsCleaningTests
     [InlineData("", "")]
     public void CleanChapterTitle_KeepsTitlePartOnly(string name, string expected) =>
         LyricsCleaning.CleanChapterTitle(name).Should().Be(expected);
+
+    [Theory]
+    [InlineData("Beggin - Frankie Valli & The Four Seasons", "Beggin", "Frankie Valli & The Four Seasons")]
+    [InlineData("Jaja Ding Dong -  Will Ferrell", "Jaja Ding Dong", "Will Ferrell")]
+    [InlineData("Intro", "Intro", "")]
+    [InlineData("", "", "")]
+    public void SplitChapterName_SplitsTitleAndArtist(string name, string title, string artist) =>
+        LyricsCleaning.SplitChapterName(name).Should().Be((title, artist));
+
+    [Theory]
+    [InlineData("Beggin", "Beggin'")]
+    [InlineData("Sway", "  sway ")]
+    [InlineData("Buble", "Bublé")]
+    [InlineData("Song", "Song (Remastered 2020)")]
+    public void NormalizeLyricTitle_FoldsPunctuationAndDiacritics(string a, string b) =>
+        LyricsCleaning.NormalizeLyricTitle(a).Should().Be(LyricsCleaning.NormalizeLyricTitle(b));
 }

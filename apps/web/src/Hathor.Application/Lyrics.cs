@@ -58,14 +58,20 @@ public sealed class GetLyricsHandler(
                 var parsedHit = hit?.LyricsJson is not null ? Parse(hit.LyricsJson) : null;
                 if (parsedHit is not null) return parsedHit;
             }
-            // Chapter names are usually "Title - Artist" (DJ-mix style):
-            // search the title part only. Artist stays empty per
-            // the chapter-lyrics rule — and is required empty, since the
-            // track-only matcher demands an exact title hit.
-            var chapterTrack = LyricsCleaning.CleanChapterTitle(chapterName);
-            if (string.IsNullOrEmpty(chapterTrack)) return null;
-            var chapterFetched = await lrclib.SearchTrackOnlyAsync(chapterTrack, null, ct);
-            if (chapterFetched?.Synced is null && chapterFetched?.Plain is null) return null;
+            // Chapters are "Title - Artist" (DJ-mix style): search WITH the
+            // artist — the provider ranks title+artist precisely, while a
+            // title-only fuzzy search buries the hit under near-misses
+            // ("Sway" under "Sway Sway Baby!") or rejects on punctuation
+            // ("Beggin" vs lrclib's "Beggin'"). Title must match
+            // (normalized); the artist must too when the chapter has one —
+            // wrong-song lyrics are worse than none.
+            var (chapterTitle, chapterArtist) = LyricsCleaning.SplitChapterName(chapterName);
+            if (string.IsNullOrEmpty(chapterTitle)) return null;
+            var candidates = await lrclib.SearchAsync(
+                chapterTitle, chapterArtist, null, null, ct);
+            var best = PickChapterCandidate(chapterTitle, chapterArtist, candidates);
+            if (best?.SyncedLyrics is null && best?.PlainLyrics is null) return null;
+            var chapterFetched = new LyricsDto(best.SyncedLyrics, best.PlainLyrics);
             await cache.UpsertAsync(q.UserId, key,
                 System.Text.Json.JsonSerializer.Serialize(chapterFetched), ct);
             await cache.SaveChangesAsync(ct);
@@ -104,6 +110,32 @@ public sealed class GetLyricsHandler(
         {
             return null;
         }
+    }
+
+    // Chapter candidate ranking over provider search hits (first best
+    // wins — the query already carries title+artist so the provider ranks
+    // well). Comparison is normalized on both sides (case, punctuation,
+    // brackets, diacritics); instrumentals and lyric-less rows are skipped.
+    // A known chapter artist must match (contains either way): without it,
+    // "Beggin" would accept Madcon's "Beggin'" over Frankie Valli's.
+    internal static LyricsHitDto? PickChapterCandidate(
+        string title, string artist, IReadOnlyList<LyricsHitDto> hits)
+    {
+        var wantTitle = LyricsCleaning.NormalizeLyricTitle(title);
+        if (string.IsNullOrEmpty(wantTitle)) return null;
+        var wantArtist = LyricsCleaning.NormalizeLyricTitle(artist);
+        foreach (var h in hits)
+        {
+            if (h.SyncedLyrics is null && h.PlainLyrics is null) continue;
+            if (LyricsCleaning.NormalizeLyricTitle(h.TrackName) != wantTitle) continue;
+            if (string.IsNullOrEmpty(wantArtist)) return h;
+            var haveArtist = LyricsCleaning.NormalizeLyricTitle(h.ArtistName);
+            if (string.IsNullOrEmpty(haveArtist)) continue;
+            if (haveArtist.Contains(wantArtist, StringComparison.Ordinal) ||
+                wantArtist.Contains(haveArtist, StringComparison.Ordinal))
+                return h;
+        }
+        return null;
     }
 }
 

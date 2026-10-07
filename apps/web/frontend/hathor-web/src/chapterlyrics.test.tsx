@@ -172,4 +172,20 @@ describe('LyricsSheet chapter save flow', () => {
       expect(mockSaveLyrics).toHaveBeenCalledWith('ep.mp3', '[00:01.00] hi', null, 1)
     })
   })
+
+  it('prefills manual search with the split chapter title and artist', async () => {
+    // Dashed chapters must not go out as track="Beggin - Frankie Valli":
+    // the backend would read the halves backwards.
+    mockList.mockResolvedValue([
+      { id: 3, podcastFile: 'ep.mp3', name: 'Beggin - Frankie Valli', startSecs: 0, endSecs: null },
+    ])
+    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
+    mockSearchLyrics.mockResolvedValue([])
+    mockEngineTime.mockReturnValue(10)
+    renderSheet()
+
+    expect(await screen.findByText('No lyrics found.')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Search candidates'))
+    expect(mockSearchLyrics).toHaveBeenCalledWith('Beggin', 'Frankie Valli')
+  })
 })

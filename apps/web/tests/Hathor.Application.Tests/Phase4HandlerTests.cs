@@ -100,18 +100,21 @@ public sealed class Phase4HandlerTests
             CancellationToken.None);
 
         dto!.Synced.Should().Contain("ch");
-        await lrclib.DidNotReceiveWithAnyArgs().SearchTrackOnlyAsync(default!, default, default);
+        await lrclib.DidNotReceiveWithAnyArgs().SearchAsync(default!, default!, default, default, default);
     }
 
     [Fact]
-    public async Task GetLyrics_ChapterMiss_FetchesTrackOnly_UnderChapterKey()
+    public async Task GetLyrics_ChapterMiss_SearchesTitleAndArtist_UnderChapterKey()
     {
         var cache = Substitute.For<ILyricsRepository>();
         cache.GetByFileAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>())
             .Returns((Domain.Entities.Lyric?)null);
         var lrclib = Substitute.For<ILrclibClient>();
-        lrclib.SearchTrackOnlyAsync("Intro", null, Arg.Any<CancellationToken>())
-            .Returns(new Dtos.LyricsDto("[00:01.00] intro", "intro"));
+        lrclib.SearchAsync("Intro", "", null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(1, "Intro", "", null, null, "[00:01.00] intro", "intro"),
+            });
         var timestamps = Substitute.For<IPodcastTimestampRepository>();
         timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
             .Returns(new Domain.Entities.PodcastTimestamp
@@ -130,16 +133,21 @@ public sealed class Phase4HandlerTests
     }
 
     [Fact]
-    public async Task GetLyrics_DashedChapterName_SearchesTitlePartOnly()
+    public async Task GetLyrics_DashedChapterName_SearchesTitleWithArtist()
     {
-        // DJ-mix chapters ("Title - Artist") never match lrclib verbatim:
-        // the title part is searched, artist stays empty per chapter rule.
+        // DJ-mix chapters ("Title - Artist") query the provider with both
+        // halves: title-only fuzzy search misses ("Beggin" vs "Beggin'").
         var cache = Substitute.For<ILyricsRepository>();
         cache.GetByFileAsync(UserId, "ep.mp3::chapter:9", Arg.Any<CancellationToken>())
             .Returns((Domain.Entities.Lyric?)null);
         var lrclib = Substitute.For<ILrclibClient>();
-        lrclib.SearchTrackOnlyAsync("Jaja Ding Dong", null, Arg.Any<CancellationToken>())
-            .Returns(new Dtos.LyricsDto(null, "ding dong"));
+        lrclib.SearchAsync("Jaja Ding Dong", "Will Ferrell & Molly Sandén",
+                null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(9, "Jaja Ding Dong", "Will Ferrell & Molly Sandén",
+                    null, null, null, "ding dong"),
+            });
         var timestamps = Substitute.For<IPodcastTimestampRepository>();
         timestamps.GetAsync(UserId, "ep.mp3", 9, Arg.Any<CancellationToken>())
             .Returns(new Domain.Entities.PodcastTimestamp
@@ -154,6 +162,68 @@ public sealed class Phase4HandlerTests
 
         dto!.Plain.Should().Be("ding dong");
         await lrclib.DidNotReceiveWithAnyArgs().GetExactAsync(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task GetLyrics_ChapterPicksArtistMatch_DespitePunctuation()
+    {
+        // "Beggin" must resolve to Frankie Valli's "Beggin'", not the
+        // first same-normalized-title hit (Madcon) — live lrclib order.
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:39", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchAsync("Beggin", "Frankie Valli & The Four Seasons",
+                null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(1, "Beggin'", "Madcon", null, null, null, "madcon"),
+                new(2, "Beggin'", "Frankie Valli", null, null, "[00:01.00] valli", "valli"),
+            });
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 39, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 39, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Beggin - Frankie Valli & The Four Seasons", StartSecs = 8217,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 39),
+            CancellationToken.None);
+
+        dto!.Plain.Should().Be("valli");
+    }
+
+    [Fact]
+    public async Task GetLyrics_ChapterArtistMismatch_ReturnsNull_WithoutCache()
+    {
+        // Same title, wrong artist only: wrong-song lyrics are worse than
+        // none (manual search stays one tap away).
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:39", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchAsync("Beggin", "Frankie Valli & The Four Seasons",
+                null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(1, "Beggin'", "Madcon", null, null, null, "madcon"),
+            });
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 39, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 39, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Beggin - Frankie Valli & The Four Seasons", StartSecs = 8217,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 39),
+            CancellationToken.None);
+
+        dto.Should().BeNull();
+        await cache.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default!, default!, default);
     }
 
     [Fact]
