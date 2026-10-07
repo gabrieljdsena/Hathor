@@ -24,7 +24,7 @@ const SOURCE_LABEL: Record<Exclude<SourceFilter, 'all'>, string> = {
 
 const SOURCE_BADGE: Record<Exclude<SourceFilter, 'all'>, string> = {
   artist: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
-  chart: 'text-sky-400 border-sky-500/30 bg-sky-500/10',
+  chart: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
   llm: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
 }
 
