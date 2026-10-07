@@ -219,13 +219,24 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     // isPodcast keeps episodes out of music history (desktop rule).
     // Start local audio immediately (user gesture unlocks the AudioContext)
     // so the browser buffers during the round trips instead of after them.
+    // If either call fails, the store still names the previous track while
+    // the element already plays the new one — reconverge on the server
+    // (refresh re-syncs the element too) instead of leaving the pair
+    // diverged, then rethrow so callers see the failure as before.
     engine.ensureContext()
     engine.load(toTrack(song), true)
-    const queued = await api.setQueue(song.file, context, source)
-    set(queued)
-    const state = await api.play(song.file, song.isPodcast)
-    set(state)
-    syncEngine(state)
+    try {
+      const queued = await api.setQueue(song.file, context, source)
+      set(queued)
+      const state = await api.play(song.file, song.isPodcast)
+      set(state)
+      syncEngine(state)
+    } catch (e) {
+      await get()
+        .refresh()
+        .catch(() => {})
+      throw e
+    }
   },
 
   toggle: async () => {

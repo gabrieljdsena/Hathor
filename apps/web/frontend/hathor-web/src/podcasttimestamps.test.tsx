@@ -10,7 +10,7 @@ import {
 import { usePlayer } from './store/player'
 import type { PodcastTimestamp, Song } from './api/client'
 
-const { mockList, mockCreate, mockUpdate, mockRemove, mockSeek, mockEngineTime, mockEngineSeek, mockUpdateSettings } =
+const { mockList, mockCreate, mockUpdate, mockRemove, mockSeek, mockEngineTime, mockEngineSeek, mockEngineFile, mockUpdateSettings } =
   vi.hoisted(() => ({
     mockList: vi.fn(),
     mockCreate: vi.fn(),
@@ -19,6 +19,7 @@ const { mockList, mockCreate, mockUpdate, mockRemove, mockSeek, mockEngineTime, 
     mockSeek: vi.fn(),
     mockEngineTime: vi.fn(),
     mockEngineSeek: vi.fn(),
+    mockEngineFile: vi.fn(),
     mockUpdateSettings: vi.fn(),
   }))
 
@@ -42,6 +43,7 @@ vi.mock('./audio/engine', () => ({
   engine: {
     time: (...args: unknown[]) => mockEngineTime(...args),
     seek: (...args: unknown[]) => mockEngineSeek(...args),
+    currentFile: (...args: unknown[]) => mockEngineFile(...args),
     // store/player wires these at module scope; no-op here.
     setNextProvider: vi.fn(),
     onEnded: vi.fn(),
@@ -87,6 +89,8 @@ function resetPlayer() {
 beforeEach(() => {
   resetPlayer()
   vi.clearAllMocks()
+  // Element renders the store's episode unless a test says otherwise.
+  mockEngineFile.mockReturnValue('ep.mp3')
 })
 
 function renderModal() {
@@ -324,5 +328,21 @@ describe('useChapterAutoSkip', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalledWith('ep.mp3'))
     await new Promise((r) => setTimeout(r, 700))
     expect(mockEngineSeek).not.toHaveBeenCalled()
+  })
+
+  it('never seeks a song the store still mistakes for a podcast', async () => {
+    // Store/engine divergence (switch mid-flight, failed play call): the
+    // store names the old episode with chapters while the element already
+    // plays a song. The pump must not fire chapter timestamps at it.
+    mockList.mockResolvedValue(skipChapters)
+    mockEngineTime.mockReturnValue(95)
+    mockEngineFile.mockReturnValue('song.mp3')
+    mockSeek.mockResolvedValue({})
+    usePlayer.setState({ currentSong: episode, isPlaying: true, chapterSkip: true })
+    renderHook(() => useChapterAutoSkip(), { wrapper: hookWrapper() })
+    await waitFor(() => expect(mockList).toHaveBeenCalledWith('ep.mp3'))
+    await new Promise((r) => setTimeout(r, 700))
+    expect(mockEngineSeek).not.toHaveBeenCalled()
+    expect(mockSeek).not.toHaveBeenCalled()
   })
 })

@@ -90,6 +90,11 @@ export function useActiveChapter(file: string | null | undefined, isPodcast: boo
 // Auto-skip pump: while enabled and a podcast episode plays, jump into the
 // next chapter once a chapter plays to its end time (markers without an
 // end never skip). Mount once in the always-rendered player bar.
+// The engine-file guard is load-bearing: the store and the element can
+// disagree mid-switch (playSong loads audio before the server confirms,
+// or the play call fails and the store stays stale) — without it, chapter
+// timestamps from a previous episode would seek whatever song actually
+// plays. Songs never have chapters; never seek them.
 export function useChapterAutoSkip() {
   const enabled = usePlayer((s) => s.chapterSkip)
   const file = usePlayer((s) => s.currentSong?.file)
@@ -103,11 +108,15 @@ export function useChapterAutoSkip() {
     const id = window.setInterval(() => {
       const s = stateRef.current
       if (!s.enabled || !s.isPodcast || !s.isPlaying || s.chapters.length === 0) return
+      // The element must be rendering the store's episode: after a switch
+      // to a song (or a failed play call) the store can still name the old
+      // podcast while the element already plays the song.
+      if (!file || engine.currentFile() !== file) return
       const target = autoSkipTarget(sortChapters(s.chapters), engine.time())
       if (target !== null) seekTo(target)
     }, 500)
     return () => window.clearInterval(id)
-  }, [])
+  }, [file])
 }
 
 // "Use current position" helper: fills a time field with the engine clock.

@@ -102,3 +102,53 @@ describe('chapter skip preference (local + account-wide)', () => {
     expect(mockUpdateSettings).toHaveBeenCalledWith({ chapterSkip: false })
   })
 })
+
+describe('playSong failure', () => {
+  const episode = {
+    file: 'ep.mp3',
+    artist: 'Host',
+    title: 'Episode',
+    album: '',
+    year: '',
+    duration: 900,
+    coverArt: null,
+    dateDownload: null,
+    isPodcast: true,
+  }
+  const song = { ...episode, file: 's.mp3', title: 'Title', isPodcast: false }
+
+  function playerState(over: Partial<PlayerState>): PlayerState {
+    return {
+      currentSong: null,
+      isPlaying: false,
+      positionSec: 0,
+      volume: 0.7,
+      shuffle: false,
+      repeat: false,
+      queue: [],
+      source: null,
+      isCustomQueue: false,
+      firstPlay: true,
+      queueTotal: 0,
+      ...over,
+    }
+  }
+
+  it('reconverges on the server instead of leaving store and element diverged', async () => {
+    // Store names the old podcast while the element already plays the new
+    // song (optimistic load runs before the server confirms): a failed
+    // play call must pull server truth back instead of stranding the pair
+    // diverged — divergence is what armed chapter auto-skip on songs.
+    // (setQueue/play are the real client here and reject on the relative
+    // URL with no server; playerState is the mocked server truth.)
+    usePlayer.setState({ currentSong: episode as PlayerState['currentSong'] })
+    mockPlayerState.mockResolvedValue(
+      playerState({ currentSong: episode as PlayerState['currentSong'], isPlaying: false }),
+    )
+    await expect(
+      usePlayer.getState().playSong(song, [song], { type: 'all_songs', id: null }),
+    ).rejects.toThrow()
+    expect(mockPlayerState).toHaveBeenCalled()
+    expect(usePlayer.getState().currentSong?.file).toBe('ep.mp3')
+  })
+})
