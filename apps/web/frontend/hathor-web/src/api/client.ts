@@ -516,13 +516,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ Track: track, Artist: artist }),
     }),
-  saveLyrics: (file: string, synced: string | null, plain: string | null) =>
-    request<void>(`/songs/${encodeURIComponent(file)}/lyrics`, {
+  saveLyrics: (file: string, synced: string | null, plain: string | null, chapterId?: number | null) =>
+    request<void>(`/songs/${encodeURIComponent(file)}/lyrics${chapterId != null ? `?chapterId=${chapterId}` : ''}`, {
       method: 'PUT',
       body: JSON.stringify({ Synced: synced, Plain: plain }),
     }),
-  deleteLyrics: (file: string) =>
-    request<void>(`/songs/${encodeURIComponent(file)}/lyrics`, { method: 'DELETE' }),
+  deleteLyrics: (file: string, chapterId?: number | null) =>
+    request<void>(
+      `/songs/${encodeURIComponent(file)}/lyrics${chapterId != null ? `?chapterId=${chapterId}` : ''}`,
+      { method: 'DELETE' },
+    ),
   lyricsOffset: (file: string) =>
     request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset`),
   setLyricsOffset: (file: string, offsetMs: number) =>

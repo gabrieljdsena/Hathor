@@ -175,22 +175,25 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
         return dto is null ? NotFound() : Ok(dto);
     }
 
-    // Manual save (candidate pick from search results).
+    // Manual save (candidate pick from search results). chapterId stores
+    // under the chapter key so the chapter view reads back the pick.
     [HttpPut]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<IActionResult> Save(
-        string file, [FromBody] SaveLyricsRequest body, CancellationToken ct) =>
+        string file, [FromBody] SaveLyricsRequest body,
+        [FromQuery] long? chapterId, CancellationToken ct) =>
         await mediator.Send(new SaveLyricsCommand(
-            CurrentUserId(), file, body.Synced, body.Plain), ct)
+            CurrentUserId(), file, body.Synced, body.Plain, chapterId), ct)
             ? NoContent()
             : BadRequest(new { message = "Empty lyrics cannot be saved." });
 
-    // Manual removal (wrong lyrics): drops the cache row so the next read
+    // Manual removal (wrong lyrics): drops the cached row so the next read
     // re-fetches instead of serving the stale entry.
     [HttpDelete]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<IActionResult> Delete(string file, CancellationToken ct) =>
-        await mediator.Send(new DeleteLyricsCommand(CurrentUserId(), file), ct)
+    public async Task<IActionResult> Delete(
+        string file, [FromQuery] long? chapterId, CancellationToken ct) =>
+        await mediator.Send(new DeleteLyricsCommand(CurrentUserId(), file, chapterId), ct)
             ? NoContent()
             : NotFound();
 

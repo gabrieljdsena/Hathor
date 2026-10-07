@@ -130,6 +130,33 @@ public sealed class Phase4HandlerTests
     }
 
     [Fact]
+    public async Task GetLyrics_DashedChapterName_SearchesTitlePartOnly()
+    {
+        // DJ-mix chapters ("Title - Artist") never match lrclib verbatim:
+        // the title part is searched, artist stays empty per chapter rule.
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:9", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchTrackOnlyAsync("Jaja Ding Dong", null, Arg.Any<CancellationToken>())
+            .Returns(new Dtos.LyricsDto(null, "ding dong"));
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 9, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 9, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Jaja Ding Dong - Will Ferrell & Molly Sandén", StartSecs = 9861,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 9),
+            CancellationToken.None);
+
+        dto!.Plain.Should().Be("ding dong");
+        await lrclib.DidNotReceiveWithAnyArgs().GetExactAsync(default!, default!, default, default);
+    }
+
+    [Fact]
     public async Task GetLyrics_ForeignChapterId_FallsBackToFileFlow()
     {
         var cache = Substitute.For<ILyricsRepository>();
@@ -157,7 +184,7 @@ public sealed class Phase4HandlerTests
     public async Task SaveLyrics_Empty_ReturnsFalse()
     {
         var cache = Substitute.For<ILyricsRepository>();
-        (await new SaveLyricsHandler(cache).Handle(
+        (await new SaveLyricsHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new SaveLyricsCommand(UserId, "s.mp3", null, null), CancellationToken.None))
             .Should().BeFalse();
         await cache.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default!, default!, default);
@@ -185,7 +212,7 @@ public sealed class Phase4HandlerTests
     {
         var cache = Substitute.For<ILyricsRepository>();
         cache.DeleteAsync(UserId, "s.mp3", Arg.Any<CancellationToken>()).Returns(false);
-        (await new DeleteLyricsHandler(cache).Handle(
+        (await new DeleteLyricsHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new DeleteLyricsCommand(UserId, "s.mp3"), CancellationToken.None))
             .Should().BeFalse();
         await cache.DidNotReceiveWithAnyArgs().SaveChangesAsync(default);
@@ -196,8 +223,65 @@ public sealed class Phase4HandlerTests
     {
         var cache = Substitute.For<ILyricsRepository>();
         cache.DeleteAsync(UserId, "s.mp3", Arg.Any<CancellationToken>()).Returns(true);
-        (await new DeleteLyricsHandler(cache).Handle(
+        (await new DeleteLyricsHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new DeleteLyricsCommand(UserId, "s.mp3"), CancellationToken.None))
+            .Should().BeTrue();
+        await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SaveLyrics_Chapter_SavesUnderChapterKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 7, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Intro", StartSecs = 0,
+            });
+
+        (await new SaveLyricsHandler(cache, timestamps).Handle(
+            new SaveLyricsCommand(UserId, "ep.mp3", "[00:01.00] x", "x", ChapterId: 7),
+            CancellationToken.None))
+            .Should().BeTrue();
+        await cache.Received(1).UpsertAsync(
+            UserId, "ep.mp3::chapter:7", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SaveLyrics_ForeignChapterId_FallsBackToFileKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 99, Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.PodcastTimestamp?)null);
+
+        (await new SaveLyricsHandler(cache, timestamps).Handle(
+            new SaveLyricsCommand(UserId, "ep.mp3", null, "x", ChapterId: 99),
+            CancellationToken.None))
+            .Should().BeTrue();
+        await cache.Received(1).UpsertAsync(
+            UserId, "ep.mp3", Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task DeleteLyrics_Chapter_DeletesChapterKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.DeleteAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>()).Returns(true);
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 7, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Intro", StartSecs = 0,
+            });
+
+        (await new DeleteLyricsHandler(cache, timestamps).Handle(
+            new DeleteLyricsCommand(UserId, "ep.mp3", ChapterId: 7),
+            CancellationToken.None))
             .Should().BeTrue();
         await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }

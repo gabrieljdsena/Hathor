@@ -1,15 +1,21 @@
 import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import LyricsSheet from './components/LyricsSheet'
 import SyncedLyrics from './components/ui/SyncedLyrics'
 import { useActiveChapter } from './components/ui/PodcastTimestamps'
-import type { PodcastTimestamp } from './api/client'
+import { usePlayer } from './store/player'
+import type { PodcastTimestamp, Song } from './api/client'
 
-const { mockList, mockEngineTime, mockEngineSeek, mockApiSeek } = vi.hoisted(() => ({
+const { mockList, mockEngineTime, mockEngineSeek, mockApiSeek, mockSongLyrics, mockSearchLyrics, mockSaveLyrics } = vi.hoisted(() => ({
   mockList: vi.fn(),
   mockEngineTime: vi.fn(),
   mockEngineSeek: vi.fn(),
   mockApiSeek: vi.fn(),
+  mockSongLyrics: vi.fn(),
+  mockSearchLyrics: vi.fn(),
+  mockSaveLyrics: vi.fn(),
+  mockLyricsOffset: vi.fn(),
 }))
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -20,6 +26,10 @@ vi.mock('./api/client', async (importOriginal) => {
       ...mod.api,
       podcastTimestamps: (...args: unknown[]) => mockList(...args),
       seek: (...args: unknown[]) => mockApiSeek(...args),
+      songLyrics: (...args: unknown[]) => mockSongLyrics(...args),
+      searchLyrics: (...args: unknown[]) => mockSearchLyrics(...args),
+      saveLyrics: (...args: unknown[]) => mockSaveLyrics(...args),
+      lyricsOffset: async () => ({ offsetMs: 0 }),
     },
   }
 })
@@ -114,5 +124,52 @@ describe('SyncedLyrics chapter clock', () => {
     fireEvent.click(screen.getByText('five'))
     expect(mockEngineSeek).toHaveBeenCalledWith(65)
     expect(mockApiSeek).toHaveBeenCalledWith(65)
+  })
+})
+
+describe('LyricsSheet chapter save flow', () => {
+  const episode: Song = {
+    file: 'ep.mp3',
+    artist: 'Host',
+    title: 'Episode',
+    album: '',
+    year: '',
+    duration: 900,
+    coverArt: null,
+    dateDownload: null,
+    isPodcast: true,
+  }
+
+  function renderSheet() {
+    usePlayer.setState({ currentSong: episode })
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <LyricsSheet open onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('saves a picked candidate under the active chapter key', async () => {
+    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
+    mockSearchLyrics.mockResolvedValue([
+      {
+        id: 1, trackName: 'Intro', artistName: '', albumName: null,
+        duration: null, syncedLyrics: '[00:01.00] hi', plainLyrics: null,
+      },
+    ])
+    mockSaveLyrics.mockResolvedValue(undefined)
+    mockEngineTime.mockReturnValue(10)
+    renderSheet()
+
+    // No chapter lyrics yet: search affordance shows; the panel's
+    // initial search (chapter title, empty artist) finds the candidate.
+    expect(await screen.findByText('No lyrics found.')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Search candidates'))
+    expect(mockSearchLyrics).toHaveBeenCalledWith('Intro', '')
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockSaveLyrics).toHaveBeenCalledWith('ep.mp3', '[00:01.00] hi', null, 1)
+    })
   })
 })

@@ -138,7 +138,6 @@ public static class LyricsCleaning
     public static bool IsUnknownArtist(string? artist) =>
         string.IsNullOrWhiteSpace(artist) ||
         artist.Trim().ToLowerInvariant() is "unknown" or "unknown artist";
-
     public static bool ArtistUsable(string? artist) => !IsUnknownArtist(artist);
 
     // Track-only fallback acceptance: exact case-insensitive track match, skips instrumentals.
@@ -148,4 +147,16 @@ public static class LyricsCleaning
         Regex.Replace(candidateTrack, @"\s+", " ").Trim().Equals(
             Regex.Replace(cleanTrack, @"\s+", " ").Trim(),
             StringComparison.OrdinalIgnoreCase);
+
+    // Podcast chapter names are "Title - Artist" (DJ-mix style) — the
+    // reverse of the "Artist - Title" filename convention CleanTrackArtist
+    // assumes, so that splitter would keep the wrong half. Take the leading
+    // title part for track-only exact matching (artist stays empty).
+    public static string CleanChapterTitle(string? name)
+    {
+        var title = BracketQualifier.Replace(name ?? "", "").Trim();
+        var dash = title.IndexOf(" - ", StringComparison.Ordinal);
+        if (dash >= 0) title = title[..dash].Trim();
+        return title;
+    }
 }

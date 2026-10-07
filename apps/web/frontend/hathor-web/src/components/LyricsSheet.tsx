@@ -188,6 +188,7 @@ export default function LyricsSheet({
             notice={notice}
             setNotice={setNotice}
             onDone={() => setShowSearch(false)}
+            chapterId={chapter?.id ?? null}
           />
         ) : (
           <SyncedLyrics
@@ -237,6 +238,7 @@ function LyricsSearchPanel({
   notice,
   setNotice,
   onDone,
+  chapterId = null,
 }: {
   songFile: string
   initialTrack: string
@@ -246,6 +248,9 @@ function LyricsSearchPanel({
   notice: string | null
   setNotice: (m: string | null) => void
   onDone: () => void
+  // Chapter context: save/remove/refetch target the chapter cache row so
+  // the chapter view reads back exactly what was picked.
+  chapterId?: number | null
 }) {
   const queryClient = useQueryClient()
   const [track, setTrack] = useState(initialTrack)
@@ -266,7 +271,8 @@ function LyricsSearchPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songFile])
 
-  const refreshLyrics = () => queryClient.invalidateQueries({ queryKey: ['lyrics', songFile] })
+  const refreshLyrics = () =>
+    queryClient.invalidateQueries({ queryKey: ['lyrics', songFile] })
 
   const search = (t: string, a: string) => {
     if (!t.trim()) {
@@ -298,7 +304,7 @@ function LyricsSearchPanel({
     setSavingId(hit.id)
     setNotice(null)
     void api
-      .saveLyrics(songFile, hit.syncedLyrics, hit.plainLyrics)
+      .saveLyrics(songFile, hit.syncedLyrics, hit.plainLyrics, chapterId)
       .then(() => {
         refreshLyrics()
         setNotice(`Saved “${hit.trackName} — ${hit.artistName}”.`)
@@ -312,9 +318,9 @@ function LyricsSearchPanel({
     setBusyAction('refetch')
     setNotice(null)
     void api
-      .songLyrics(songFile, track.trim() || initialTrack, artist.trim(), durationSec, true)
+      .songLyrics(songFile, track.trim() || initialTrack, artist.trim(), durationSec, true, chapterId)
       .then((fresh) => {
-        queryClient.setQueryData(['lyrics', songFile], fresh)
+        queryClient.setQueryData(['lyrics', songFile, chapterId ?? ''], fresh)
         setNotice('Re-fetched from the provider.')
         onDone()
       })
@@ -326,7 +332,7 @@ function LyricsSearchPanel({
     setBusyAction('remove')
     setNotice(null)
     void api
-      .deleteLyrics(songFile)
+      .deleteLyrics(songFile, chapterId)
       .then(() => {
         refreshLyrics()
         setNotice('Saved lyrics removed — re-fetching from the provider.')

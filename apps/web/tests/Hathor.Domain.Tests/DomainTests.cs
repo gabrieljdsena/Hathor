@@ -123,4 +123,13 @@ public sealed class LyricsCleaningTests
         LyricsCleaning.AcceptTrackOnlyCandidate("My Song", "My Song", true).Should().BeFalse();
         LyricsCleaning.AcceptTrackOnlyCandidate("My Song", "Other Song", false).Should().BeFalse();
     }
+
+    [Theory]
+    [InlineData("Jaja Ding Dong - Will Ferrell & Molly Sandén", "Jaja Ding Dong")]
+    [InlineData("Beggin - Frankie Valli & The Four Seasons", "Beggin")]
+    [InlineData("Intro", "Intro")]
+    [InlineData("Song (Remastered 2020) - Someone", "Song")]
+    [InlineData("", "")]
+    public void CleanChapterTitle_KeepsTitlePartOnly(string name, string expected) =>
+        LyricsCleaning.CleanChapterTitle(name).Should().Be(expected);
 }
