@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 import { usePlayer } from '../store/player'
 import { engine } from '../audio/engine'
 import { handleShortcutKey } from '../utils/shortcuts'
+import { createUnloadPause } from '../utils/unloadPause'
 import PlayerBar from './PlayerBar'
 import LyricsSheet from './LyricsSheet'
 import NowPlaying from './NowPlaying'
@@ -97,6 +98,26 @@ export default function Shell() {
     observer.observe(bar)
     return () => observer.disconnect()
   }, [])
+
+  // Pause-on-unload: closing the tab otherwise leaves a ghost "playing"
+  // on the server (nothing tells it). keepalive POST with Bearer auth.
+  useEffect(
+    () =>
+      createUnloadPause(
+        () => {
+          const s = usePlayer.getState()
+          return { isPlaying: s.isPlaying, hasTrack: s.currentSong !== null }
+        },
+        () => {
+          try {
+            return localStorage.getItem('hathor:token')
+          } catch {
+            return null
+          }
+        },
+      ),
+    [],
+  )
 
   // Keyboard shortcuts (desktop Now Playing & shortcuts): Space play/pause,
   // ←/→ seek ±10s, ↑/↓ volume, n/p chapter-aware next/prev, [ ] chapter-only

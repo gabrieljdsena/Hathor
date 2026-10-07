@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import { engine } from '../audio/engine'
+import { clampSeekTarget, engine } from '../audio/engine'
 import { formatTime, usePlayer } from '../store/player'
 import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
@@ -16,26 +16,44 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   const curRef = useRef<HTMLSpanElement>(null)
   const totRef = useRef<HTMLSpanElement>(null)
 
+  // Effective duration: the element's own once metadata loads (ground
+  // truth for what can play), the song's stored duration before that so a
+  // fresh long episode doesn't scrub against a stale/default maximum.
+  const effDuration = () => {
+    const d = engine.duration()
+    if (d > 0) return d
+    const meta = usePlayer.getState().currentSong?.duration ?? 0
+    return meta > 0 ? meta : 0
+  }
+
   useEffect(() => {
     const id = setInterval(() => {
-      const slider = sliderRef.current
-      if (!slider) return
-      const dur = engine.duration()
-      const pos = engine.time()
-      if (dur > 0) slider.max = String(dur)
-      if (document.activeElement !== slider) slider.value = String(pos)
-      if (curRef.current) curRef.current.textContent = formatTime(pos)
-      if (totRef.current) totRef.current.textContent = formatTime(dur)
-      const max = Number.parseFloat(slider.max) || 100
-      const val = Number.parseFloat(slider.value) || 0
-      slider.style.setProperty('--range-percent', `${(val / max) * 100}%`)
+      try {
+        const slider = sliderRef.current
+        if (!slider) return
+        const dur = effDuration()
+        const pos = engine.time()
+        if (dur > 0) slider.max = String(dur)
+        if (document.activeElement !== slider) slider.value = String(pos)
+        if (curRef.current) curRef.current.textContent = formatTime(pos)
+        if (totRef.current) totRef.current.textContent = formatTime(dur)
+        const max = Number.parseFloat(slider.max) || 100
+        const val = Number.parseFloat(slider.value) || 0
+        slider.style.setProperty('--range-percent', `${(val / max) * 100}%`)
+      } catch {
+        // A throwing element read (unloaded mid-seek) must never kill the ticker.
+      }
     }, 500)
     return () => clearInterval(id)
   }, [])
 
   const commitSeek = () => {
     const slider = sliderRef.current
-    if (slider) void api.seek(Number.parseFloat(slider.value)).catch(() => {})
+    if (!slider) return
+    // Same clamp as the engine's live scrub: server and element agree, so
+    // no drift snap yanks playback back afterwards.
+    const raw = Number.parseFloat(slider.value) || 0
+    void api.seek(clampSeekTarget(raw, effDuration())).catch(() => {})
   }
 
   return (

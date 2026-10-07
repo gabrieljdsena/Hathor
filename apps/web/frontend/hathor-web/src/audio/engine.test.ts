@@ -15,9 +15,13 @@ class FakeEl implements AudioElementLike {
   duration = Number.NaN
   paused = true
   seeking = false
+  readyState = 4
+  networkState = 2
+  error: { readonly code: number; readonly message: string } | null = null
   volume = 1
   plays = 0
   pauses = 0
+  reports: string[] = []
   private ended: Array<() => void> = []
   private errored: Array<() => void> = []
 
@@ -560,5 +564,81 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     // Frozen from the start, but the watchdog grace starts at load.
     await s.advance(5000)
     expect(s.els[0].paused).toBe(false)
+  })
+
+  it('time() and duration() survive throwing reads', async () => {
+    const s = setup()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    s.engine.load(track('ep.mp3', true), true)
+    Object.defineProperty(s.els[0], 'currentTime', {
+      configurable: true,
+      get: () => {
+        throw new Error('unloaded')
+      },
+    })
+    expect(s.engine.time()).toBe(0)
+    expect(reports.some((m) => m.includes('time() read threw'))).toBe(true)
+  })
+
+  it('re-attaches an unloaded stream at the last good position', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 5000
+    await s.advance(250) // tick records lastGoodTime = 5000
+    // The pipeline drops the stream (the suspected long-file killer).
+    s.els[0].networkState = 3
+    s.els[0].src = ''
+    await s.advance(6000) // past the unload grace
+    expect(s.els[0].src).toBe('http://x/ep.mp3')
+    expect(s.els[0].currentTime).toBe(5000)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('ignores transient emptiness right after load', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].networkState = 0 // EMPTY before first bytes: normal, not loss
+    await s.advance(1000)
+    expect(s.els[0].src).toBe('http://x/ep.mp3') // untouched
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('gives up re-attaching after repeated loss', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    await s.advance(250)
+    for (let i = 0; i < 4; i += 1) {
+      s.els[0].networkState = 3
+      await s.advance(6000)
+    }
+    expect(s.els[0].paused).toBe(true)
+  })
+  it('reports element errors with media details for debugging', async () => {
+    const s = setup()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    await s.advance(250)
+    s.els[0].error = { code: 4, message: 'src not supported' }
+    s.els[0].fireError()
+    expect(reports.some((m) => m.includes('element error'))).toBe(true)
+    expect(reports.some((m) => m.includes('4:src not supported'))).toBe(true)
+  })
+
+  it('reports spurious ends for debugging', async () => {
+    const s = setup()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    await s.advance(250)
+    s.engine.seek(7000)
+    await s.advance(200)
+    s.els[0].fireEnded()
+    expect(reports.some((m) => m.includes('spurious ended ignored'))).toBe(true)
   })
 })

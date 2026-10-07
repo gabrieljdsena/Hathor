@@ -107,6 +107,18 @@ engine.setNextProvider(
   async () => advanceForFade(),
 )
 
+// Engine diagnostics → server logs (throttled inside the engine): seek
+// targets, spurious ends, element errors, stall recoveries. This is what
+// makes far-seek stalls on huge files diagnosable after the fact.
+engine.onReport = (message) => {
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage.getItem('hathor:token')) return
+    void api.logClient(`audio engine: ${message}`.slice(0, 2000), location.pathname).catch(() => {})
+  } catch {
+    /* reporting must never break playback */
+  }
+}
+
 engine.onEnded(() => {
   void api
     .next()
