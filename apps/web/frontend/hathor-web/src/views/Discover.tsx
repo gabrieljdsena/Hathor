@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type DiscoverItem } from '../api/client'
+import { api, type DiscoverItem, type DownloadJob } from '../api/client'
 import CoverArt from '../components/ui/CoverArt'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Icon from '../components/ui/icons'
@@ -12,8 +12,10 @@ import ViewHeader from '../components/ui/ViewHeader'
 
 // Discover view: out-of-library recommendations (packages/contracts/discover.md).
 // Cards carry iTunes artwork + source badge; download reuses the normal
-// ingest pipeline (backend resolves "title artist audio" via YouTube search),
-// progress surfaces through the global download-jobs toasts.
+// ingest pipeline (backend resolves "title artist audio" via YouTube search).
+// While a card's download runs, its download button morphs into a progress
+// pill fed by the shared download-jobs query (same polling rule as the
+// Download view: quiet when nothing is in flight).
 type SourceFilter = 'all' | 'artist' | 'chart' | 'llm'
 
 const SOURCE_LABEL: Record<Exclude<SourceFilter, 'all'>, string> = {
@@ -42,12 +44,15 @@ function DiscoverCard({
   item,
   pending,
   previewPending,
+  progress,
   onDownload,
   onPreview,
 }: {
   item: DiscoverItem
   pending: boolean
   previewPending: boolean
+  // Active download progress 0..1, or null when idle (button shows).
+  progress: number | null
   onDownload: () => void
   onPreview: () => void
 }) {
@@ -77,15 +82,34 @@ function DiscoverCard({
         >
           <Icon name="play" className="w-4 h-4 ml-0.5" />
         </button>
-        <button
-          onClick={onDownload}
-          disabled={pending}
-          title={pending ? 'Queuing…' : `Download ${item.title}`}
-          aria-label={`Download ${item.title} by ${item.artist}`}
-          className="absolute bottom-2 right-2 w-11 h-11 rounded-full bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-700 flex items-center justify-center text-white shadow-lg shadow-orange-500/40 transition-all duration-300 cursor-pointer disabled:cursor-default"
-        >
-          <Icon name="download" className="w-5 h-5" />
-        </button>
+        {progress === null ? (
+          <button
+            onClick={onDownload}
+            disabled={pending}
+            title={pending ? 'Queuing…' : `Download ${item.title}`}
+            aria-label={`Download ${item.title} by ${item.artist}`}
+            className="absolute bottom-2 right-2 w-11 h-11 rounded-full bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-700 flex items-center justify-center text-white shadow-lg shadow-orange-500/40 transition-all duration-300 cursor-pointer disabled:cursor-default"
+          >
+            <Icon name="download" className="w-5 h-5" />
+          </button>
+        ) : (
+          <div
+            role="progressbar"
+            aria-valuenow={Math.round(progress * 100)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            title={`Downloading ${item.title} — ${Math.round(progress * 100)}%`}
+            className="absolute bottom-2 right-2 flex items-center gap-2 rounded-full bg-black/60 backdrop-blur-md pl-3 pr-2.5 py-2.5 cursor-default"
+          >
+            <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full bg-orange-400 transition-all duration-300"
+                style={{ width: `${Math.round(progress * 100)}%` }}
+              />
+            </div>
+            <span className="text-[11px] font-mono text-zinc-200">{Math.round(progress * 100)}%</span>
+          </div>
+        )}
       </div>
       <div className="p-3 flex flex-col min-w-0">
         <div className="text-sm font-medium text-zinc-100 truncate group-hover:text-orange-400 transition-colors">
@@ -116,6 +140,52 @@ export default function Discover() {
   const [previewing, setPreviewing] = useState<ReadonlySet<string>>(new Set())
   const [preview, setPreview] = useState<{ id: string; title: string; artist: string } | null>(null)
   const debounced = useDebouncedValue(search)
+
+  // Job progress per card, matched by submitted title/artist (the backend
+  // echoes both onto the job). Shared ['download-jobs'] cache with the
+  // Download view; polls only while something is in flight.
+  const cardKey = (title: string, artist: string | null) =>
+    `${title.trim().toLowerCase()} — ${(artist ?? '').trim().toLowerCase()}`
+  const { data: jobs } = useQuery({
+    queryKey: ['download-jobs'],
+    queryFn: () => api.downloadJobs(50),
+    refetchInterval: (query) => {
+      const list = (query.state.data ?? []) as DownloadJob[]
+      const active = Array.isArray(list) && list.some(
+        (j) => j.status !== 'completed' && j.status !== 'failed' && j.status !== 'cancelled',
+      )
+      return active ? 2500 : false
+    },
+  })
+  const jobByKey = new Map(
+    (Array.isArray(jobs) ? jobs : []).map((j) => [cardKey(j.title ?? '', j.artist), j]),
+  )
+  // Submitted cards awaiting a terminal state (done/failed/cancelled).
+  const trackedRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    if (!Array.isArray(jobs)) return
+    for (const [key, title] of [...trackedRef.current]) {
+      const job = jobByKey.get(key)
+      if (!job) continue
+      if (job.status === 'done') {
+        setNotice(`Downloaded: ${title}`)
+        trackedRef.current.delete(key)
+      } else if (job.status === 'failed' || job.status === 'cancelled') {
+        setNotice(job.error || `Download failed: ${title}`)
+        trackedRef.current.delete(key)
+      }
+    }
+  }, [jobs])
+
+  // Active progress 0..1 for a card, or null when its button shows.
+  const progressFor = (item: DiscoverItem): number | null => {
+    const job = jobByKey.get(cardKey(item.title, item.artist))
+    if (!job) return null
+    if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') return null
+    return typeof job.progress === 'number' && Number.isFinite(job.progress)
+      ? Math.min(1, Math.max(0, job.progress))
+      : 0
+  }
 
   useEffect(() => {
     if (!notice) return
@@ -166,6 +236,7 @@ export default function Discover() {
     try {
       await api.submitDownload(`${item.title} ${item.artist} audio`, item.title, item.artist, false)
       setNotice(`Download queued: ${item.title}`)
+      trackedRef.current.set(cardKey(item.title, item.artist), item.title)
       void queryClient.invalidateQueries({ queryKey: ['download-jobs'] })
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Download failed.')
@@ -308,6 +379,7 @@ export default function Discover() {
                 item={item}
                 pending={pending.has(`${item.title} — ${item.artist}`)}
                 previewPending={previewing.has(`${item.title} — ${item.artist}`)}
+                progress={progressFor(item)}
                 onDownload={() => void download(item)}
                 onPreview={() => void previewItem(item)}
               />

@@ -152,6 +152,90 @@ describe('Discover view', () => {
     expect(await screen.findByText('No YouTube preview found for Midnight City.')).toBeInTheDocument()
   })
 
+  it('morphs the download button into a progress bar while downloading', async () => {
+    let jobsNow: unknown[] = []
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/downloads/check')) return { owned: false, file: null }
+      if (url.endsWith('/downloads')) return { qid: 'q1' }
+      if (url.includes('/downloads?')) return jobsNow
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    // Seed BEFORE awaiting: the submit's jobs refetch must see the job,
+    // mirroring prod where the row exists before POST returns.
+    jobsNow = [
+      {
+        qid: 'q1', url: null, title: 'Midnight City', artist: 'M83',
+        status: 'downloading', progress: 0.5, error: null, filename: null, isPodcast: false,
+      },
+    ]
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+    // The submit invalidates download-jobs; the refetch picks up the stubbed job.
+    await waitFor(() => {
+      expect(document.querySelectorAll('[role="progressbar"]').length).toBe(1)
+    })
+    const bar = document.querySelector('[role="progressbar"]')!
+    expect(bar.getAttribute('aria-valuenow')).toBe('50')
+    expect(bar.textContent).toContain('50%')
+    expect(screen.queryByLabelText('Download Midnight City by M83')).toBeNull()
+  })
+
+  it('announces completion and restores the button when the job finishes', async () => {
+    let jobsNow: unknown[] = []
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/downloads/check')) return { owned: false, file: null }
+      if (url.endsWith('/downloads')) return { qid: 'q1' }
+      if (url.includes('/downloads?')) return jobsNow
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+
+    jobsNow = [
+      {
+        qid: 'q1', url: null, title: 'Midnight City', artist: 'M83',
+        status: 'done', progress: 1, error: null, filename: 'Midnight City.mp3', isPodcast: false,
+      },
+    ]
+    // A second submit round-trips the jobs query, which now reports done.
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Downloaded: Midnight City')).toBeInTheDocument()
+    expect(screen.getByLabelText('Download Midnight City by M83')).toBeInTheDocument()
+  })
+
+  it('announces failure when the job fails', async () => {
+    let jobsNow: unknown[] = []
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/downloads/check')) return { owned: false, file: null }
+      if (url.endsWith('/downloads')) return { qid: 'q1' }
+      if (url.includes('/downloads?')) return jobsNow
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+
+    jobsNow = [
+      {
+        qid: 'q1', url: null, title: 'Midnight City', artist: 'M83',
+        status: 'failed', progress: 0.4, error: 'Download failed: boom', filename: null, isPodcast: false,
+      },
+    ]
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Download failed: boom')).toBeInTheDocument()
+  })
+
   it('asks before downloading an owned song, submits on confirm', async () => {
     const calls = stubFetch((input) => {
       if (String(input).includes('/downloads/check')) return { owned: true, file: 'Midnight City.mp3' }
