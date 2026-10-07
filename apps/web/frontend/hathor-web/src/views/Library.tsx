@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Song } from '../api/client'
@@ -5,6 +6,8 @@ import { usePlayer } from '../store/player'
 import LibraryTable from '../components/LibraryTable'
 import { ControlButton, PlayCircleButton } from '../components/ui/buttons'
 import ViewHeader from '../components/ui/ViewHeader'
+import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
+import { fuzzyMatch } from '../utils/fuzzy'
 import { EmptyState, LoadingState } from '../components/ui/states'
 
 function shuffleList(list: Song[]): Song[] {
@@ -14,6 +17,19 @@ function shuffleList(list: Song[]): Song[] {
     ;[out[i], out[j]] = [out[j], out[i]]
   }
   return out
+}
+
+// Typo-tolerant client filter for the artists/albums name lists (same
+// fuzzy match as the song tables, debounced like every search box).
+function useNameFilter(names: readonly string[] | undefined) {
+  const [search, setSearch] = useState('')
+  const debounced = useDebouncedValue(search)
+  const filtering = debounced.trim().length > 0
+  const visible = useMemo(
+    () => (names ?? []).filter((n) => !filtering || fuzzyMatch(n, debounced)),
+    [names, debounced, filtering],
+  )
+  return { search, setSearch, visible, filtering }
 }
 
 // Detail-page hero artwork (iTunes 600x600 via the API, exact-match
@@ -41,16 +57,26 @@ function HeroArt({ url, alt }: { url: string | null | undefined; alt: string }) 
 
 export function Artists() {
   const { data: artists, isLoading } = useQuery({ queryKey: ['artists'], queryFn: api.artists })
+  const { search, setSearch, visible, filtering } = useNameFilter(artists)
   return (
     <div className="max-w-5xl mx-auto w-full pt-8 px-6 sm:px-8 pb-24 flex flex-col gap-6">
-      <ViewHeader icon="users" title="Artists" subtitle={`${artists?.length ?? 0} artists`} />
+      <ViewHeader
+        icon="users"
+        title="Artists"
+        subtitle={`${artists?.length ?? 0} artists`}
+        actions={
+          <SearchInput value={search} onChange={setSearch} placeholder="Search artists..." id="artists_txt_search" />
+        }
+      />
       {isLoading ? (
         <LoadingState label="Loading artists…" />
       ) : (artists ?? []).length === 0 ? (
         <EmptyState title="No artists yet" hint="Artists appear once your library has tagged music." />
+      ) : filtering && visible.length === 0 ? (
+        <EmptyState title="No artists match" hint="Try different spelling." />
       ) : (
         <div className="flex flex-col gap-1">
-          {artists!.map((name) => (
+          {visible.map((name) => (
             <Link
               key={name}
               to={`/artists/${encodeURIComponent(name)}`}
@@ -114,16 +140,26 @@ export function ArtistDetail() {
 
 export function Albums() {
   const { data: albums, isLoading } = useQuery({ queryKey: ['albums'], queryFn: api.albums })
+  const { search, setSearch, visible, filtering } = useNameFilter(albums)
   return (
     <div className="max-w-5xl mx-auto w-full pt-8 px-6 sm:px-8 pb-24 flex flex-col gap-6">
-      <ViewHeader icon="musicNote" title="Albums" subtitle={`${albums?.length ?? 0} albums`} />
+      <ViewHeader
+        icon="musicNote"
+        title="Albums"
+        subtitle={`${albums?.length ?? 0} albums`}
+        actions={
+          <SearchInput value={search} onChange={setSearch} placeholder="Search albums..." id="albums_txt_search" />
+        }
+      />
       {isLoading ? (
         <LoadingState label="Loading albums…" />
       ) : (albums ?? []).length === 0 ? (
         <EmptyState title="No albums yet" hint="Albums appear once your library has tagged music." />
+      ) : filtering && visible.length === 0 ? (
+        <EmptyState title="No albums match" hint="Try different spelling." />
       ) : (
         <div className="flex flex-col gap-1">
-          {albums!.map((title) => (
+          {visible.map((title) => (
             <Link
               key={title}
               to={`/albums/${encodeURIComponent(title)}`}
