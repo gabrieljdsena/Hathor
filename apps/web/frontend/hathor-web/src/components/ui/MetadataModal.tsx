@@ -14,6 +14,7 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
   const [hits, setHits] = useState<ITunesHit[] | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [queued, setQueued] = useState(false)
   const [applying, setApplying] = useState(false)
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
   const apply = (hit: ITunesHit) => {
     setApplying(true)
     setError(null)
+    setQueued(false)
     void api
       .patchSong(song.file, {
         title: hit.title || null,
@@ -51,10 +53,17 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
         genre: hit.genre || null,
         coverArt: hit.artworkUrl || null,
       })
-      .then(() => {
+      .then((saved) => {
         evictCoverCache(song.file)
         void queryClient.invalidateQueries()
         void usePlayer.getState().refresh().catch(() => {})
+        // Playing file: the tags are stashed, not written — say so instead
+        // of closing as if they applied (the player-bar chip tracks it).
+        if (saved.pending === true) {
+          setQueued(true)
+          setApplying(false)
+          return
+        }
         onClose()
       })
       .catch((e: unknown) => {
@@ -71,6 +80,11 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
       </p>
       {busy && <LoadingState label="Searching iTunes…" />}
       {error && <p className="text-sm text-red-400">{error}</p>}
+      {queued && (
+        <p className="text-sm text-orange-200 bg-orange-500/10 border border-orange-500/30 rounded-lg px-3 py-2">
+          Saved — applies when this track changes (playing files keep gapless playback).
+        </p>
+      )}
       {!busy && !error && hits !== null && hits.length === 0 && (
         <p className="text-sm text-zinc-500">No candidates — try editing the title/artist first.</p>
       )}

@@ -156,6 +156,21 @@ export interface MetadataPatch {
   coverArt: string | null // data: URL | http(s) URL | 'REMOVE' | null(keep)
 }
 
+// Deferred metadata edit: PATCH on the playing file stashes the payload
+// (pending=true, 202) instead of rewriting tags mid-stream; it applies
+// automatically on track change.
+export interface PendingEdit {
+  file: string
+  isPodcast: boolean
+  title: string | null
+  artist: string | null
+  album: string | null
+  year: string | null
+  genre: string | null
+  coverArt: string | null
+  createdUtc: string
+}
+
 export interface HistoryItem {
   song: Song
   datePlayed: string | null
@@ -548,7 +563,7 @@ export const api = {
   song: (file: string, includeCover = false) =>
     request<Song>(`/songs/${encodeURIComponent(file)}?includeCover=${includeCover}`),
   patchSong: (file: string, patch: MetadataPatch) =>
-    request<{ song: Song; resumeSec: number }>(`/songs/${encodeURIComponent(file)}`, {
+    request<{ song: Song; resumeSec: number; pending: boolean }>(`/songs/${encodeURIComponent(file)}`, {
       method: 'PATCH',
       body: JSON.stringify({
         Title: patch.title ?? null,
@@ -561,6 +576,10 @@ export const api = {
     }),
   deleteSong: (file: string) =>
     request<void>(`/songs/${encodeURIComponent(file)}`, { method: 'DELETE' }),
+  // Stashed edits for playing files (applied on track change).
+  pendingEdits: () => request<PendingEdit[]>('/pending-edits'),
+  discardPendingEdit: (file: string) =>
+    request<void>(`/pending-edits/${encodeURIComponent(file)}`, { method: 'DELETE' }),
 
   // artists / albums
   artists: () => request<string[]>('/artists'),
@@ -641,7 +660,7 @@ export const api = {
   deletePodcastTimestamp: (file: string, id: number) =>
     request<void>(`/podcasts/${encodeURIComponent(file)}/timestamps/${id}`, { method: 'DELETE' }),
   patchPodcast: (file: string, patch: { title?: string | null; artist?: string | null; coverArt?: string | null }) =>
-    request<Song>(`/podcasts/${encodeURIComponent(file)}`, {
+    request<{ song: Song; pending: boolean }>(`/podcasts/${encodeURIComponent(file)}`, {
       method: 'PATCH',
       body: JSON.stringify({
         Title: patch.title ?? null,

@@ -1,5 +1,6 @@
-import { useEffect, useRef, type CSSProperties } from 'react'
+import { useEffect, useRef, type CSSProperties, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { clampSeekTarget, engine } from '../audio/engine'
 import { formatTime, usePlayer } from '../store/player'
@@ -118,6 +119,35 @@ export function VolumeSlider({ volume, className, id }: { volume: number; classN
       style={{ '--range-percent': `${Math.round(volume * 100)}%` } as CSSProperties}
       className={className}
     />
+  )
+}
+
+// Queued metadata edit for the playing file (saved while it played, applies
+// on track change so playback stays gapless): tiny line under the artist;
+// click discards it. Null when nothing is stashed for this file.
+export function PendingEditChip({ file }: { file: string }) {
+  const queryClient = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['pending-edits', file],
+    queryFn: api.pendingEdits,
+    staleTime: 1000 * 30,
+  })
+  if (!(data ?? []).some((p) => p.file === file)) return null
+  const discard = (e: MouseEvent) => {
+    e.stopPropagation()
+    void api
+      .discardPendingEdit(file)
+      .then(() => queryClient.invalidateQueries({ queryKey: ['pending-edits'] }))
+      .catch(() => {})
+  }
+  return (
+    <button
+      onClick={discard}
+      title="Edit queued — applies when this track changes. Click to discard."
+      className="text-[10px] font-semibold uppercase tracking-[0.15em] text-orange-300/90 hover:text-orange-200 transition-colors cursor-pointer"
+    >
+      Edit queued
+    </button>
   )
 }
 
@@ -286,6 +316,7 @@ export default function PlayerBar({
             ) : (
               <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
             )}
+            {song && <PendingEditChip file={song.file} />}
           </div>
         </div>
         <div className="flex items-center justify-center gap-1">
@@ -364,6 +395,7 @@ export default function PlayerBar({
           ) : (
             <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
           )}
+          {song && <PendingEditChip file={song.file} />}
         </div>
       </div>
       {song && (
