@@ -139,7 +139,8 @@ describe('Discover view', () => {
       frame = document.querySelector('iframe')
       expect(frame).not.toBeNull()
     })
-    expect(frame!.getAttribute('src')).toBe('https://www.youtube.com/embed/vid123?autoplay=1')
+    expect(frame!.getAttribute('src')).toContain('https://www.youtube.com/embed/vid123?autoplay=1')
+    expect(frame!.getAttribute('src')).toContain('enablejsapi=1')
   })
 
   it('shows a notice when no preview exists', async () => {

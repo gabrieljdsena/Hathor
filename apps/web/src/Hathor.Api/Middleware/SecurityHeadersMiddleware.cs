@@ -6,7 +6,10 @@ namespace Hathor.Api.Middleware;
 //
 // Policy notes:
 // - Built SPA ships zero inline scripts/styles (dist/index.html references
-//   only /assets/*), so scripts stay 'self'-only. React sets style
+//   only /assets/*), so scripts stay 'self'-only, except the YouTube IFrame
+//   Player API (preview error detection: it reports embed errors like 153
+//   that oEmbed cannot predict, so the player falls back to direct audio).
+//   React sets style
 //   attributes at runtime (background image, cover art) and Tailwind emits
 //   a stylesheet, hence 'unsafe-inline' for styles only (no script execution).
 // - img-src allows data:/blob:/https: (embedded covers, iTunes/YouTube
@@ -29,7 +32,7 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
     // Single source of truth so tests + nginx.conf can track it.
 public const string ContentSecurityPolicy =
     "default-src 'self'; " +
-    "script-src 'self'; " +
+    "script-src 'self' https://www.youtube.com; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob: https:; " +
     "media-src 'self' blob: https://*.googlevideo.com; " +

@@ -41,18 +41,21 @@ public sealed class YoutubeController(
     // URL for an <audio> element. embeddable=false → play audioUrl;
     // audioUrl=null → neither works (show a watch link instead). Stream URLs
     // expire and are loosely IP-bound: clients must use them immediately.
+    // resolveAudio forces the (slower) manifest lookup even for embeddable
+    // videos — the player uses it when the iframe itself reports an error
+    // after an optimistic oEmbed pass.
     [HttpGet("preview")]
     public async Task<ActionResult<PreviewDto>> Preview(
-        [FromQuery] string id, CancellationToken ct)
+        [FromQuery] string id, [FromQuery] bool resolveAudio, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(id) || id.Length > 32 || !id.All(c =>
                 char.IsLetterOrDigit(c) || c is '-' or '_'))
             return BadRequest(new { message = "A valid video id is required." });
         var pageUrl = $"https://www.youtube.com/watch?v={id}";
         var embeddable = await IsEmbeddableAsync(pageUrl, ct);
-        var audioUrl = embeddable
-            ? null
-            : await engine.GetPreviewUrlAsync(pageUrl, ct);
+        var audioUrl = !embeddable || resolveAudio
+            ? await engine.GetPreviewUrlAsync(pageUrl, ct)
+            : null;
         return Ok(new PreviewDto(id, embeddable, audioUrl));
     }
 

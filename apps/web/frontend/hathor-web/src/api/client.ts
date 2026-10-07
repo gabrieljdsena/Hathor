@@ -450,9 +450,11 @@ export const api = {
   youtubeSearch: (q: string, limit = 5) =>
     request<VideoHit[]>(`/youtube/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   // Embeddability probe + direct-audio fallback for blocked embeds.
-  youtubePreview: (id: string) =>
+  // resolveAudio forces the manifest lookup even for embeddable videos
+  // (used when the iframe player itself reports an error afterwards).
+  youtubePreview: (id: string, resolveAudio = false) =>
     request<{ id: string; embeddable: boolean; audioUrl: string | null }>(
-      `/youtube/preview?id=${encodeURIComponent(id)}`,
+      `/youtube/preview?id=${encodeURIComponent(id)}${resolveAudio ? '&resolveAudio=true' : ''}`,
     ),
   // Already-in-library pre-check (normalized title+artist, live files only).
   checkDownload: (title: string, artist: string | null) =>

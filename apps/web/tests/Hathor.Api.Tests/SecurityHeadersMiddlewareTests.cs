@@ -39,7 +39,7 @@ public sealed class SecurityHeadersMiddlewareTests
         context.Response.Headers["Permissions-Policy"].ToString().Should().Contain("camera=()");
         var csp = context.Response.Headers["Content-Security-Policy"].ToString();
         csp.Should().Contain("frame-ancestors 'none'");
-        csp.Should().Contain("script-src 'self'");
+        csp.Should().Contain("script-src 'self' https://www.youtube.com");
         csp.Should().NotContain("unsafe-inline; object"); // no script unsafe-inline
         // YouTube preview iframes (Download + Discover) must stay frameable.
         csp.Should().Contain("frame-src 'self' https://www.youtube.com");
