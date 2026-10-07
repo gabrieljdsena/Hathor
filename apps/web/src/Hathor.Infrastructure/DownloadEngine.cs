@@ -11,8 +11,11 @@ using YoutubeExplode.Videos.Streams;
 namespace Hathor.Infrastructure.Ingest;
 
 // YoutubeExplode search + audio download, FFmpeg MP3 transcode.
-// FFmpeg resolution: FFmpeg:Path config → PATH. (Auto-download ships with
-// the maintenance phase; until then a missing binary fails jobs loudly.)
+// FFmpeg resolution: FFmpeg:Path config → app-downloaded (Settings) → PATH,
+// probed explicitly so a missing binary fails jobs with the actionable
+// message below instead of a raw Win32Exception. The probe result is
+// cached per process but reset on launch failure, so installing FFmpeg
+// (or setting FFmpeg__Path) takes effect without an app restart.
 public sealed class YoutubeExplodeEngine(
     IConfiguration config,
     ILogger<YoutubeExplodeEngine> log,
@@ -114,7 +117,19 @@ public sealed class YoutubeExplodeEngine(
             },
         };
         using var reg = ct.Register(() => { try { proc.Kill(entireProcessTree: true); } catch { } });
-        proc.Start();
+        try
+        {
+            proc.Start();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            // Lost a race with an uninstall (or a PATH that changed under
+            // us): drop the cached probe so the next job re-resolves.
+            _ffmpegProbed = false;
+            _ffmpeg = null;
+            throw new InvalidOperationException(
+                $"{FFmpegMissing().Message} (tried '{ffmpeg}': {ex.Message})");
+        }
         await proc.WaitForExitAsync(ct);
         if (proc.ExitCode != 0)
         {
@@ -127,19 +142,22 @@ public sealed class YoutubeExplodeEngine(
     {
         if (_ffmpegProbed) return _ffmpeg ?? throw FFmpegMissing();
         _ffmpegProbed = true;
-        // Explicit FFmpeg:Path → app-downloaded (Settings) → PATH.
+        // Explicit FFmpeg:Path → app-downloaded (Settings) → PATH probe.
         var configured = config["FFmpeg:Path"];
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
         {
             _ffmpeg = configured;
             return _ffmpeg;
         }
-        _ffmpeg = Maintenance.FfmpegPaths.InstalledExe(config) ?? Maintenance.FfmpegPaths.ExeName;
-        return _ffmpeg; // Process.Start throws Win32Exception when absent → wrapped below
+        _ffmpeg = Maintenance.FfmpegPaths.InstalledExe(config)
+            ?? Maintenance.FfmpegPaths.FindOnPath()
+            ?? throw FFmpegMissing();
+        return _ffmpeg;
     }
 
     private static Exception FFmpegMissing() => new InvalidOperationException(
-        "FFmpeg not found. Install FFmpeg on PATH or set the FFmpeg__Path environment variable.");
+        "FFmpeg not found. Download it from Settings → FFmpeg, install FFmpeg on PATH, "
+        + "or set the FFmpeg__Path environment variable.");
 
     private static string Tail(string s, int max = 500) =>
         s.Length <= max ? s : s[^max..];

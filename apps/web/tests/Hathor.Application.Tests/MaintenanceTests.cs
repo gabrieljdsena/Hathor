@@ -26,6 +26,25 @@ public sealed class MaintenanceTests
     }
 
     [Fact]
+    public void FindOnPath_Finds_Executable_In_Given_Path()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "hathor-path-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var exe = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+            File.WriteAllText(Path.Combine(dir, exe), "stub");
+            FfmpegPaths.FindOnPath(exe, dir).Should().Be(Path.Combine(dir, exe));
+            FfmpegPaths.FindOnPath("nope-missing-xyz", dir).Should().BeNull();
+            FfmpegPaths.FindOnPath("nope-missing-xyz", "").Should().BeNull();
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void DownloadSource_WindowsX64_IsGyanZip()
     {
         if (!OperatingSystem.IsWindows()) return;

@@ -24,7 +24,7 @@ public sealed class SystemProbe(
         var installed = FfmpegPaths.InstalledExe(config);
         if (installed is not null)
             return new FFmpegStatusDto(true, installed, Path.GetDirectoryName(installed), null);
-        var exe = FfmpegPaths.ExeName;
+        var exe = FfmpegPaths.FindOnPath() ?? FfmpegPaths.ExeName;
         try
         {
             using var proc = new Process
