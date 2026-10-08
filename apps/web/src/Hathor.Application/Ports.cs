@@ -124,8 +124,12 @@ public interface ISyncService
 {
     Task<Application.Sync.SyncSnapshot> ExportAsync(Guid userId, long sinceId,
         CancellationToken ct = default);
+    // reconcileLinks (pull path only): drop local link rows absent from a
+    // full snapshot. Never true for /sync/import — partial snapshots must
+    // not wipe links.
     Task<Application.Sync.SyncSummary> ImportAsync(Guid userId,
-        Application.Sync.SyncSnapshot snapshot, CancellationToken ct = default);
+        Application.Sync.SyncSnapshot snapshot, CancellationToken ct = default,
+        bool reconcileLinks = false);
 }
 
 // Startup-maintenance probe port (desktop startup_maintenance status

@@ -297,9 +297,32 @@ public sealed class RemotePushService(
                 $"DELETE FROM `{table}` WHERE `{col}` = @key", conn);
             cmd.Parameters.AddWithValue("@key", key);
             applied += await cmd.ExecuteNonQueryAsync(ct);
+            // Link rows have no tombstones of their own: cascade the parent
+            // delete so orphans don't linger (pull reconciliation removes
+            // local copies of links missing remotely).
+            foreach (var (linkTable, linkCol) in LinkCascadeColumns(table))
+            {
+                await using var cascade = new MySqlCommand(
+                    $"DELETE FROM `{linkTable}` WHERE `{linkCol}` = @key", conn);
+                cascade.Parameters.AddWithValue("@key", key);
+                applied += await cascade.ExecuteNonQueryAsync(ct);
+            }
         }
         return applied;
     }
+
+    // Parent tombstone table → (link table, link column). Link rows carry no
+    // tombstones of their own; cascade by the pushed key itself (rows this
+    // device created) — never by remote id, which is a per-device sequence.
+    private static IEnumerable<(string Table, string Column)> LinkCascadeColumns(string table) =>
+        table switch
+        {
+            "songs" => [("song_playlist", "song_file")],
+            "podcasts" => [("podcast_tag_links", "podcast_file")],
+            "playlists" => [("song_playlist", "playlist_id")],
+            "podcast_tags" => [("podcast_tag_links", "tag_id")],
+            _ => [],
+        };
 
     // Chunked multi-row upsert (desktop executemany equivalent — one round
     // trip per chunk instead of per row).

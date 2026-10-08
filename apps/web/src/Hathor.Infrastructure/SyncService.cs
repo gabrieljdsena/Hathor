@@ -48,7 +48,8 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
                 .Select(d => new DeletionRowDto(d.TableName, d.RowKey))
                 .ToListAsync(ct));
 
-    public async Task<SyncSummary> ImportAsync(Guid userId, SyncSnapshot s, CancellationToken ct = default)
+    public async Task<SyncSummary> ImportAsync(Guid userId, SyncSnapshot s, CancellationToken ct = default,
+        bool reconcileLinks = false)
     {
         var counts = new int[11];
         // Explicit snapshot ids come from per-device sequences and collide
@@ -56,6 +57,10 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
         // desktop remote DB). Colliding rows are re-keyed; FKs are remapped.
         var playlistRemap = new Dictionary<long, long>();
         var tagRemap = new Dictionary<long, long>();
+        // Link reconciliation (pull path only): links are compared by natural
+        // key (parent id + file) post-remap, never by colliding numeric ids.
+        HashSet<(long Parent, string File)>? keepSongLinks = reconcileLinks ? [] : null;
+        HashSet<(long Parent, string File)>? keepTagLinks = reconcileLinks ? [] : null;
 
         if (s.Songs is not null)
             foreach (var r in s.Songs)
@@ -143,6 +148,7 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
             foreach (var r in s.SongLinks)
             {
                 var pid = playlistRemap.GetValueOrDefault(r.PlaylistId, r.PlaylistId);
+                keepSongLinks?.Add((pid, r.SongFile));
                 var existing = await db.SongPlaylists.FindAsync([r.Id], ct);
                 if (existing is null)
                 {
@@ -196,6 +202,7 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
             foreach (var r in s.PodcastTagLinks)
             {
                 var tid = tagRemap.GetValueOrDefault(r.TagId, r.TagId);
+                keepTagLinks?.Add((tid, r.PodcastFile));
                 var existing = await db.PodcastTagLinks.FindAsync([r.Id], ct);
                 if (existing is null)
                 {
@@ -219,6 +226,33 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
                     counts[5]++;
                 }
             }
+
+        // Pull reconciliation: drop local link rows absent from a full remote
+        // snapshot (unlinks + parent-deletes with cascaded remote links).
+        // Natural keys post-remap — numeric ids collide across devices.
+        // Skipped for partial snapshots (null section), for empty remote
+        // sets (a fresh/failed remote must never wipe links), and for
+        // /sync/import (reconcileLinks false): partial payloads stay safe.
+        if (reconcileLinks && s.SongLinks is { Count: > 0 } && keepSongLinks is not null)
+        {
+            var local = await db.SongPlaylists.Where(l => l.UserId == userId).ToListAsync(ct);
+            foreach (var l in local)
+                if (!keepSongLinks.Contains((l.PlaylistId, l.SongFile)))
+                {
+                    db.SongPlaylists.Remove(l);
+                    counts[10]++;
+                }
+        }
+        if (reconcileLinks && s.PodcastTagLinks is { Count: > 0 } && keepTagLinks is not null)
+        {
+            var local = await db.PodcastTagLinks.Where(l => l.UserId == userId).ToListAsync(ct);
+            foreach (var l in local)
+                if (!keepTagLinks.Contains((l.TagId, l.PodcastFile)))
+                {
+                    db.PodcastTagLinks.Remove(l);
+                    counts[10]++;
+                }
+        }
 
         if (s.Lyrics is not null)
             foreach (var r in s.Lyrics)

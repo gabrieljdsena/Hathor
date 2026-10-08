@@ -1126,6 +1126,21 @@ class DatabaseManager:
                             playlist_id = excluded.playlist_id,
                             date_added = excluded.date_added
                     """, row)
+                # Links removed elsewhere stay missing remotely: drop local
+                # copies absent from the remote set. Guarded on non-empty:
+                # a fresh/failed remote must never wipe local links.
+                if remote_song_playlist:
+                    keep_links = {(r[2], r[1]) for r in remote_song_playlist}
+                    stale_links = [
+                        r for r in local_conn.execute(
+                            "SELECT playlist_id, song_file FROM Song_Playlist").fetchall()
+                        if (r[0], r[1]) not in keep_links
+                    ]
+                    if stale_links:
+                        local_conn.executemany(
+                            "DELETE FROM Song_Playlist WHERE playlist_id = ? AND song_file = ?",
+                            stale_links,
+                        )
                 for row in remote_lyrics:
                     # Web chapter-cache rows ("{file}::chapter:{id}") are never
                     # read back (chapters sync via podcast_chapters).
@@ -1192,6 +1207,19 @@ class DatabaseManager:
                             podcast_file = excluded.podcast_file,
                             tag_id = excluded.tag_id
                     """, row)
+                # Same link reconciliation as song_playlist above (guarded).
+                if remote_podcast_tag_links:
+                    keep_tag_links = {(r[2], r[1]) for r in remote_podcast_tag_links}
+                    stale_tag_links = [
+                        r for r in local_conn.execute(
+                            "SELECT tag_id, podcast_file FROM Podcast_Tag_Links").fetchall()
+                        if (r[0], r[1]) not in keep_tag_links
+                    ]
+                    if stale_tag_links:
+                        local_conn.executemany(
+                            "DELETE FROM Podcast_Tag_Links WHERE tag_id = ? AND podcast_file = ?",
+                            stale_tag_links,
+                        )
                 # Episode chapters (upsert by id; empty snapshot never wipes local)
                 local_conn.execute("""
                     CREATE TABLE IF NOT EXISTS Podcast_Chapters (

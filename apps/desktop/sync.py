@@ -462,6 +462,16 @@ class DatabaseSync:
             'podcast_tags': 'id',
             'podcast_chapters': 'podcast_file',
         }
+        # Parent tombstone table -> [(link table, link column)]: link rows
+        # carry no tombstones of their own, so cascade the parent delete or
+        # orphans linger (pull reconciliation removes local copies of links
+        # missing remotely).
+        LINK_CASCADES = {
+            'songs': [('song_playlist', 'song_file')],
+            'podcasts': [('podcast_tag_links', 'podcast_file')],
+            'playlists': [('song_playlist', 'playlist_id')],
+            'podcast_tags': [('podcast_tag_links', 'tag_id')],
+        }
         rows = sqlite_conn.execute("SELECT table_name, row_key FROM Sync_Deletions").fetchall()
         if not rows:
             return
@@ -471,6 +481,8 @@ class DatabaseSync:
                 if not col:
                     continue
                 cur.execute(f"DELETE FROM {table} WHERE {col} = %s", (row_key,))
+                for link_table, link_col in LINK_CASCADES.get(table, []):
+                    cur.execute(f"DELETE FROM {link_table} WHERE {link_col} = %s", (row_key,))
             remote_conn.commit()
         # Only clear tombstones once they were applied successfully
         with sqlite_conn:

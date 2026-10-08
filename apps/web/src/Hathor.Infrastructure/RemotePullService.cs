@@ -110,7 +110,7 @@ public sealed class RemotePullService(
                 MusicHistory: musicHistory,
                 PlaylistHistory: playlistHistory,
                 DailyMix: mixes,
-                Deletions: null), ct);
+                Deletions: null), ct, reconcileLinks: true);
         }
         catch (Exception ex)
         {
@@ -191,7 +191,7 @@ public sealed class RemotePullService(
                 MusicHistory: null,
                 PlaylistHistory: null,
                 DailyMix: null,
-                Deletions: null), ct);
+                Deletions: null), ct, reconcileLinks: true);
         }
         catch (Exception ex)
         {
