@@ -130,7 +130,10 @@ public sealed class RemotePushService(
         var links = await db.SongPlaylists.Where(l => l.UserId == userId)
             .Select(l => new object?[] { l.Id, l.SongFile, l.PlaylistId, l.DateAddedUtc })
             .ToListAsync(ct);
-        var lyrics = await db.Lyrics.Where(l => l.UserId == userId)
+        var lyrics = await db.Lyrics.Where(l => l.UserId == userId
+                // Chapter cache rows ("{file}::chapter:{id}") are web-side only:
+                // the desktop never reads them, so don't plant phantoms.
+                && !l.SongFile.Contains(Application.Lyrics.SyncedLyricsGuards.ChapterKeyMarker))
             .Select(l => new object?[] { l.Id, l.SongFile, l.LyricsJson, l.OffsetMs })
             .ToListAsync(ct);
         var mixes = await db.DailyMixes.Where(m => m.UserId == userId)

@@ -1063,6 +1063,10 @@ class DatabaseManager:
                             date_added = excluded.date_added
                     """, row)
                 for row in remote_lyrics:
+                    # Web chapter-cache rows ("{file}::chapter:{id}") are never
+                    # read back (chapters sync via podcast_chapters).
+                    if "::chapter:" in (row[1] or ""):
+                        continue
                     local_conn.execute("""
                         INSERT INTO Lyrics (id, song_file, lyrics) VALUES (?, ?, ?)
                         ON CONFLICT(id) DO UPDATE SET
@@ -1070,6 +1074,8 @@ class DatabaseManager:
                             lyrics = excluded.lyrics
                     """, row)
                 for song_file, offset_ms in remote_lyrics_offsets:
+                    if "::chapter:" in (song_file or ""):
+                        continue
                     try:
                         local_conn.execute(
                             "UPDATE Lyrics SET offset_ms = ? WHERE song_file = ?",

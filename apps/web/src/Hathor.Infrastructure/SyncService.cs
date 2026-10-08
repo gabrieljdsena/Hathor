@@ -219,6 +219,10 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
         if (s.Lyrics is not null)
             foreach (var r in s.Lyrics)
             {
+                // Chapter cache rows from older pushes: never import them
+                // (see SyncedLyricsGuards — desktop never reads them either).
+                if (Application.Lyrics.SyncedLyricsGuards.IsChapterLyricsRow(r.SongFile))
+                    continue;
                 var existing = await db.Lyrics.FindAsync([r.Id], ct);
                 if (existing is null)
                 {

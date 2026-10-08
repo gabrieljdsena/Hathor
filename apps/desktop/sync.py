@@ -320,6 +320,9 @@ class DatabaseSync:
         except Exception:
             rows = [(r[0], r[1], r[2], 0) for r in
                     sqlite_conn.execute("SELECT id, song_file, lyrics FROM Lyrics").fetchall()]
+        # Web chapter-cache rows ("{file}::chapter:{id}") are web-side only:
+        # never synced, never read back (chapters sync via podcast_chapters).
+        rows = [r for r in rows if "::chapter:" not in (r[1] or "")]
         if not rows:
             return
         with remote_conn.cursor() as cur:

@@ -219,6 +219,20 @@ public sealed class DeleteLyricsHandler(
     }
 }
 
+// Sync guard: per-chapter lyric rows ("{file}::chapter:{id}") are a web-side
+// cache keyed by chapter — the desktop never reads them (its chapters sync
+// via podcast_chapters), so pushing/importing them only plants phantom rows
+// that round-trip forever. Both directions skip them. The marker is a const
+// (not a method call) so EF still translates Contains() in queries.
+public static class SyncedLyricsGuards
+{
+    public const string ChapterKeyMarker = "::chapter:";
+
+    public static bool IsChapterLyricsRow(string? songFile) =>
+        songFile is not null &&
+        songFile.Contains(ChapterKeyMarker, StringComparison.Ordinal);
+}
+
 // Raw lrclib passthrough (no cache) for the query-style GET /lyrics endpoint.
 public sealed record RawExactQuery(string Track, string Artist, int? DurationSec)
     : IRequest<LyricsDto?>;
