@@ -58,6 +58,19 @@ public sealed class SyncController(IMediator mediator) : ControllerBase
     public async Task<ActionResult<RemotePushResult>> PushPodcasts(CancellationToken ct) =>
         Ok(await mediator.Send(new PushPodcastsCommand(CurrentUserId()), ct));
 
+    // Resume across devices: snapshot this user's playback spot (upserted
+    // fire-and-forget on pause — never blocks playback), or read back the
+    // latest foreign spot as a resume affordance (nothing auto-plays).
+    [HttpPost("playback")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public async Task<ActionResult<bool>> PushPlayback(CancellationToken ct) =>
+        Ok(await mediator.Send(new PushPlaybackStateCommand(CurrentUserId()), ct));
+
+    [HttpGet("playback")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public async Task<ActionResult<PlaybackSpotDto?>> LatestPlayback(CancellationToken ct) =>
+        Ok(await mediator.Send(new GetLatestPlaybackQuery(CurrentUserId()), ct));
+
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 }

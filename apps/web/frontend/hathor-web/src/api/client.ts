@@ -143,6 +143,17 @@ export interface PendingEdit {
   createdUtc: string
 }
 
+// Resume-across-devices spot: another device's paused playback state.
+// Pull only surfaces it — tapping plays explicitly, nothing auto-plays.
+export interface PlaybackSpot {
+  userKey: string
+  file: string
+  positionSec: number
+  isPodcast: boolean
+  device: string | null
+  updatedUtc: string
+}
+
 export interface HistoryItem {
   song: Song
   datePlayed: string | null
@@ -548,6 +559,9 @@ export const api = {
   pendingEdits: () => request<PendingEdit[]>('/pending-edits'),
   discardPendingEdit: (file: string) =>
     request<void>(`/pending-edits/${encodeURIComponent(file)}`, { method: 'DELETE' }),
+  // Resume across devices: snapshot this spot / read the latest foreign one.
+  pushPlayback: () => request<boolean>('/sync/playback', { method: 'POST' }),
+  latestPlayback: () => request<PlaybackSpot | null>('/sync/playback'),
 
   // artists / albums
   artists: () => request<string[]>('/artists'),

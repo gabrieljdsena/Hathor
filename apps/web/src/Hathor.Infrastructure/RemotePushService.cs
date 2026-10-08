@@ -246,6 +246,53 @@ public sealed class RemotePushService(
         }
     }
 
+    // Resume-across-devices spot (one row per writer; last-writer-wins).
+    // Created lazily here (and by the desktop) so no remote migration step
+    // is ever needed for it.
+    private const string PlaybackSchema = """
+        CREATE TABLE IF NOT EXISTS playback_state (
+            user_key VARCHAR(255) PRIMARY KEY,
+            file VARCHAR(255) NOT NULL,
+            position_secs DOUBLE NOT NULL DEFAULT 0,
+            is_podcast TINYINT(1) NOT NULL DEFAULT 0,
+            device VARCHAR(255) NULL,
+            updated_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """;
+
+    public async Task<bool> PushPlaybackAsync(Guid userId, string file, double positionSec,
+        bool isPodcast, string device, CancellationToken ct = default)
+    {
+        var connStr = options.ConnectionString();
+        if (connStr is null) return false;
+        try
+        {
+            await using var conn = await RemoteMySql.OpenAsync(connStr, log, "push-playback", ct);
+            await using var ddl = new MySqlCommand(PlaybackSchema, conn);
+            await ddl.ExecuteNonQueryAsync(ct);
+            await using var cmd = new MySqlCommand(
+                "INSERT INTO `playback_state` " +
+                "(`user_key`, `file`, `position_secs`, `is_podcast`, `device`, `updated_utc`) " +
+                "VALUES (@key, @file, @pos, @pod, @dev, UTC_TIMESTAMP()) " +
+                "ON DUPLICATE KEY UPDATE `file` = VALUES(`file`), " +
+                "`position_secs` = VALUES(`position_secs`), " +
+                "`is_podcast` = VALUES(`is_podcast`), `device` = VALUES(`device`), " +
+                "`updated_utc` = UTC_TIMESTAMP()", conn);
+            cmd.Parameters.AddWithValue("@key", PlaybackKeys.ForWeb(userId));
+            cmd.Parameters.AddWithValue("@file", file);
+            cmd.Parameters.AddWithValue("@pos", positionSec);
+            cmd.Parameters.AddWithValue("@pod", isPodcast);
+            cmd.Parameters.AddWithValue("@dev", device);
+            await cmd.ExecuteNonQueryAsync(ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Remote playback push failed");
+            return false;
+        }
+    }
+
     private static async Task InitSchemaAsync(MySqlConnection conn, CancellationToken ct)
     {
         foreach (var ddl in RemoteSchema)

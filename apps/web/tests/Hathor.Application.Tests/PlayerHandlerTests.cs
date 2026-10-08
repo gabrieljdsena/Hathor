@@ -33,7 +33,7 @@ public sealed class PlayHandlerTests
         playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
             .Returns(state);
 
-        var dto = await new PlayHandler(playback, songs, NoOpApplier(), hub)
+        var dto = await new PlayHandler(playback, songs, NoOpApplier(), Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(), hub)
             .Handle(new PlayCommand(state.UserId, null, null, null), CancellationToken.None);
 
         dto.IsPlaying.Should().BeFalse();
@@ -55,7 +55,7 @@ public sealed class PlayHandlerTests
         var raised = new List<(Guid, string, long?)>();
         PlayerEvents.SongPlayed += (u, f, p) => raised.Add((u, f, p));
 
-        var dto = await new PlayHandler(playback, songs, NoOpApplier(), hub)
+        var dto = await new PlayHandler(playback, songs, NoOpApplier(), Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(), hub)
             .Handle(new PlayCommand(userId, "song.mp3", false, null), CancellationToken.None);
 
         try

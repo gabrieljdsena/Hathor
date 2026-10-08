@@ -1,9 +1,11 @@
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
+using Hathor.Application.Sync;
 using Hathor.Domain.Playback;
 using Hathor.Domain.Repositories;
 using Hathor.Application.Metadata;
 using MediatR;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Hathor.Application.Player;
 
@@ -31,6 +33,7 @@ public sealed class PlayHandler(
     IPlaybackStateRepository playback,
     ISongReadModel songs,
     PendingMetadataApplier pendingEdits,
+    IServiceScopeFactory scopes,
     IPlaybackHub hub) : IRequestHandler<PlayCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(PlayCommand cmd, CancellationToken ct)
@@ -75,6 +78,7 @@ public sealed class PlayHandler(
         }
 
         await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
+        PlaybackPushHooks.PushOnPause(scopes, cmd.UserId, state);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -84,11 +88,11 @@ public sealed class PlayHandler(
 
 public sealed record ToggleCommand(Guid UserId) : IRequest<PlayerStateDto>;
 
-public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IPlaybackHub hub)
+public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IServiceScopeFactory scopes, IPlaybackHub hub)
     : IRequestHandler<ToggleCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(ToggleCommand cmd, CancellationToken ct)
-        => await new PlayHandler(playback, songs, pendingEdits, hub)
+        => await new PlayHandler(playback, songs, pendingEdits, scopes, hub)
             .Handle(new PlayCommand(cmd.UserId, null, null, null), ct);
 }
 
@@ -96,13 +100,14 @@ public sealed record PauseCommand(Guid UserId) : IRequest<PlayerStateDto>;
 public sealed record NextCommand(Guid UserId, bool Auto = false, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
 public sealed record PrevCommand(Guid UserId, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
 
-public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
+public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadModel songs, IServiceScopeFactory scopes, IPlaybackHub hub)
     : IRequestHandler<PauseCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(PauseCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.Pause(DateTime.UtcNow);
+        PlaybackPushHooks.PushOnPause(scopes, cmd.UserId, state);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -313,6 +318,35 @@ internal static class PendingEditHooks
         string.Equals(oldFile, newFile, StringComparison.OrdinalIgnoreCase)
             ? Task.CompletedTask
             : applier.ApplyForFileAsync(userId, oldFile, ct);
+}
+
+// Resume-state push (never blocks the response): snapshot this user's spot
+// into the shared remote table whenever playback pauses with a loaded track
+// (manual toggle-pause, pause endpoint, tab-close/unload beacon, boot pause
+// of a stale session). 10s budget, all failures swallowed; no remote
+// configured → instant false inside the handler. Playing states are never
+// pushed (a live position would clobber a genuine paused spot elsewhere).
+internal static class PlaybackPushHooks
+{
+    internal static void PushOnPause(
+        IServiceScopeFactory scopes, Guid userId, PlaybackState state)
+    {
+        if (state.IsPlaying || state.CurrentFile is null || state.FirstPlay) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await scope.ServiceProvider.GetRequiredService<IMediator>()
+                    .Send(new PushPlaybackStateCommand(userId), cts.Token);
+            }
+            catch
+            {
+                // Resume sync must never break playback.
+            }
+        }, CancellationToken.None);
+    }
 }
 
 public sealed class QueueHandler(

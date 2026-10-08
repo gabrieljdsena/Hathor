@@ -171,6 +171,39 @@ class Api:
     def play_button(self, current_song=None, opening=False):
         return self.playback.play_button(current_song, opening)
 
+    def get_resume_spot(self):
+        """Latest foreign playback spot (resume across devices), if any."""
+        try:
+            import sync as sync_mod
+            return sync_mod.get_latest_playback() or None
+        except Exception as e:
+            print(f" [Python] Resume spot lookup failed: {str(e)}")
+            return None
+
+    def resume_spot_play(self, file, position_secs, is_podcast=False):
+        """Play a synced resume spot at its position. Returns True on success."""
+        try:
+            table = 'Podcasts' if is_podcast else 'Songs'
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute(
+                    f"SELECT file, title, artist FROM {table} WHERE file = ?", (file,)
+                ).fetchone()
+            if not row:
+                return False  # Not downloaded here: nothing to resume.
+            song = {'File': row[0], 'Title': row[1], 'Artist': row[2],
+                    'IsPodcast': bool(is_podcast)}
+            self.playback.play_button(song)
+            try:
+                position = max(0.0, float(position_secs or 0))
+            except (TypeError, ValueError):
+                position = 0.0
+            if position > 1.0:
+                self.progress_slider_click(position)
+            return True
+        except Exception as e:
+            print(f" [Python] Resume spot play failed: {str(e)}")
+            return False
+
     def get_current_pos(self):
         return self.playback.get_current_pos()
     

@@ -394,6 +394,13 @@
         </div>
     </div>
 
+    <!-- Resume across devices: another device's paused spot (explicit tap only) -->
+    <div id="resume_spot_bar" style="display: none;"
+        class="fixed bottom-28 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-200 text-sm hover:bg-sky-500/20 transition-colors cursor-pointer max-w-[90vw]">
+        <span>&#9654;</span>
+        <span id="resume_spot_text" class="truncate"></span>
+    </div>
+
     <!-- The fixed controller is outside the main flex container to avoid affecting its layout -->
     <div class="fixed bottom-0 left-0 right-0 flex flex-row items-center justify-between h-28 border-t border-orange-500/10 bg-black/40 backdrop-blur-2xl px-6 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
         id="controls">
@@ -1630,7 +1637,46 @@
             if (typeof window.fetchLyricsForCurrentSong === 'function') {
                 window.fetchLyricsForCurrentSong(data);
             }
+            if (typeof window.checkResumeSpot === 'function') window.checkResumeSpot();
         }
+
+        // Resume across devices: show another device's paused spot (polled
+        // on track change + once at startup). Tapping plays it here at its
+        // position explicitly — nothing auto-plays. Never throws.
+        window.resumeSpotDismissed = null;
+        window.fmtResumeTime = function (secs) {
+            const s = Math.max(0, Math.floor(Number(secs) || 0));
+            return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        };
+        window.checkResumeSpot = async function () {
+            try {
+                const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+                const bar = document.getElementById('resume_spot_bar');
+                if (!api || typeof api.get_resume_spot !== 'function' || !bar) return;
+                const spot = await api.get_resume_spot();
+                const cur = window.current_playing_song;
+                const curFile = cur
+                    ? (typeof cur === 'string' ? cur.split(/[\\/]/).pop() : cur.File)
+                    : null;
+                if (!spot || !spot.file || spot.file === curFile ||
+                    (spot.file + spot.updated_utc) === window.resumeSpotDismissed) {
+                    bar.style.display = 'none';
+                    return;
+                }
+                bar.style.display = 'flex';
+                document.getElementById('resume_spot_text').textContent =
+                    `Resume ${spot.file} at ${window.fmtResumeTime(spot.position_secs)}` +
+                    (spot.device ? ` from ${spot.device}` : '');
+                bar.onclick = async () => {
+                    bar.style.display = 'none';
+                    window.resumeSpotDismissed = spot.file + spot.updated_utc;
+                    try {
+                        await api.resume_spot_play(spot.file, spot.position_secs, !!spot.is_podcast);
+                    } catch (e) { /* resume must never break the player */ }
+                };
+            } catch (e) { /* resume must never break the player */ }
+        };
+        setTimeout(() => { if (typeof window.checkResumeSpot === 'function') window.checkResumeSpot(); }, 4000);
 
         // Pull the current song from Python if the early startup push
         // happened before this page's scripts were parsed (avoids a

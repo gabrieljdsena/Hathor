@@ -9,6 +9,7 @@ import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { useChapterAutoSkip, useChapterJump } from './ui/PodcastTimestamps'
+import ResumeSpot, { useResumeSpot } from './ui/ResumeSpot'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Self-ticking progress row (engine media time; display-only).
@@ -189,6 +190,8 @@ export default function PlayerBar({
   // Podcast chapters: auto-skip pump + chapter-aware transport arrows.
   useChapterAutoSkip()
   const chapterJump = useChapterJump()
+  // Another device's paused spot (resume affordance, never auto-plays).
+  const resumeSpot = useResumeSpot()
   const songMenuRef = useRef<SongMenuHandle | null>(null)
   const openSongMenu = (x: number, y: number) => songMenuRef.current?.openAt(x, y)
   const goArtist = (e: React.MouseEvent, artist: string) => {
@@ -322,6 +325,13 @@ export default function PlayerBar({
               <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
             )}
             {song && <PendingEditChip file={song.file} />}
+            {song && resumeSpot && resumeSpot.file !== song.file && (
+              <ResumeSpot
+                key={resumeSpot.file + resumeSpot.updatedUtc}
+                spot={resumeSpot}
+                compact
+              />
+            )}
           </div>
         </div>
         <div className="flex items-center justify-center gap-1">
@@ -401,6 +411,13 @@ export default function PlayerBar({
             <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
           )}
           {song && <PendingEditChip file={song.file} />}
+          {song && resumeSpot && resumeSpot.file !== song.file && (
+            <ResumeSpot
+              key={resumeSpot.file + resumeSpot.updatedUtc}
+              spot={resumeSpot}
+              compact
+            />
+          )}
         </div>
       </div>
       {song && (

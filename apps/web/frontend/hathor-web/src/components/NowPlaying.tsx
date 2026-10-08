@@ -6,6 +6,7 @@ import Icon from './ui/icons'
 import { ControlButton } from './ui/buttons'
 import { VolumeSlider } from './PlayerBar'
 import { ChapterSkip, useActiveChapter, useChapterJump } from './ui/PodcastTimestamps'
+import ResumeSpot, { useResumeSpot } from './ui/ResumeSpot'
 import SyncedLyrics, { useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
 
 // Fullscreen Now Playing overlay (desktop Now Playing view): large art,
@@ -33,6 +34,8 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   // Chapter-aware arrows (same rule as the player bar): podcasts jump
   // chapter boundaries, everything else changes track.
   const chapterJump = useChapterJump()
+  // Another device's paused spot (resume affordance, never auto-plays).
+  const resumeSpot = useResumeSpot()
 
   const step = (which: 'prev' | 'next') => () => {
     if (chapterJump[which]()) return
@@ -79,6 +82,12 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
+
+      {resumeSpot && resumeSpot.file !== song.file && (
+        <div className="w-full flex justify-center px-4 pt-1 flex-shrink-0">
+          <ResumeSpot key={resumeSpot.file + resumeSpot.updatedUtc} spot={resumeSpot} />
+        </div>
+      )}
 
       {showLyrics ? (
         <div className="flex-1 min-h-0 w-full max-w-[88rem] mx-auto px-6 sm:px-10 pb-10 flex flex-col">

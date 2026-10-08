@@ -280,6 +280,35 @@ public sealed class RemotePullService(
             ? DateTime.UtcNow
             : DateTime.SpecifyKind(r.GetDateTime(ordinal), DateTimeKind.Utc);
 
+    public async Task<PlaybackSpotDto?> GetLatestPlaybackAsync(Guid userId, CancellationToken ct = default)
+    {
+        var connStr = options.ConnectionString();
+        if (connStr is null) return null;
+        try
+        {
+            await using var conn = await RemoteMySql.OpenAsync(connStr, log, "pull-playback", ct);
+            await using var cmd = new MySqlCommand(
+                "SELECT `user_key`, `file`, `position_secs`, `is_podcast`, `device`, `updated_utc` " +
+                "FROM `playback_state` WHERE `user_key` <> @own AND `updated_utc` > @cutoff " +
+                "ORDER BY `updated_utc` DESC LIMIT 1", conn);
+            cmd.Parameters.AddWithValue("@own", PlaybackKeys.ForWeb(userId));
+            cmd.Parameters.AddWithValue("@cutoff",
+                DateTime.UtcNow.Subtract(PlaybackKeys.MaxAge));
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return null;
+            var updated = reader.GetDateTime(5);
+            return new PlaybackSpotDto(
+                reader.GetString(0), reader.GetString(1), reader.GetDouble(2),
+                reader.GetBoolean(3), reader.IsDBNull(4) ? null : reader.GetString(4),
+                DateTime.SpecifyKind(updated, DateTimeKind.Utc));
+        }
+        catch
+        {
+            // Table postdates older remotes (or unreachable): nothing resumable.
+            return null;
+        }
+    }
+
     private sealed record RemoteSong(
         string File, string? DownloadedLink, string Title, DateTime DateDownload, string? Artist);
 }

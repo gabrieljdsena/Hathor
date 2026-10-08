@@ -132,6 +132,89 @@ def get_mysql_connection():
     return pymysql.connect(**conn_kwargs)
 
 
+# Resume across devices: one row per writer (last-writer-wins, like the rest
+# of the shared remote). Created lazily by whoever writes first.
+PLAYBACK_USER_KEY = "desktop"
+PLAYBACK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS playback_state (
+    user_key VARCHAR(255) PRIMARY KEY,
+    file VARCHAR(255) NOT NULL,
+    position_secs DOUBLE NOT NULL DEFAULT 0,
+    is_podcast TINYINT(1) NOT NULL DEFAULT 0,
+    device VARCHAR(255) NULL,
+    updated_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+
+def push_playback_state(file, position_secs, is_podcast=False, device="Desktop"):
+    """Upsert this device's resume spot. Best-effort, never raises."""
+    if not file:
+        return False
+    try:
+        conn = get_mysql_connection()
+    except Exception as e:
+        print(f" [Sync] Resume push: no remote DB ({str(e)})")
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(PLAYBACK_SCHEMA)
+            cur.execute(
+                "INSERT INTO playback_state "
+                "(user_key, file, position_secs, is_podcast, device, updated_utc) "
+                "VALUES (%s, %s, %s, %s, %s, UTC_TIMESTAMP()) "
+                "ON DUPLICATE KEY UPDATE file = VALUES(file), "
+                "position_secs = VALUES(position_secs), "
+                "is_podcast = VALUES(is_podcast), device = VALUES(device), "
+                "updated_utc = UTC_TIMESTAMP()",
+                (PLAYBACK_USER_KEY, file, float(position_secs or 0),
+                 1 if is_podcast else 0, device),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f" [Sync] Resume push failed: {str(e)}")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_latest_playback(exclude_key=PLAYBACK_USER_KEY, max_age_days=30):
+    """Newest foreign resume spot (dict) or None. Never raises."""
+    try:
+        conn = get_mysql_connection()
+    except Exception:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_key, file, position_secs, is_podcast, device, updated_utc "
+                "FROM playback_state WHERE user_key <> %s "
+                "AND updated_utc > DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY) "
+                "ORDER BY updated_utc DESC LIMIT 1",
+                (exclude_key, int(max_age_days)),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                'user_key': row[0], 'file': row[1], 'position_secs': float(row[2] or 0),
+                'is_podcast': bool(row[3]), 'device': row[4],
+                'updated_utc': row[5].isoformat() if row[5] else None,
+            }
+    except Exception:
+        # Table postdates older remotes (or unreachable): nothing resumable.
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 class DatabaseSync:
     def __init__(self, sqlite_path):
         self.sqlite_path = sqlite_path

@@ -106,6 +106,10 @@ public interface IRemotePullService
         CancellationToken ct = default);
     Task<Application.Sync.RemotePullResult> PullPodcastsAsync(Guid userId,
         CancellationToken ct = default);
+    // Latest foreign playback spot (resume across devices): the newest row
+    // not written by this user, ignoring stale ones. Null when none.
+    Task<Application.Sync.PlaybackSpotDto?> GetLatestPlaybackAsync(Guid userId,
+        CancellationToken ct = default);
 }
 
 // Remote-library push port (desktop DatabaseSync.sync_once/_run_sync,
@@ -117,6 +121,11 @@ public interface IRemotePushService
         CancellationToken ct = default);
     Task<Application.Sync.RemotePushResult> PushPodcastsAsync(Guid userId,
         CancellationToken ct = default);
+    // Upsert this user's playback spot (file + position). Fire-and-forget
+    // from pause/track-change; never blocks playback. False when skipped
+    // (no remote, nothing playing) or failed.
+    Task<bool> PushPlaybackAsync(Guid userId, string file, double positionSec,
+        bool isPodcast, string device, CancellationToken ct = default);
 }
 
 // Snapshot exchange port (desktop sync.py pull/push semantics).

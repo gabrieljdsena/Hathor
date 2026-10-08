@@ -23,6 +23,20 @@ public sealed record PlaylistHistoryRowDto(long Id, long PlaylistId, DateTime Da
 public sealed record MixRowDto(string MixDate, string SongFilesJson);
 public sealed record DeletionRowDto(string TableName, string RowKey);
 
+// Resume-across-devices spot: latest foreign playback state. user_key is
+// per writer (web:{userId} / desktop) because the remote is one global
+// namespace with last-writer-wins. Rows older than 30 days are ignored.
+public sealed record PlaybackSpotDto(
+    string UserKey, string File, double PositionSec, bool IsPodcast,
+    string? Device, DateTime UpdatedUtc);
+
+public static class PlaybackKeys
+{
+    public static string ForWeb(Guid userId) => $"web:{userId:D}";
+    public const string Desktop = "desktop";
+    public static readonly TimeSpan MaxAge = TimeSpan.FromDays(30);
+}
+
 public sealed record SyncSnapshot(
     List<SongRowDto>? Songs,
     List<PodcastRowDto>? Podcasts,
@@ -80,6 +94,36 @@ public sealed class PushPodcastsHandler(Ports.IRemotePushService push)
 {
     public Task<RemotePushResult> Handle(PushPodcastsCommand cmd, CancellationToken ct) =>
         push.PushPodcastsAsync(cmd.UserId, ct);
+}
+
+// Resume across devices: snapshot this user's playback spot (file +
+// position) into the shared remote table, and read back the latest foreign
+// spot. Pushes happen fire-and-forget on pause (never blocking playback);
+// pulls only surface an affordance — nothing auto-plays.
+public sealed record PushPlaybackStateCommand(Guid UserId) : IRequest<bool>;
+
+public sealed class PushPlaybackStateHandler(
+    Domain.Repositories.IPlaybackStateRepository playback,
+    Ports.IRemotePushService push)
+    : IRequestHandler<PushPlaybackStateCommand, bool>
+{
+    public async Task<bool> Handle(PushPlaybackStateCommand cmd, CancellationToken ct)
+    {
+        var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
+        if (state.CurrentFile is null || state.FirstPlay) return false;
+        return await push.PushPlaybackAsync(cmd.UserId, state.CurrentFile,
+            state.EstimatedPositionSec(DateTime.UtcNow), state.CurrentIsPodcast,
+            "Web", ct);
+    }
+}
+
+public sealed record GetLatestPlaybackQuery(Guid UserId) : IRequest<PlaybackSpotDto?>;
+
+public sealed class GetLatestPlaybackHandler(Ports.IRemotePullService pull)
+    : IRequestHandler<GetLatestPlaybackQuery, PlaybackSpotDto?>
+{
+    public Task<PlaybackSpotDto?> Handle(GetLatestPlaybackQuery q, CancellationToken ct) =>
+        pull.GetLatestPlaybackAsync(q.UserId, ct);
 }
 
 public sealed record ExportSnapshotQuery(Guid UserId, long SinceId = 0) : IRequest<SyncSnapshot>;

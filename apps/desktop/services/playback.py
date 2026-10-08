@@ -429,6 +429,34 @@ class PlaybackController:
         except Exception:
             return self._user_volume()
 
+    def _push_resume_spot(self):
+        """Snapshot (file, position) to the shared remote table (daemon thread).
+
+        Pause is the resume signal: pushing live positions on track change
+        would clobber genuine paused spots elsewhere. Never raises, never
+        blocks playback.
+        """
+        try:
+            filename = self.api.current_filename
+            if not filename:
+                return
+            position = float(self.get_current_pos())
+            is_podcast = bool((getattr(self.api, 'last_song', None) or {}).get('IsPodcast'))
+        except Exception:
+            return
+
+        def work():
+            try:
+                import sync as sync_mod
+                sync_mod.push_playback_state(filename, position, is_podcast)
+            except Exception as e:
+                print(f" [Python] Resume push failed: {str(e)}")
+
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception:
+            pass
+
     def _ensure_threads(self):
         """Start the end-of-stream + crossfade monitors once the mixer is ready."""
         if self._threads_started:
@@ -1335,6 +1363,8 @@ class PlaybackController:
             self.pause_time = self.get_current_pos()
             pygame.mixer.music.pause()
             self.api.playing = False
+            # Pause is the resume signal: snapshot for other devices.
+            self._push_resume_spot()
             if hasattr(self.api, 'media_controls'):
                 self.api.media_controls.set_playing(False)
         else:
