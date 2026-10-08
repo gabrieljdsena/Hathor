@@ -109,7 +109,6 @@ public static class InfrastructureServiceExtensions
 
         services.AddSingleton(new Dapper.DapperConnectionFactory(config));
         services.AddScoped<Domain.Repositories.IUserRepository, Repositories.EfUserRepository>();
-        services.AddScoped<Domain.Repositories.IRefreshTokenRepository, Repositories.EfRefreshTokenRepository>();
         services.AddScoped<Domain.Repositories.ISessionRepository, Repositories.EfSessionRepository>();
         services.AddScoped<Domain.Repositories.IApiKeyRepository, Repositories.EfApiKeyRepository>();
         services.AddScoped<Domain.Repositories.IPlaybackStateRepository, Repositories.EfPlaybackStateRepository>();

@@ -26,14 +26,6 @@ public interface ISessionRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
-public interface IRefreshTokenRepository
-{
-    Task AddAsync(RefreshToken token, CancellationToken ct = default);
-    Task<RefreshToken?> GetValidAsync(string tokenHash, CancellationToken ct = default);
-    Task RevokeAsync(Guid id, CancellationToken ct = default);
-    Task SaveChangesAsync(CancellationToken ct = default);
-}
-
 public interface IApiKeyRepository
 {
     Task AddAsync(ApiKey key, CancellationToken ct = default);

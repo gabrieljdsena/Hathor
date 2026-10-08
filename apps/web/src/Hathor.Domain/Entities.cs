@@ -11,16 +11,6 @@ public sealed class User
     public DateTime CreatedAtUtc { get; set; }
 }
 
-public sealed class RefreshToken
-{
-    public Guid Id { get; set; }
-    public Guid UserId { get; set; }
-    public string TokenHash { get; set; } = "";
-    public DateTime ExpiresAtUtc { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-    public bool Revoked { get; set; }
-}
-
 // Server-side login session (multi-login: one row per device). Rotation
 // chains via ReplacedById so presenting an already-rotated token (theft
 // replay) is detectable — the whole family is revoked on reuse.

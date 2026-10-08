@@ -418,36 +418,6 @@ namespace Hathor.Migrations.MySql.Migrations
                     b.ToTable("Podcast_Timestamps", (string)null);
                 });
 
-            modelBuilder.Entity("Hathor.Domain.Entities.RefreshToken", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<bool>("Revoked")
-                        .HasColumnType("tinyint(1)");
-
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasColumnType("varchar(255)");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("char(36)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.ToTable("Refresh_Tokens", (string)null);
-                });
-
             modelBuilder.Entity("Hathor.Domain.Entities.Session", b =>
                 {
                     b.Property<Guid>("Id")

@@ -10,7 +10,6 @@ namespace Hathor.Infrastructure.Ef;
 public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
-    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<Song> Songs => Set<Song>();
@@ -39,12 +38,6 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.Username).IsUnique();
             e.Property(x => x.Username).HasMaxLength(64);
-        });
-        b.Entity<RefreshToken>(e =>
-        {
-            e.ToTable("Refresh_Tokens");
-            e.HasKey(x => x.Id);
-            e.HasIndex(x => x.TokenHash).IsUnique();
         });
         b.Entity<Session>(e =>
         {

@@ -61,28 +61,6 @@ public sealed class EfPendingEditRepository(HathorDbContext db) : IPendingEditRe
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }
 
-public sealed class EfRefreshTokenRepository(HathorDbContext db) : IRefreshTokenRepository
-{
-    public async Task AddAsync(RefreshToken token, CancellationToken ct = default) =>
-        await db.RefreshTokens.AddAsync(token, ct);
-
-    public Task<RefreshToken?> GetValidAsync(string tokenHash, CancellationToken ct = default) =>
-        db.RefreshTokens.FirstOrDefaultAsync(t =>
-            t.TokenHash == tokenHash && !t.Revoked && t.ExpiresAtUtc > DateTime.UtcNow, ct);
-
-    public async Task RevokeAsync(Guid id, CancellationToken ct = default)
-    {
-        var token = await db.RefreshTokens.FindAsync([id], ct);
-        if (token is not null)
-        {
-            token.Revoked = true;
-            await db.SaveChangesAsync(ct);
-        }
-    }
-
-    public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
-}
-
 public sealed class EfSessionRepository(HathorDbContext db) : ISessionRepository
 {
     public async Task AddAsync(Session session, CancellationToken ct = default) =>
