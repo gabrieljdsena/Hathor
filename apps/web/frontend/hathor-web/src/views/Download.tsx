@@ -32,7 +32,9 @@ export default function Download() {
 
   const { data: trending } = useQuery({ queryKey: ['trending'], queryFn: () => api.itunesTrending(4) })
   const { data: jobs } = useQuery({
-    queryKey: ['download-jobs'],
+    // Keyed by limit (Discover polls with 50): one shared key served each
+    // view the other's cached page. Prefix invalidations still hit both.
+    queryKey: ['download-jobs', 8],
     queryFn: () => api.downloadJobs(8),
     // Poll only while something is in flight — an idle Download page
     // issues zero requests instead of one every 2.5s forever.

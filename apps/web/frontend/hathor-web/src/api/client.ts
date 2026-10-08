@@ -96,34 +96,6 @@ export interface FfmpegDownloadStatus {
   error: string | null
 }
 
-export interface SyncSnapshot {
-  songs?: unknown[] | null
-  podcasts?: unknown[] | null
-  playlists?: unknown[] | null
-  songLinks?: unknown[] | null
-  podcastTags?: unknown[] | null
-  podcastTagLinks?: unknown[] | null
-  lyrics?: unknown[] | null
-  musicHistory?: unknown[] | null
-  playlistHistory?: unknown[] | null
-  dailyMix?: unknown[] | null
-  deletions?: unknown[] | null
-}
-
-export interface SyncSummary {
-  songs: number
-  podcasts: number
-  playlists: number
-  songLinks: number
-  podcastTags: number
-  podcastTagLinks: number
-  lyrics: number
-  musicHistory: number
-  playlistHistory: number
-  dailyMix: number
-  deletions: number
-}
-
 export interface RemotePullResult {
   added: number
   downloadsStarted: number
@@ -393,10 +365,6 @@ export const api = {
 
   // player state + headless controls (plan §4 — same surface external clients use)
   playerState: () => request<PlayerState>('/player/state'),
-  nowPlaying: () =>
-    request<{ title: string | null; artist: string | null; coverUrl: string | null; positionSec: number; durationSec: number | null }>(
-      '/player/now-playing',
-    ),
   play: (file?: string, isPodcast?: boolean) =>
     request<PlayerState>('/player/play', {
       method: 'POST',
@@ -706,7 +674,6 @@ export const api = {
         ChapterSkip: patch.chapterSkip ?? null,
       }),
     }),
-  playerSettings: () => request<PlayerSettings>('/player/settings'),
   setPlayerSettings: (crossfadeEnabled: boolean, crossfadeSeconds: number) =>
     request<PlayerSettings>('/player/settings', {
       method: 'PUT',
@@ -748,10 +715,6 @@ export const api = {
       body: JSON.stringify({ Message: message, Route: route, Stack: stack }),
     }).catch(() => {}),
 
-  // sync snapshot exchange (desktop/mobile compat)
-  syncExport: (sinceId = 0) => request<SyncSnapshot>(`/sync/export?sinceId=${sinceId}`),
-  syncImport: (snapshot: SyncSnapshot) =>
-    request<SyncSummary>('/sync/import', { method: 'POST', body: JSON.stringify(snapshot) }),
   // Per-library pull from the desktop TiDB remote (desktop
   // sync_remote_to_local_and_download, split in two): merges remote rows
   // and queues downloads for files missing on disk.

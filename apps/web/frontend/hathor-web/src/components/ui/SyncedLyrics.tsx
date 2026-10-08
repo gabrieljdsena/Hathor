@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { engine } from '../../audio/engine'
+import { useAudioClock } from '../../audio/clock'
 import { activeLrcIndex, parseLrc } from '../../lyrics'
 
 // Shared synced-lyrics renderer (desktop renderLyrics + updateHighlightedLine):
@@ -27,14 +28,9 @@ export function useSongLyrics(
 }
 
 export function useAudioPosition(): number {
-  const [position, setPosition] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setPosition(engine.time())
-    }, 250)
-    return () => window.clearInterval(id)
-  }, [])
-  return position
+  // Lyric highlight clock (250ms): shares one interval across every mounted
+  // lyrics view instead of polling per component.
+  return useAudioClock(250)
 }
 
 export const LYRICS_OFFSET_STEP_MS = 250;

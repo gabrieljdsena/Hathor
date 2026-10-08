@@ -142,12 +142,13 @@ export default function Discover() {
   const debounced = useDebouncedValue(search)
 
   // Job progress per card, matched by submitted title/artist (the backend
-  // echoes both onto the job). Shared ['download-jobs'] cache with the
-  // Download view; polls only while something is in flight.
+  // echoes both onto the job). Key includes the limit: the Download view
+  // polls the same endpoint with limit 8, and sharing one key served each
+  // view the other's cached limit. Polls only while something is in flight.
   const cardKey = (title: string, artist: string | null) =>
     `${title.trim().toLowerCase()} — ${(artist ?? '').trim().toLowerCase()}`
   const { data: jobs } = useQuery({
-    queryKey: ['download-jobs'],
+    queryKey: ['download-jobs', 50],
     queryFn: () => api.downloadJobs(50),
     refetchInterval: (query) => {
       const list = (query.state.data ?? []) as DownloadJob[]

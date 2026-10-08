@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type PodcastTimestamp } from '../../api/client'
 import { engine } from '../../audio/engine'
+import { subscribeAudioClock, useAudioClock } from '../../audio/clock'
 import { formatTime, usePlayer } from '../../store/player'
 import Icon from './icons'
 import Modal from './Modal'
@@ -71,11 +72,8 @@ export function useChapterJump() {  const file = usePlayer((s) => s.currentSong?
 export function useActiveChapter(file: string | null | undefined, isPodcast: boolean | undefined) {
   const { data } = usePodcastChapters(isPodcast ? file : null)
   const chapters = useMemo(() => sortChapters(data ?? []), [data])
-  const [now, setNow] = useState(() => engine.time())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(engine.time()), 500)
-    return () => window.clearInterval(id)
-  }, [])
+  // Shared 500ms clock (was a private interval per mount).
+  const now = useAudioClock(500)
   return useMemo(() => {
     if (!isPodcast || !file) return null
     let active: (typeof chapters)[number] | null = null
@@ -105,7 +103,9 @@ export function useChapterAutoSkip() {
   stateRef.current = { enabled, isPodcast, isPlaying, chapters: data ?? [] }
 
   useEffect(() => {
-    const id = window.setInterval(() => {
+    // Ref-only pump (no re-render): subscribes to the shared 500ms clock
+    // instead of running a private interval.
+    return subscribeAudioClock(500, () => {
       const s = stateRef.current
       if (!s.enabled || !s.isPodcast || !s.isPlaying || s.chapters.length === 0) return
       // The element must be rendering the store's episode: after a switch
@@ -114,8 +114,7 @@ export function useChapterAutoSkip() {
       if (!file || engine.currentFile() !== file) return
       const target = autoSkipTarget(sortChapters(s.chapters), engine.time())
       if (target !== null) seekTo(target)
-    }, 500)
-    return () => window.clearInterval(id)
+    })
   }, [file])
 }
 
@@ -348,15 +347,11 @@ export function TimestampManagerModal({
 export function ChapterSkip({ file }: { file: string }) {
   const { data } = usePodcastChapters(file)
   const chapters = useMemo(() => sortChapters(data ?? []), [data])
-  const [position, setPosition] = useState(() => engine.time())
+  // Shared 500ms clock (was a private interval per mount).
+  const position = useAudioClock(500)
   const chapterSkip = usePlayer((s) => s.chapterSkip)
   const setChapterSkip = usePlayer((s) => s.setChapterSkip)
   const activeRef = useRef<HTMLButtonElement | null>(null)
-
-  useEffect(() => {
-    const id = window.setInterval(() => setPosition(engine.time()), 500)
-    return () => window.clearInterval(id)
-  }, [])
 
   const active = useMemo(() => activeChapterAt(chapters, position), [chapters, position])
 

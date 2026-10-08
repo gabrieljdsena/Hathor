@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { clampSeekTarget, engine } from '../audio/engine'
+import { subscribeAudioClock } from '../audio/clock'
 import { formatTime, usePlayer } from '../store/player'
 import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
@@ -28,7 +29,9 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   }
 
   useEffect(() => {
-    const id = setInterval(() => {
+    // Ref-only DOM writes (no re-render): both mounted instances (mobile +
+    // desktop, one CSS-hidden) share the 500ms clock instead of ticking alone.
+    return subscribeAudioClock(500, () => {
       try {
         const slider = sliderRef.current
         if (!slider) return
@@ -44,8 +47,7 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
       } catch {
         // A throwing element read (unloaded mid-seek) must never kill the ticker.
       }
-    }, 500)
-    return () => clearInterval(id)
+    })
   }, [])
 
   const commitSeek = () => {
@@ -124,15 +126,18 @@ export function VolumeSlider({ volume, className, id }: { volume: number; classN
 
 // Queued metadata edit for the playing file (saved while it played, applies
 // on track change so playback stays gapless): tiny line under the artist;
-// click discards it. Null when nothing is stashed for this file.
+// click discards it. Null when nothing is stashed for this file. All chips
+// share one ['pending-edits'] entry (the fetch returns the whole list) and
+// select their file out of it — never one fetch per chip.
 export function PendingEditChip({ file }: { file: string }) {
   const queryClient = useQueryClient()
-  const { data } = useQuery({
-    queryKey: ['pending-edits', file],
+  const { data: hasPending } = useQuery({
+    queryKey: ['pending-edits'],
     queryFn: api.pendingEdits,
     staleTime: 1000 * 30,
+    select: (all) => all.some((p) => p.file === file),
   })
-  if (!(data ?? []).some((p) => p.file === file)) return null
+  if (!hasPending) return null
   const discard = (e: MouseEvent) => {
     e.stopPropagation()
     void api
