@@ -290,6 +290,24 @@ public sealed class RemoteDbOptions
         return $"Server={host};Port={port};User ID={user};Password={password};" +
             $"Database={database};Connection Timeout=60;{ssl}";
     }
+
+    // The bare DB_* env names are shared with myhomelab's Postgres on mixed
+    // machines: a sync remote on :5432 is a MySQL handshake against Postgres
+    // (minute-long timeout per attempt, then failure). Sync remotes must be
+    // MySQL/TiDB (3306/4000) — warn, don't block, in case someone really
+    // runs MySQL on 5432.
+    public static bool IsPostgresPort(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString)) return false;
+        try
+        {
+            return new MySqlConnector.MySqlConnectionStringBuilder(connectionString).Port == 5432;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 // Shared remote-MySQL open + error shaping (TiDB Cloud serverless pauses
@@ -299,6 +317,13 @@ internal static class RemoteMySql
     public static async Task<MySqlConnection> OpenAsync(
         string connectionString, ILogger log, string operation, CancellationToken ct)
     {
+        if (RemoteDbOptions.IsPostgresPort(connectionString))
+            log.LogWarning(
+                "Remote DB for {Operation} is on port 5432 (normally Postgres): " +
+                "sync remotes must be MySQL/TiDB, so this looks like the bare DB_* " +
+                "env names resolving to a Postgres database. " +
+                "Set the RemoteDb section (Host/Port/User/Password/Database) explicitly.",
+                operation);
         var conn = new MySqlConnection(connectionString);
         try
         {
