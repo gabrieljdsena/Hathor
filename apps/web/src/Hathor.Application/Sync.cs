@@ -9,7 +9,8 @@ namespace Hathor.Application.Sync;
 // (desktop guarded-table behavior).
 
 public sealed record SongRowDto(
-    string File, string? DownloadedLink, string Title, DateTime DateDownloadUtc, string? Artist);
+    string File, string? DownloadedLink, string Title, DateTime DateDownloadUtc, string? Artist,
+    double? LoudnessDb = null);
 public sealed record PodcastRowDto(
     string File, string? DownloadedLink, string Title, DateTime DateDownloadUtc, string? Artist);
 public sealed record PlaylistRowDto(long Id, string Title, string? Description, string? Thumbnail);

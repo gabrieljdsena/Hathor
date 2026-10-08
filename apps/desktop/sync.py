@@ -15,7 +15,8 @@ REMOTE_SCHEMA = [
         downloaded_link VARCHAR(255),
         title VARCHAR(255) NOT NULL,
         date_download TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        artist VARCHAR(255)
+        artist VARCHAR(255),
+        loudness_db DOUBLE NULL
     )
     """,
     """
@@ -186,13 +187,30 @@ class DatabaseSync:
             remote_conn.commit()
 
     def _sync_songs(self, sqlite_conn, remote_conn):
-        """Upsert all songs from SQLite -> MySQL."""
-        rows = sqlite_conn.execute("SELECT file, downloaded_link, title, date_download, artist FROM Songs").fetchall()
+        """Upsert all songs from SQLite -> MySQL (incl. loudness for normalization)."""
+        try:
+            rows = sqlite_conn.execute(
+                "SELECT file, downloaded_link, title, date_download, artist, loudness_db FROM Songs").fetchall()
+            with_loudness = True
+        except Exception:
+            rows = sqlite_conn.execute(
+                "SELECT file, downloaded_link, title, date_download, artist FROM Songs").fetchall()
+            with_loudness = False
         if not rows:
             return
-        with remote_conn.cursor() as cur:
-            cur.executemany(
+        if with_loudness:
+            stmt = """
+                INSERT INTO songs (file, downloaded_link, title, date_download, artist, loudness_db)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    downloaded_link = VALUES(downloaded_link),
+                    title = VALUES(title),
+                    date_download = VALUES(date_download),
+                    artist = VALUES(artist),
+                    loudness_db = COALESCE(VALUES(loudness_db), loudness_db)
                 """
+        else:
+            stmt = """
                 INSERT INTO songs (file, downloaded_link, title, date_download, artist)
                 VALUES (%s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
@@ -200,9 +218,27 @@ class DatabaseSync:
                     title = VALUES(title),
                     date_download = VALUES(date_download),
                     artist = VALUES(artist)
-                """,
-                rows
-            )
+                """
+        with remote_conn.cursor() as cur:
+            # Older remotes predate loudness_db: fall back to the thin shape.
+            try:
+                cur.executemany(stmt, rows)
+            except Exception:
+                if not with_loudness:
+                    raise
+                thin = [r[:5] for r in rows]
+                cur.executemany(
+                    """
+                    INSERT INTO songs (file, downloaded_link, title, date_download, artist)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        downloaded_link = VALUES(downloaded_link),
+                        title = VALUES(title),
+                        date_download = VALUES(date_download),
+                        artist = VALUES(artist)
+                    """,
+                    thin
+                )
             remote_conn.commit()
 
     def _sync_playlists(self, sqlite_conn, remote_conn):

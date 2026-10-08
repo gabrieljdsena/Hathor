@@ -383,6 +383,46 @@ class DatabaseManager:
             print(f" [Python] Error saving lyrics offset: {str(e)}")
             return 0
 
+    # ==========================
+    # Per-track loudness (web parity: integrated LUFS for normalization)
+    # ==========================
+    def _ensure_loudness_schema(self, conn):
+        try:
+            conn.execute("ALTER TABLE Songs ADD COLUMN loudness_db REAL")
+        except Exception:
+            pass  # Column already there (or very old DBs without Songs).
+
+    def get_song_loudness(self, song_file):
+        """Integrated LUFS for one file. None when never analyzed."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_loudness_schema(conn)
+                row = conn.execute(
+                    "SELECT loudness_db FROM Songs WHERE file = ?", (song_file,)
+                ).fetchone()
+                if not row or row[0] is None:
+                    return None
+                return float(row[0])
+        except Exception as e:
+            print(f" [Python] Error loading loudness: {str(e)}")
+            return None
+
+    def set_song_loudness(self, song_file, loudness_db):
+        """Persist a measurement (None clears it). Never raises."""
+        try:
+            value = None if loudness_db is None else float(loudness_db)
+        except (TypeError, ValueError):
+            return
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_loudness_schema(conn)
+                conn.execute(
+                    "UPDATE Songs SET loudness_db = ? WHERE file = ?",
+                    (value, song_file),
+                )
+        except Exception as e:
+            print(f" [Python] Error saving loudness: {str(e)}")
+
     def get_playlist_songs(self, playlist_id):
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -946,6 +986,13 @@ class DatabaseManager:
                     return "Remote database not initialized yet."
                 cur.execute("SELECT file, downloaded_link, title, date_download, artist FROM songs")
                 remote_songs = cur.fetchall()
+                # loudness_db is newer: adopt when present (same guard pattern
+                # as lyrics offsets below); missing locally fills on play.
+                try:
+                    cur.execute("SELECT file, loudness_db FROM songs WHERE loudness_db IS NOT NULL")
+                    remote_loudness = {r[0]: r[1] for r in cur.fetchall()}
+                except Exception:
+                    remote_loudness = {}
                 
                 cur.execute("SELECT id, title, description, thumbnail FROM playlists")
                 remote_playlists = cur.fetchall()
@@ -1015,15 +1062,32 @@ class DatabaseManager:
                     "title varchar(255) NOT NULL, date_download DATETIME DEFAULT CURRENT_TIMESTAMP, "
                     "artist varchar(255))"
                 )
+                self._ensure_loudness_schema(local_conn)
                 for file, downloaded_link, title, date_download, artist in remote_songs:
+                    if file in remote_loudness:
+                        # Backfill rows that predate loudness (never wipe a
+                        # local measurement with remote data).
+                        local_conn.execute(
+                            "UPDATE Songs SET loudness_db = ? WHERE file = ? AND loudness_db IS NULL",
+                            (remote_loudness[file], file),
+                        )
                     # Check if exists in local db
                     cursor = local_conn.execute("SELECT file FROM Songs WHERE file = ?", (file,))
                     if not cursor.fetchone():
-                        # Insert into local
-                        local_conn.execute(
-                            "INSERT INTO Songs (file, downloaded_link, title, date_download, artist) VALUES (?, ?, ?, ?, ?)",
-                            (file, downloaded_link, title, date_download, artist)
-                        )
+                        # Insert into local (loudness rides along when the
+                        # remote has it; otherwise play-time analysis fills it)
+                        try:
+                            local_conn.execute(
+                                "INSERT INTO Songs (file, downloaded_link, title, date_download, artist, loudness_db)"
+                                " VALUES (?, ?, ?, ?, ?, ?)",
+                                (file, downloaded_link, title, date_download, artist,
+                                 remote_loudness.get(file)),
+                            )
+                        except Exception:
+                            local_conn.execute(
+                                "INSERT INTO Songs (file, downloaded_link, title, date_download, artist) VALUES (?, ?, ?, ?, ?)",
+                                (file, downloaded_link, title, date_download, artist)
+                            )
                         added_count += 1
                         
                         file_path = os.path.join(settings.path, file)

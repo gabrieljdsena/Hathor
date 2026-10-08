@@ -32,6 +32,10 @@ public sealed class RemotePullService(
         List<MusicHistoryRowDto> musicHistory;
         List<PlaylistHistoryRowDto> playlistHistory;
         List<MixRowDto> mixes;
+        // loudness_db postdates older remotes: adopted when present (same
+        // guarded pattern as lyrics offsets below). Declared outside the
+        // read try: the merge below runs after it.
+        var loudnessByFile = new Dictionary<string, double?>(StringComparer.OrdinalIgnoreCase);
         try
         {
             await using var conn = await RemoteMySql.OpenAsync(connStr, log, "pull-songs", ct);
@@ -42,6 +46,23 @@ public sealed class RemotePullService(
                 r => new RemoteSong(
                     r.GetString(0), NullableText(r, 1), r.GetString(2),
                     UtcDate(r, 3), NullableText(r, 4)), ct);
+            // loudness_db postdates older remotes: read it when present.
+            try
+            {
+                if (await ColumnExistsAsync(conn, "songs", "loudness_db", ct))
+                {
+                    foreach (var row in await QueryAsync(conn,
+                        "SELECT file, loudness_db FROM songs WHERE loudness_db IS NOT NULL",
+                        r => (File: r.GetString(0),
+                            Loudness: r.IsDBNull(1) ? (double?)null : r.GetDouble(1)), ct))
+                        if (row.Loudness.HasValue) loudnessByFile[row.File] = row.Loudness;
+                }
+            }
+            catch
+            {
+                // No loudness column (or unreadable): import without it.
+                loudnessByFile.Clear();
+            }
             playlists = await QueryAsync(conn,
                 "SELECT id, title, description, thumbnail FROM playlists",
                 r => new PlaylistRowDto(r.GetInt64(0), r.GetString(1), NullableText(r, 2), NullableText(r, 3)), ct);
@@ -78,7 +99,8 @@ public sealed class RemotePullService(
         {
             summary = await sync.ImportAsync(userId, new SyncSnapshot(
                 Songs: songs.Select(s => new SongRowDto(
-                    s.File, s.DownloadedLink, s.Title, s.DateDownload, s.Artist)).ToList(),
+                    s.File, s.DownloadedLink, s.Title, s.DateDownload, s.Artist,
+                    LoudnessDb: loudnessByFile.GetValueOrDefault(s.File))).ToList(),
                 Podcasts: null,
                 Playlists: playlists,
                 SongLinks: links,

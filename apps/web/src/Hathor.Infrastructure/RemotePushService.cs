@@ -28,7 +28,8 @@ public sealed class RemotePushService(
             downloaded_link VARCHAR(255),
             title VARCHAR(255) NOT NULL,
             date_download TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            artist VARCHAR(255)
+            artist VARCHAR(255),
+            loudness_db DOUBLE NULL
         )
         """,
         """
@@ -122,7 +123,7 @@ public sealed class RemotePushService(
             return new RemotePushResult(0, "No remote DB configured. Remote sync unavailable.");
 
         var songs = await db.Songs.Where(s => s.UserId == userId)
-            .Select(s => new object?[] { s.File, s.DownloadedLink, s.Title, s.DateDownloadUtc, s.Artist })
+            .Select(s => new object?[] { s.File, s.DownloadedLink, s.Title, s.DateDownloadUtc, s.Artist, s.LoudnessDb })
             .ToListAsync(ct);
         var playlists = await db.Playlists.Where(p => p.UserId == userId)
             .Select(p => new object?[] { p.Id, p.Title, p.Description, p.Thumbnail })
@@ -153,9 +154,11 @@ public sealed class RemotePushService(
             rows += await ApplyDeletionsAsync(conn, tombstones
                 .Select(t => (t.TableName, t.RowKey)).ToList(), ct);
             rows += await UpsertAsync(conn, "songs",
-                ["file", "downloaded_link", "title", "date_download", "artist"],
+                ["file", "downloaded_link", "title", "date_download", "artist", "loudness_db"],
                 "downloaded_link = VALUES(downloaded_link), title = VALUES(title), " +
-                "date_download = VALUES(date_download), artist = VALUES(artist)",
+                "date_download = VALUES(date_download), artist = VALUES(artist), " +
+                // Adopt measurements, never wipe a remote one with a local null.
+                "loudness_db = COALESCE(VALUES(loudness_db), loudness_db)",
                 songs, ct);
             rows += await UpsertAsync(conn, "playlists",
                 ["id", "title", "description", "thumbnail"],
@@ -250,7 +253,7 @@ public sealed class RemotePushService(
             await using var cmd = new MySqlCommand(ddl, conn);
             await cmd.ExecuteNonQueryAsync(ct);
         }
-        // Migrate remotes created before the thumbnail / offset columns existed.
+        // Migrate remotes created before the thumbnail / offset / loudness columns existed.
         try
         {
             await using var alter = new MySqlCommand(
@@ -265,6 +268,16 @@ public sealed class RemotePushService(
         {
             await using var alter = new MySqlCommand(
                 "ALTER TABLE lyrics ADD COLUMN offset_ms INT NOT NULL DEFAULT 0", conn);
+            await alter.ExecuteNonQueryAsync(ct);
+        }
+        catch
+        {
+            // Column already there.
+        }
+        try
+        {
+            await using var alter = new MySqlCommand(
+                "ALTER TABLE songs ADD COLUMN loudness_db DOUBLE NULL", conn);
             await alter.ExecuteNonQueryAsync(ct);
         }
         catch

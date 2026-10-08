@@ -3,7 +3,8 @@ create table if not exists Songs(
     downloaded_link varchar(255) null,
     title varchar(255) not null,
     date_download datetime default CURRENT_TIMESTAMP,
-    artist varchar(255) null
+    artist varchar(255) null,
+    loudness_db real null
 );
 
 create table if not exists Podcasts(

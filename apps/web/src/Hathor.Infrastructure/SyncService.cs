@@ -15,7 +15,7 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
     public async Task<SyncSnapshot> ExportAsync(Guid userId, long sinceId, CancellationToken ct = default) =>
         new(
             Songs: await db.Songs.Where(s => s.UserId == userId)
-                .Select(s => new SongRowDto(s.File, s.DownloadedLink, s.Title, s.DateDownloadUtc, s.Artist))
+                .Select(s => new SongRowDto(s.File, s.DownloadedLink, s.Title, s.DateDownloadUtc, s.Artist, s.LoudnessDb))
                 .ToListAsync(ct),
             Podcasts: await db.Podcasts.Where(p => p.UserId == userId)
                 .Select(p => new PodcastRowDto(p.File, p.DownloadedLink, p.Title, p.DateDownloadUtc, p.Artist))
@@ -67,6 +67,7 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
                     {
                         UserId = userId, File = r.File, DownloadedLink = r.DownloadedLink,
                         Title = r.Title, DateDownloadUtc = r.DateDownloadUtc, Artist = r.Artist,
+                        LoudnessDb = r.LoudnessDb,
                     }, ct);
                     counts[0]++;
                 }
@@ -76,6 +77,9 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
                     existing.Title = r.Title;
                     existing.DateDownloadUtc = r.DateDownloadUtc;
                     existing.Artist = r.Artist;
+                    // Adopt remote measurements, never wipe a local one
+                    // with a remote null (older remotes lack the column).
+                    if (r.LoudnessDb.HasValue) existing.LoudnessDb = r.LoudnessDb;
                 }
             }
 
