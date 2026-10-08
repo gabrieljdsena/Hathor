@@ -17,4 +17,41 @@ public sealed class RemoteDbOptionsTests
     [InlineData("not a connection string", false)]
     public void IsPostgresPort_FlagsOnly5432(string? connectionString, bool expected) =>
         RemoteDbOptions.IsPostgresPort(connectionString).Should().Be(expected);
+
+    [Fact]
+    public void ConnectionString_Explicit4000_WinsOverDbPortEnv()
+    {
+        // Regression: TiDB's real port IS 4000, so it must not read as
+        // "unset" and fall through to a foreign DB_PORT (Postgres 5432).
+        var saved = Environment.GetEnvironmentVariable("DB_PORT");
+        Environment.SetEnvironmentVariable("DB_PORT", "5432");
+        try
+        {
+            new RemoteDbOptions { Host = "h", Port = 4000 }.ConnectionString()
+                .Should().Contain("Port=4000");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DB_PORT", saved);
+        }
+    }
+
+    [Fact]
+    public void ConnectionString_UnsetPort_FallsBackToDbPortThen4000()
+    {
+        var saved = Environment.GetEnvironmentVariable("DB_PORT");
+        try
+        {
+            Environment.SetEnvironmentVariable("DB_PORT", "5432");
+            new RemoteDbOptions { Host = "h" }.ConnectionString()
+                .Should().Contain("Port=5432");
+            Environment.SetEnvironmentVariable("DB_PORT", null);
+            new RemoteDbOptions { Host = "h" }.ConnectionString()
+                .Should().Contain("Port=4000");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DB_PORT", saved);
+        }
+    }
 }

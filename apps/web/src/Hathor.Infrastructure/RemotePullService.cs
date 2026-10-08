@@ -268,7 +268,11 @@ public sealed class RemotePullService(
 public sealed class RemoteDbOptions
 {
     public string? Host { get; init; }
-    public int Port { get; init; } = 4000;
+    // Null = unset (falls back to DB_PORT, then 4000). Must be nullable:
+    // TiDB's real port IS 4000, so a "default 4000 means unset" sentinel
+    // mistakes an explicit 4000 for missing and falls through to a foreign
+    // DB_PORT (e.g. a Postgres 5432 sharing the bare env names).
+    public int? Port { get; init; }
     public string? User { get; init; }
     public string? Password { get; init; }
     public string? Database { get; init; }
@@ -278,8 +282,8 @@ public sealed class RemoteDbOptions
     {
         var host = Host ?? Environment.GetEnvironmentVariable("DB_HOST");
         if (string.IsNullOrWhiteSpace(host)) return null;
-        var port = Port != 4000 ? Port : int.TryParse(
-            Environment.GetEnvironmentVariable("DB_PORT"), out var p) ? p : 4000;
+        var port = Port ?? (int.TryParse(
+            Environment.GetEnvironmentVariable("DB_PORT"), out var p) ? p : 4000);
         var user = User ?? Environment.GetEnvironmentVariable("DB_USER") ?? "";
         var password = Password ?? Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "";
         var database = Database ?? Environment.GetEnvironmentVariable("DB_NAME") ?? "";
