@@ -185,7 +185,8 @@ public sealed class RemotePushService(
         catch (Exception ex)
         {
             log.LogError(ex, "Remote song push failed");
-            return new RemotePushResult(0, RemoteMySql.Describe("Error pushing to remote DB", ex));
+            return new RemotePushResult(0,
+                RemoteMySql.Describe($"Error pushing to remote DB [{RemoteMySql.EndpointOf(connStr)}]", ex));
         }
     }
 
@@ -234,7 +235,8 @@ public sealed class RemotePushService(
         catch (Exception ex)
         {
             log.LogError(ex, "Remote podcast push failed");
-            return new RemotePushResult(0, RemoteMySql.Describe("Error pushing to remote DB", ex));
+            return new RemotePushResult(0,
+                RemoteMySql.Describe($"Error pushing to remote DB [{RemoteMySql.EndpointOf(connStr)}]", ex));
         }
     }
 

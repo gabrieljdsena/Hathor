@@ -69,7 +69,8 @@ public sealed class RemotePullService(
         catch (Exception ex)
         {
             log.LogError(ex, "Remote song pull failed: could not read remote DB");
-            return new RemotePullResult(0, 0, RemoteMySql.Describe("Error connecting to remote DB", ex));
+            return new RemotePullResult(0, 0,
+                RemoteMySql.Describe($"Error connecting to remote DB [{RemoteMySql.EndpointOf(connStr)}]", ex));
         }
 
         SyncSummary summary;
@@ -149,7 +150,8 @@ public sealed class RemotePullService(
         catch (Exception ex)
         {
             log.LogError(ex, "Remote podcast pull failed: could not read remote DB");
-            return new RemotePullResult(0, 0, RemoteMySql.Describe("Error connecting to remote DB", ex));
+            return new RemotePullResult(0, 0,
+                RemoteMySql.Describe($"Error connecting to remote DB [{RemoteMySql.EndpointOf(connStr)}]", ex));
         }
 
         SyncSummary summary;
