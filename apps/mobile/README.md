@@ -45,15 +45,14 @@ background, glass surfaces, orange accent.
 
    ```properties
    sdk.dir=C:\\Android\\Sdk
-   DB_HOST=<your tidb/mysql host>
-   DB_PORT=4000
-   DB_USER=<user>
-   DB_PASSWORD=<password>
-   DB_NAME=<database>
+   API_BASE_URL=http://192.168.1.10:5051
+   API_TOKEN=hth_<per-device key with library:read + library:write>
    ```
 
-   Same values as the desktop `.env`. Leaving `DB_HOST` empty disables sync —
-   the app runs fully offline with local downloads and playback.
+   The base URL is your Hathor server on the LAN; the token is a per-device
+   key (create one in the web UI under API keys). Leaving either empty
+   disables sync — the app runs fully offline with local downloads and
+   playback.
 3. **Run ▶** on a phone or emulator.
 
 ## Project structure
@@ -79,30 +78,28 @@ apps/mobile/
 
 ## How sync works
 
-The app talks directly to the remote MySQL/TiDB database (Connector/J) using
-the same table and column names as the desktop `database.sql` (see
-`data/db/Entities.kt` — byte-identical names, no translation layer), and
-keeps a local Room copy (`hathor.db`) for offline use. Credentials are baked
-in from `local.properties` at build time via `BuildConfig` fields — they
-never appear in source. Empty `DB_HOST` disables sync, exactly like desktop.
+The app talks to the Hathor Web API over the LAN (`data/api/SyncApi.kt`,
+stdlib `HttpURLConnection` + `org.json` — no extra dependencies), using the
+same table semantics as the desktop `database.sql` (see
+`data/db/Entities.kt`), and keeps a local Room copy (`hathor.db`) for
+offline use. Server URL + API token are baked in from `local.properties` at
+build time via `BuildConfig` fields — they never appear in source. Empty
+values disable sync, exactly like desktop.
 
 - **Pull** (`data/remote/PullWorker.kt`, shared by the first-run prompt and
-  the Settings Pull button): reads songs + podcasts + playlists + links +
-  lyrics + both histories + tags + daily mix (guarded tables for old
-  remotes), upserts into Room, adopts the remote mix, downloads missing
-  files under their exact remote filenames. One bad row never aborts.
-  Tombstones are not applied on pull (desktop parity — deletions propagate
-  through push; the rows are already gone remotely).
-- **Push** (`data/SyncRepository.kt`, Settings Push button): initializes the
-  remote schema, upserts songs/podcasts/playlists/tags/lyrics, replaces link
-  tables scoped to this phone's ids, propagates tombstones, pushes the mix
-  newest-wins with prune, appends history past remote `MAX(id)` with
-  `AUTO_INCREMENT` realignment, then clears applied tombstones. Step-by-step
-  progress, summary and errors surface through `SyncState`.
-- Push/pull are 1:1 with desktop `sync.py` + `sync_remote_to_local…` and web
-  `RemotePushService`/`RemotePullService` (same DDL, same delete columns,
-  same guarded-table behavior). No scheduler anywhere: pull is first-run
-  prompt + Pull button, push is the Push button (manual-only, like desktop).
+  the Settings Pull button): `GET /api/v1/sync/delta?cursor=` (incremental —
+  cursor persists in the `hathor` prefs, advancing only on full success),
+  upserts into Room, applies server tombstones (rows + bytes), adopts the
+  mix, downloads missing files byte-identical under exact server filenames.
+  One bad row never aborts.
+- **Push** (`data/SyncRepository.kt` + `data/remote/RemoteWriter.kt`,
+  Settings Push button): rows + tombstones via `POST /api/v1/sync/import`,
+  missing bytes via `PUT /api/v1/sync/files/{file}`, tombstones cleared only
+  on server accept. Step-by-step progress, summary and errors surface
+  through `SyncState`.
+- Push/pull are 1:1 with desktop `services/api_sync.py`. No scheduler
+  anywhere: pull is first-run prompt + Pull button, push is the Push button
+  (manual-only, like desktop).
 
 ## Current status
 

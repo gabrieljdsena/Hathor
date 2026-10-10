@@ -122,9 +122,9 @@ fun SettingsScreen(
             }
         }
 
-        // ---- Remote sync (desktop settings view owns these actions) ----
+        // ---- Sync server (desktop settings view owns these actions) ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionLabel(Icons.Filled.Sync, "Remote sync")
+            SectionLabel(Icons.Filled.Sync, "Sync server")
             Text(settings.remoteStatus(), style = MaterialTheme.typography.bodySmall)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(

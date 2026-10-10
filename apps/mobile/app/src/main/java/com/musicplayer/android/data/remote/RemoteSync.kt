@@ -1,13 +1,17 @@
 package com.musicplayer.android.data.remote
 
+import android.content.Context
 import android.util.Log
+import com.musicplayer.android.data.api.RemoteDeletionRow
+import com.musicplayer.android.data.api.SyncApi
+import com.musicplayer.android.data.api.SyncApiException
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.db.AppDatabase
 import com.musicplayer.android.data.db.DailyMixEntity
 import com.musicplayer.android.data.db.LyricEntity
 import com.musicplayer.android.data.db.MusicHistoryEntry
 import com.musicplayer.android.data.db.PlaylistEntity
 import com.musicplayer.android.data.db.PlaylistHistoryEntry
-import com.musicplayer.android.data.db.PodcastChapterEntity
 import com.musicplayer.android.data.db.PodcastEntity
 import com.musicplayer.android.data.db.PodcastTagEntity
 import com.musicplayer.android.data.db.PodcastTagLink
@@ -18,31 +22,37 @@ import java.io.File
 import java.time.LocalDate
 import org.json.JSONArray
 
-// Pull merge: remote snapshot -> local Room + missing-file downloads
-// (desktop sync_remote_to_local_and_download, 1:1). One bad row never
-// aborts the pull. Tombstones are NOT applied here (desktop parity —
-// deletions propagate through push; the rows are already gone remotely).
+// Pull merge: server delta -> local Room + missing-file byte downloads
+// (desktop api_sync pull, 1:1). One bad row never aborts the pull.
+// Server tombstones (deletions-since) ARE applied — unlike the retired
+// JDBC pull, a delta must converge deletes or they resurrect. The sync
+// cursor persists in the "hathor" prefs and advances only on full success.
 object RemoteSync {
     private const val TAG = "RemoteSync"
+    private const val CURSOR_KEY = "sync_cursor"
 
     data class PullReport(val addedSongs: Int, val addedPodcasts: Int, val downloadsOk: Int, val downloadsFailed: Int)
 
     fun PullReport.summary(): String {
         val total = addedSongs + addedPodcasts
-        return "Synced $total new entries from remote DB. " +
+        return "Synced $total new entries from sync server. " +
             "Downloads OK: $downloadsOk, failed: $downloadsFailed."
     }
 
-    suspend fun pullNow(db: AppDatabase, engine: DownloadEngine): PullReport {
-        if (!RemoteDb.isConfigured()) {
-            throw IllegalStateException("No remote DB configured. Remote sync unavailable.")
+    suspend fun pullNow(db: AppDatabase, engine: DownloadEngine, context: Context): PullReport {
+        if (!SyncConfig.isConfigured()) {
+            throw IllegalStateException(SyncConfig.NOT_CONFIGURED)
         }
-        val conn = RemoteDb.open()
-        val snapshot = try {
-            RemoteReader.readAll(conn)
-        } finally {
-            try { conn.close() } catch (_: Exception) { }
+        val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
+        val prefs = context.getSharedPreferences("hathor", Context.MODE_PRIVATE)
+        val cursor = prefs.getString(CURSOR_KEY, "") ?: ""
+        val delta = try {
+            api.getDelta(cursor)
+        } catch (e: SyncApiException) {
+            throw IllegalStateException(e.message)
         }
+        val snapshot = SyncApi.parseSnapshot(delta)
+        applyDeletions(db, engine, snapshot.deletions)
 
         var addedSongs = 0
         var addedPodcasts = 0
@@ -57,12 +67,10 @@ object RemoteSync {
                 )
                 addedSongs++
             }
-            if (!engine.outputDir().resolve(row.file).exists()) {
-                if (downloadMissing(engine, engine.outputDir(), row.downloadedLink, row.title, row.artist, row.file)) {
-                    downloadsOk++
-                } else {
-                    downloadsFailed++
-                }
+            when (downloadMissing(api, engine.outputDir(), "songs", row.file)) {
+                true -> downloadsOk++
+                false -> downloadsFailed++
+                null -> { /* already on disk */ }
             }
         }
 
@@ -74,12 +82,10 @@ object RemoteSync {
                 )
                 addedPodcasts++
             }
-            if (!engine.podcastsDir().resolve(row.file).exists()) {
-                if (downloadMissing(engine, engine.podcastsDir(), row.downloadedLink, row.title, row.artist, row.file)) {
-                    downloadsOk++
-                } else {
-                    downloadsFailed++
-                }
+            when (downloadMissing(api, engine.podcastsDir(), "podcasts", row.file)) {
+                true -> downloadsOk++
+                false -> downloadsFailed++
+                null -> { /* already on disk */ }
             }
         }
 
@@ -149,25 +155,6 @@ object RemoteSync {
                 PodcastTagLink(row.id, row.podcastFile, row.tagId),
             )
         }
-        // Episode chapters (upsert by id; empty snapshot never wipes local).
-        for (row in snapshot.chapters) {
-            if (db.podcastChapterDao().insertIgnore(
-                    PodcastChapterEntity(
-                        row.id, row.podcastFile, row.name, row.startSecs, row.endSecs,
-                    ),
-                ) == -1L
-            ) {
-                val current = db.podcastChapterDao().byId(row.id)
-                if (current != null) {
-                    db.podcastChapterDao().update(
-                        current.copy(
-                            podcastFile = row.podcastFile, name = row.name,
-                            startSecs = row.startSecs, endSecs = row.endSecs,
-                        ),
-                    )
-                }
-            }
-        }
         // Adopt the remote daily mix (same mix of the day on every device),
         // then prune anything older than today (desktop rule).
         if (snapshot.mixes.isNotEmpty()) {
@@ -183,40 +170,86 @@ object RemoteSync {
             db.dailyMixDao().pruneBefore(LocalDate.now().toString())
         }
 
+        // Cursor advances only on full success (one bad row never aborts,
+        // but a failed pull must retry the same delta next time).
+        val next = delta.optString("cursor")
+        if (next.isNotBlank()) prefs.edit().putString(CURSOR_KEY, next).apply()
         return PullReport(addedSongs, addedPodcasts, downloadsOk, downloadsFailed)
     }
 
-    // Pin the exact remote filename on disk so the merged row resolves
-    // instead of dangling (desktop target_file parity).
-    private suspend fun downloadMissing(
+    // Server-authoritative tombstones (delta lists deletions-since): drop
+    // the local rows AND the bytes, so deletes converge instead of
+    // resurrecting on the next push. One bad tombstone never aborts.
+    private suspend fun applyDeletions(
+        db: AppDatabase,
         engine: DownloadEngine,
+        deletions: List<RemoteDeletionRow>,
+    ) {
+        for (d in deletions) {
+            if (d.rowKey.isBlank()) continue
+            try {
+                when (d.tableName.lowercase()) {
+                    "songs" -> {
+                        db.songDao().deleteByFile(d.rowKey)
+                        db.songPlaylistDao().deleteByFile(d.rowKey)
+                        db.lyricDao().deleteByFile(d.rowKey)
+                        db.musicHistoryDao().deleteByFile(d.rowKey)
+                        deleteDiskFile(engine.outputDir(), d.rowKey)
+                    }
+                    "podcasts" -> {
+                        db.podcastDao().deleteByFile(d.rowKey)
+                        db.podcastTagLinkDao().deleteForEpisode(d.rowKey)
+                        db.podcastChapterDao().deleteForEpisode(d.rowKey)
+                        deleteDiskFile(engine.podcastsDir(), d.rowKey)
+                    }
+                    "playlists" -> d.rowKey.toLongOrNull()?.let { id ->
+                        db.songPlaylistDao().deleteForPlaylists(listOf(id))
+                        db.playlistHistoryDao().deleteByPlaylistId(id)
+                        db.playlistDao().deleteById(id)
+                    }
+                    "lyrics" -> db.lyricDao().deleteByFile(d.rowKey)
+                    "music_history" -> db.musicHistoryDao().deleteByFile(d.rowKey)
+                    "playlist_history" -> d.rowKey.toLongOrNull()?.let {
+                        db.playlistHistoryDao().deleteByPlaylistId(it)
+                    }
+                    "podcast_tags" -> d.rowKey.toLongOrNull()?.let { id ->
+                        db.podcastTagLinkDao().deleteForTags(listOf(id))
+                        db.podcastTagDao().deleteById(id)
+                    }
+                    "podcast_chapters" -> db.podcastChapterDao().deleteForEpisode(d.rowKey)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not apply deletion ${d.tableName}/${d.rowKey}", e)
+            }
+        }
+    }
+
+    private fun deleteDiskFile(dir: File, name: String) {
+        if ('/' in name || '\\' in name) return
+        try {
+            val f = dir.resolve(name)
+            if (f.exists()) f.delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not remove deleted file $name", e)
+        }
+    }
+
+    // Byte-identical server download under the exact filename (replaces the
+    // old YouTube re-download — no codec drift, no wrong search hits).
+    // Null = already on disk (not counted); false = failed (counted).
+    private fun downloadMissing(
+        api: SyncApi,
         outDir: File,
-        downloadedLink: String?,
-        title: String,
-        artist: String?,
+        library: String,
         targetFile: String,
-    ): Boolean {
+    ): Boolean? {
+        if (targetFile.isBlank() || '/' in targetFile || '\\' in targetFile) return false
+        if (outDir.resolve(targetFile).exists()) return null
         return try {
-            val url = if (!downloadedLink.isNullOrBlank()) {
-                downloadedLink
-            } else {
-                "$title ${artist.orEmpty()} audio".trim()
-            }
-            val produced = engine.downloadToMp3(url, outDir = outDir).getOrElse {
-                Log.w(TAG, "Pull download failed for $targetFile", it)
-                return false
-            }
-            val target = outDir.resolve(targetFile)
-            if (produced.absolutePath == target.absolutePath) return true
-            if (target.exists() && !target.delete()) {
-                Log.w(TAG, "Pull download: could not replace $targetFile")
-                return false
-            }
-            if (!produced.renameTo(target)) {
-                Log.w(TAG, "Pull download: could not rename to $targetFile")
-                return false
-            }
-            true
+            if (api.downloadFile(targetFile, library, outDir.resolve(targetFile))) true else false
+        } catch (e: SyncApiException) {
+            Log.w(TAG, "Pull download failed for $targetFile: ${e.message}")
+            false
         } catch (e: Exception) {
             Log.w(TAG, "Pull download failed for $targetFile", e)
             false

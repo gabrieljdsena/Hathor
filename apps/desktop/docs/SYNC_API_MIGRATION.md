@@ -60,12 +60,23 @@ Until the two **new** endpoints land, the desktop API path returns
    `sync_local_to_remote` / `sync_remote_to_local_and_download`; `api.py`
    routes to the API client when configured.
 
-## Android (later slice, same contract)
+## Android — IMPLEMENTED (same contract, stdlib HttpURLConnection)
 
-- New `data/api/ApiClient.kt` (OkHttp) replacing `remote/*` JDBC;
-  `local.properties` `DB_*` → `API_BASE_URL + API_TOKEN`; drop
-  `mysql-connector-java`; keep `PullWorker`, `SyncState` UI, Room schema,
-  byte-progress downloads. Delete ytsearch sync fallback.
+- New `data/api/SyncApi.kt` replacing `remote/RemoteDb.kt` + `remote/RemoteReader.kt`
+  (both deleted) + `mysql-connector-java` dep; `local.properties` `DB_*` →
+  `API_BASE_URL + API_TOKEN` (`BuildConfig` fields swapped).
+- Pull (`RemoteSync.pullNow`, now with `Context` for the cursor pref):
+  incremental delta, tombstones applied (rows + bytes), byte-identical
+  downloads via `GET files/{file}` — the ytsearch re-download is gone from
+  the sync path (kept for user-initiated downloads; `search_fallback` stays).
+- Push (`RemoteWriter`, same `pushSongs`/`pushPodcasts` entry points):
+  `POST import` + `PUT` bytes for `missingFiles`, tombstones cleared only
+  on accept. New DAO deletes (`SongPlaylist`/`Lyrics`/`MusicHistory` by
+  file, `PlaylistHistory` by playlist, `Playlist` by id — no schema change).
+- Kept: `PullWorker` unique-work + constraints, `SyncState` UI, Room schema,
+  first-run prompt (now gated on API config), rescan, folders.
+- NOT compiled here (no Android SDK on this machine) — build in Android
+  Studio and run one pull + one push over LAN before calling it done.
 
 ## Test checklist (desktop)
 

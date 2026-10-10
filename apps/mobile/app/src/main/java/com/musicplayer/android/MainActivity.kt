@@ -13,6 +13,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -195,7 +196,7 @@ class MainActivity : ComponentActivity() {
                                 false
                             }
                             if (!prefs.getBoolean("remote_prompt_done", false) &&
-                                BuildConfig.DB_HOST.isNotBlank() && empty
+                                SyncConfig.isConfigured() && empty
                             ) {
                                 withContext(Dispatchers.Main) { showFirstRun = true }
                             }
@@ -456,10 +457,10 @@ class MainActivity : ComponentActivity() {
                     if (showFirstRun) {
                         AlertDialog(
                             onDismissRequest = {},
-                            title = { Text("Remote Library Found") },
+                            title = { Text("Sync Server Found") },
                             text = {
                                 Column {
-                                    Text("A remote database is configured. Would you like to load your music library from it?")
+                                    Text("A sync server is configured. Would you like to load your music library from it?")
                                     Text(
                                         "This syncs songs, playlists, lyrics, and history, then downloads missing songs in the background. You can keep using the app.",
                                         style = MaterialTheme.typography.bodySmall,
@@ -477,7 +478,7 @@ class MainActivity : ComponentActivity() {
                                         containerColor = HathorColors.Accent,
                                         contentColor = androidx.compose.ui.graphics.Color.White
                                     )
-                                ) { Text("Yes, load from remote") }
+                                ) { Text("Yes, load from server") }
                             },
                             dismissButton = {
                                 TextButton(onClick = { dismissFirstRun() }) { Text("No, start fresh") }

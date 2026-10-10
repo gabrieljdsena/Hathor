@@ -64,6 +64,9 @@ interface PlaylistDao {
 
     @Query("SELECT id FROM playlists")
     suspend fun allIds(): List<Long>
+
+    @Query("DELETE FROM playlists WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -76,6 +79,9 @@ interface SongPlaylistDao {
 
     @Query("DELETE FROM song_playlist WHERE playlist_id IN (:playlistIds)")
     suspend fun deleteForPlaylists(playlistIds: List<Long>)
+
+    @Query("DELETE FROM song_playlist WHERE song_file = :file")
+    suspend fun deleteByFile(file: String)
 
     @Query("SELECT * FROM song_playlist")
     suspend fun all(): List<SongPlaylistLink>
@@ -140,6 +146,9 @@ interface LyricDao {
     @Query("UPDATE lyrics SET offset_ms = :ms WHERE song_file = :file")
     suspend fun setOffsetMs(file: String, ms: Int)
 
+    @Query("DELETE FROM lyrics WHERE song_file = :file")
+    suspend fun deleteByFile(file: String)
+
     @Query("SELECT * FROM lyrics")
     suspend fun all(): List<LyricEntity>
 }
@@ -181,6 +190,9 @@ interface MusicHistoryDao {
 
     @Query("SELECT * FROM music_history ORDER BY id")
     suspend fun allOrdered(): List<MusicHistoryEntry>
+
+    @Query("DELETE FROM music_history WHERE song_file = :file")
+    suspend fun deleteByFile(file: String)
 }
 
 @Dao
@@ -196,6 +208,9 @@ interface PlaylistHistoryDao {
 
     @Query("SELECT * FROM playlist_history ORDER BY id")
     suspend fun allOrdered(): List<PlaylistHistoryEntry>
+
+    @Query("DELETE FROM playlist_history WHERE playlist_id = :playlistId")
+    suspend fun deleteByPlaylistId(playlistId: Long)
 }
 
 @Dao

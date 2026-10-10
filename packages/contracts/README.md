@@ -4,7 +4,7 @@ Single source of truth for cross-device sync. Implementations:
 
 - Desktop: `apps/desktop/database.sql` (SQLite schema) + `apps/desktop/services/api_sync.py` (HTTP delta/files sync; `sync.py` is the retired MySQL leg)
 - Web: `apps/web/src/Hathor.Infrastructure` (EF migrations) + `apps/web/src/Hathor.Api/SyncController.cs` (`export`/`import`/`delta`/`files`)
-- Mobile: Room schema + `SyncWorker`/`PullWorker` (to be added under `apps/mobile/`)
+- Mobile: Room schema + `data/api/SyncApi.kt` (delta/files client) + `data/remote/PullWorker.kt` / `data/remote/RemoteWriter.kt`
 
 Transport: the shared MySQL/TiDB remote is retired. Devices sync over the
 Web API (`HATHOR_API_URL` + per-device `hth_` key, LAN): `GET /api/v1/sync/delta?cursor=`

@@ -6,7 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
-import com.musicplayer.android.BuildConfig
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.db.AppDatabase
 import com.musicplayer.android.data.db.SongEntity
 import com.musicplayer.android.engine.DownloadEngine
@@ -147,8 +147,7 @@ class SettingsRepository(
     }
 
     fun remoteStatus(): String {
-        val host = try { BuildConfig.DB_HOST } catch (_: Exception) { "" }
-        return if (host.isNotBlank()) "Remote: $host" else "Remote sync off."
+        return try { SyncConfig.describe() } catch (_: Exception) { "Sync off." }
     }
 
     fun setVolume(v: Float) {
