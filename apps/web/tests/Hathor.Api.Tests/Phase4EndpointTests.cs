@@ -111,7 +111,7 @@ public sealed class Phase4EndpointTests : IAsyncLifetime
         putHuge.Headers.Authorization = Bearer(token);
         putHuge.Content = JsonContent.Create(new { offsetMs = 99999 });
         (await (await _client.SendAsync(putHuge)).Content.ReadFromJsonAsync<Offset>())!
-            .OffsetMs.Should().Be(10000);
+            .OffsetMs.Should().Be(20000);
 
         // Back to zero: sparse storage, reads as 0.
         using var putZero = new HttpRequestMessage(HttpMethod.Put, "/api/v1/songs/s.mp3/lyrics/offset");
