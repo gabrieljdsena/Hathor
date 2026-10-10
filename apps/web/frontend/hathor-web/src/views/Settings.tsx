@@ -62,6 +62,37 @@ function msgOf(e: unknown): string {
   return e.message
 }
 
+// Wallpaper pre-check (mirrors the server's 10 MB cap + image allow-list):
+// over-limit bodies get their connection reset mid-upload, which fetch
+// reports as an opaque NetworkError instead of the server's 400. Reject
+// here so the user gets the real reason. Null = looks fine, upload it.
+export const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024
+const BACKGROUND_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp']
+
+export function validateBackgroundFile(file: { type: string; size: number }): string | null {
+  if (file.type && !BACKGROUND_TYPES.includes(file.type))
+    return 'Only JPEG, PNG, GIF, WebP or BMP images are allowed.'
+  if (file.size > MAX_BACKGROUND_BYTES) return 'Image must be under 10 MB — pick a smaller file.'
+  return null
+}
+
+// Upload with upload-specific errors: validation rejects before any
+// bytes move, and a killed connection (over-limit body reset mid-stream
+// surfaces as a bare fetch TypeError) explains itself instead of printing
+// browser internals. Server JSON errors render via msgOf.
+export function uploadBackgroundFile(
+  file: File,
+  upload: (f: File) => Promise<string>,
+): Promise<string> {
+  const problem = validateBackgroundFile(file)
+  if (problem) return Promise.reject(new Error(problem))
+  return upload(file).catch((e: unknown) => {
+    if (e instanceof TypeError)
+      throw new Error('Upload failed — check your connection and try a smaller file.')
+    throw new Error(msgOf(e))
+  })
+}
+
 function formatDate(iso: string): string {  const d = new Date(iso)
   return Number.isNaN(d.getTime())
     ? iso
@@ -328,7 +359,13 @@ export default function Settings() {
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0]
-              if (f) run('bg-upload', api.uploadBackground(f).then(() => 'Background updated.'))
+              if (f)
+                run(
+                  'bg-upload',
+                  uploadBackgroundFile(f, (file) =>
+                    api.uploadBackground(file).then(() => 'Background updated.'),
+                  ),
+                )
               e.target.value = ''
             }}
           />
