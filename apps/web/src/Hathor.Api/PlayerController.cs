@@ -58,7 +58,7 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
         var key = IdempotencyKey();
         if (key is not null && idempotency.TryGetValue(key, out PlayerStateDto? cached) && cached is not null)
             return Ok(cached);
-        var dto = await mediator.Send(new NextCommand(UserId, body?.Auto ?? false, key), ct);
+        var dto = await mediator.Send(new NextCommand(UserId, body?.Auto ?? false, key, body?.ExpectedFile), ct);
         if (key is not null) idempotency.Set(key, dto, TimeSpan.FromMinutes(10));
         return Ok(dto);
     }
@@ -214,7 +214,7 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
 }
 
 public sealed record PlayRequest(string? File, bool? IsPodcast, string? InstanceId, bool Opening = false);
-public sealed record NextRequest(bool Auto = false);
+public sealed record NextRequest(bool Auto = false, string? ExpectedFile = null);
 public sealed record SeekRequest(double Seconds);
 public sealed record SeekByRequest(double DeltaSeconds);
 public sealed record VolumeRequest(double Volume);

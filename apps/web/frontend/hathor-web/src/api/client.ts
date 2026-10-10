@@ -393,7 +393,14 @@ export const api = {
     }),
   toggle: () => request<PlayerState>('/player/toggle', { method: 'POST' }),
   pause: () => request<PlayerState>('/player/pause', { method: 'POST' }),
-  next: () => request<PlayerState>('/player/next', { method: 'POST', body: '{}' }),
+  // expectedFile: conditional advance for the crossfade handoff — the
+  // server skips the advance when the current track already moved on
+  // (manual transport consumed it), converging instead of skipping a song.
+  next: (expectedFile?: string | null) =>
+    request<PlayerState>(
+      '/player/next',
+      { method: 'POST', body: JSON.stringify({ expectedFile: expectedFile ?? null }) },
+    ),
   prev: () => request<PlayerState>('/player/prev', { method: 'POST' }),
   seek: (seconds: number) =>
     request<PlayerState>('/player/seek', { method: 'POST', body: JSON.stringify({ seconds }) }),

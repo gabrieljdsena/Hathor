@@ -132,6 +132,12 @@ export const END_EPSILON_SEC = 0.25
 // An `ended` this soon after a seek whose target was safely inside the
 // track is a spurious end (bad range past EOF), not a real finish.
 const SPURIOUS_END_WINDOW_MS = 1500
+// An `ended` this far short of a sane known duration is a cut-short stream
+// (truncated file), not a real finish — recover instead of advancing.
+// Durations at/below the minimum keep the legacy advance behavior so
+// corrupt/empty files still skip past instead of pausing the queue.
+const CUT_SHORT_GAP_SEC = 3
+const CUT_SHORT_MIN_DURATION_SEC = 5
 // A playing element whose clock freezes this long gets one recovery seek;
 // then we give up (pause) instead of fake-playing forever.
 const STALL_TIMEOUT_MS = 10000
@@ -170,7 +176,8 @@ export class AudioEngine {
   private fadeEnabled = false
   private fadeSec = 5
   private peekNext: () => EngineTrack | null = () => null
-  private beginNext: (expected: EngineTrack) => Promise<EngineTrack | null> = async () => null
+  private beginNext: (expected: EngineTrack, outFile: string | null) => Promise<EngineTrack | null> =
+    async () => null
   private endedCb: () => void = () => {}
   private timer: ReturnType<typeof setInterval> | null = null
   // Debug sink: the store wires this to the server log bridge (throttled).
@@ -330,7 +337,7 @@ export class AudioEngine {
 
   setNextProvider(
     peek: () => EngineTrack | null,
-    begin: (expected: EngineTrack) => Promise<EngineTrack | null>,
+    begin: (expected: EngineTrack, outFile: string | null) => Promise<EngineTrack | null>,
   ) {
     this.peekNext = peek
     this.beginNext = begin
@@ -522,6 +529,10 @@ export class AudioEngine {
       // track (bad byte range past EOF on a huge file): re-seek the target
       // instead of advancing away from the user's episode. `ended` only
       // fires out of playing state, so resuming here is always correct.
+      // The guard grants one recovery per seek: if the target itself is
+      // past a cut point, the next `ended` falls through to the cut-short
+      // path below instead of re-seeking forever.
+      this.lastSeekAt = -Infinity
       this.report(
         `spurious ended ignored target=${this.lastSeekTarget} dur=${slot.el.duration} ${this.describeSlot(slot)}`,
       )
@@ -535,8 +546,55 @@ export class AudioEngine {
       }
     }
     if (slot === this.active) {
-      this.report(`ended, advancing ${this.describeSlot(slot)}`, true)
+      // `ended` far from the known end (cut-short stream, truncated file):
+      // the track didn't really finish. Recover like an element error
+      // instead of advancing away mid-song. Bounded — a deterministically
+      // cut file pauses instead of spinning or skipping.
+      if (this.isCutShortEnd()) {
+        this.report(`cut-short ended, recovering ${this.describeSlot(slot)}`)
+        this.recoverCutShortEnd(slot)
+        return
+      }
+      this.report(`ended, advancing ${this.describeSlot(slot)}`)
       this.endedCb()
+    }
+  }
+
+  // True when `ended` fired well short of a sane known duration — i.e. the
+  // audio cut out mid-track, not a real finish. Unknown/tiny durations
+  // (corrupt or empty files) keep the legacy advance behavior.
+  private isCutShortEnd(): boolean {
+    try {
+      const dur = this.active.el.duration
+      const pos = this.active.el.currentTime
+      if (!Number.isFinite(dur) || dur <= CUT_SHORT_MIN_DURATION_SEC) return false
+      if (!Number.isFinite(pos) || pos < 0) return false
+      return dur - pos > CUT_SHORT_GAP_SEC
+    } catch {
+      return false
+    }
+  }
+
+  private recoverCutShortEnd(slot: Slot) {
+    if (slot.recoveries >= MAX_RECOVERIES) {
+      this.report(`cut-short recovery exhausted, pausing ${this.describeSlot(slot)}`)
+      try {
+        slot.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    slot.recoveries += 1
+    try {
+      slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastAdvanceAt = this.deps.now()
+      // `ended` fires out of playing state (see the spurious branch), so
+      // resuming here is always correct. lastSeekAt is deliberately left
+      // alone: the spurious guard keeps its per-seek semantics.
+      this.tryPlay(slot.el, 'cut-short-end')
+    } catch (e: unknown) {
+      this.report(`cut-short recovery threw: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -785,9 +843,13 @@ export class AudioEngine {
       pauseBeganAt: null,
     }
     // Advance the server exactly when the new audio starts, so its position
-    // estimate and the new track stay aligned. A changed queue (remote
-    // edit mid-fade) hard-switches to whatever the server says is current.
-    void this.beginNext(next)
+    // estimate and the new track stay aligned. The outgoing file travels
+    // along so a queue that moved under the fade (manual transport in the
+    // preload/fade window) converges instead of advancing a second time.
+    // Any other change (remote edit mid-fade) hard-switches to whatever
+    // the server says is current.
+    const outFile = this.fading.out.file
+    void this.beginNext(next, outFile)
       .then((actual) => {
         if (!this.fading || !actual || actual.file !== idle.file) {
           if (this.fading && actual && actual.file !== idle.file) this.abortTo(actual)

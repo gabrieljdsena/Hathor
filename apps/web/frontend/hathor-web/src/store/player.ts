@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, type PlayerState, type QueueSource, type Song } from '../api/client'
-import { engine } from '../audio/engine'
+import { engine, type EngineTrack } from '../audio/engine'
 
 // Client playback store. Server PlaybackState is the source of truth
 // (pulled on load); the AudioEngine renders it with gapless handoff and
@@ -72,9 +72,11 @@ function syncEngine(state: PlayerState) {
     engine.load(song ? toTrack(song) : null, state.isPlaying)
   } else {
     // Repeat-one wrap lands on an ended element, where play() is a no-op:
-    // rewind first, then (re)start.
+    // rewind first, then (re)start. Only when repeat is on — otherwise a
+    // response arriving while the element parks at the edge would restart
+    // a finished song instead of letting `ended` advance the queue.
     const dur = engine.duration()
-    if (dur > 0 && state.isPlaying && engine.time() >= dur - 0.25) engine.seek(0)
+    if (state.repeat && dur > 0 && state.isPlaying && engine.time() >= dur - 0.25) engine.seek(0)
     if (state.isPlaying && !engine.isPlaying()) engine.play()
     else if (!state.isPlaying && engine.isPlaying()) engine.pause()
   }
@@ -82,17 +84,27 @@ function syncEngine(state: PlayerState) {
   // Snap the element to the server on real drift only (refresh resume,
   // remote seek, repeat-one wrap) — small drift is left alone so
   // volume/shuffle responses never cause audible jumps. Never fight a fade.
+  // The correction is capped at the track's known length: a wall-clock
+  // estimate that outran a stalled element must never yank playback onto
+  // the duration edge (which fires `ended` and skips mid-song). engine.seek
+  // clamps to the element duration when metadata is loaded; the catalog
+  // duration covers the metadata-pending window.
   const pos = state.positionSec
   if (!engine.isFading() && Number.isFinite(pos) && pos >= 0 && Math.abs(engine.time() - pos) > 2) {
-    engine.seek(pos)
+    const elDur = engine.duration()
+    const known = elDur > 0 ? elDur : (song?.duration ?? 0)
+    engine.seek(known > 0 ? Math.min(pos, known) : pos)
   }
 }
 
 // Server advance at fade start (engine calls this exactly when new audio
-// starts). syncEngine is fade-aware, so the matching case never reloads;
-// a changed queue (or stop) hard-switches via the normal path.
-async function advanceForFade() {
-  const state = await api.next()
+// starts, passing the outgoing file). syncEngine is fade-aware, so the
+// matching case never reloads; a changed queue (or stop) hard-switches via
+// the normal path. The outgoing file makes the advance conditional: a
+// manual transport in the preload/fade window already consumed it, so the
+// server converges instead of skipping a second song.
+async function advanceForFade(outFile: string | null) {
+  const state = await api.next(outFile)
   usePlayer.setState(state)
   syncEngine(state)
   const song = state.currentSong
@@ -104,7 +116,7 @@ engine.setNextProvider(
     const next = usePlayer.getState().queue[0]
     return next ? toTrack(next) : null
   },
-  async () => advanceForFade(),
+  async (_expected: EngineTrack, outFile: string | null) => advanceForFade(outFile),
 )
 
 // Engine diagnostics → server logs (throttled inside the engine): seek

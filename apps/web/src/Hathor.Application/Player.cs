@@ -97,7 +97,7 @@ public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadMo
 }
 
 public sealed record PauseCommand(Guid UserId) : IRequest<PlayerStateDto>;
-public sealed record NextCommand(Guid UserId, bool Auto = false, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
+public sealed record NextCommand(Guid UserId, bool Auto = false, string? IdempotencyKey = null, string? ExpectedFile = null) : IRequest<PlayerStateDto>;
 public sealed record PrevCommand(Guid UserId, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
 
 public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadModel songs, IServiceScopeFactory scopes, IPlaybackHub hub)
@@ -123,6 +123,20 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         var now = DateTime.UtcNow;
         var oldFile = state.CurrentFile;
+
+        // Conditional advance (crossfade handoff): the fade computed its
+        // target from a queue snapshot that a manual transport may have
+        // already consumed. If the current track moved on, converge on it
+        // without advancing again instead of skipping a song unheard.
+        if (cmd.ExpectedFile is not null &&
+            !string.Equals(state.CurrentFile, cmd.ExpectedFile, StringComparison.OrdinalIgnoreCase))
+        {
+            await playback.SaveChangesAsync(ct);
+            var converged = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
+            await hub.BroadcastStateAsync(cmd.UserId, converged, ct);
+            await hub.BroadcastQueueAsync(cmd.UserId, converged.Queue, ct);
+            return converged;
+        }
 
         // Repeat replays the current song on auto-advance (desktop play_next auto+repeat).
         if (state.Repeat && cmd.Auto && state.CurrentFile is not null)
@@ -446,8 +460,16 @@ public static class PlayerHelpers
         var queue = (await songs.GetManyAsync(userId, state.NextFiles, includeCover: false, ct))
             .ToList();
 
+        var position = state.EstimatedPositionSec(DateTime.UtcNow);
+        // Wall-clock estimates must never outlive the track: a stalled
+        // client element plus an overrun estimate makes the client's drift
+        // correction yank playback to the duration edge and auto-advance
+        // mid-song. Clamp to the resolved track length when known.
+        if (current is not null && current.Duration > 0)
+            position = Math.Clamp(position, 0, current.Duration);
+
         return new PlayerStateDto(
-            current, state.IsPlaying, state.EstimatedPositionSec(DateTime.UtcNow),
+            current, state.IsPlaying, position,
             state.Volume, state.Shuffle, state.Repeat, queue,
             state.Source is null ? null : new QueueSourceDto(state.Source.Type, state.Source.Id),
             state.IsCustomQueue, state.FirstPlay, state.NextFiles.Count);

@@ -521,8 +521,94 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     await s.advance(250)
     s.engine.seek(5000)
     await s.advance(2000) // past the spurious-end window
+    s.els[0].currentTime = 10799 // at the real end, not mid-track
     s.els[0].fireEnded()
     expect(ended).toEqual(['ended'])
+  })
+
+  it('recovers instead of advancing on a cut-short ended', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250) // tick records lastGoodTime = 3600
+    s.els[0].currentTime = 47 // stream cut out mid-track
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(3600)
+    expect(s.els[0].paused).toBe(false)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('pauses instead of spinning on a deterministically cut file', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    for (let i = 0; i < 3; i += 1) {
+      s.els[0].currentTime = 47
+      s.els[0].fireEnded()
+      expect(s.els[0].paused).toBe(false)
+    }
+    s.els[0].currentTime = 47
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('grants one spurious recovery per seek, then treats repeats as cut-short', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    await s.advance(200)
+    s.els[0].fireEnded() // spurious: re-seeks the target
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(5000)
+    // Target itself is past a cut point: ends again at once. Must not
+    // re-seek forever — cut-short recovery instead of advancing.
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('keeps the legacy advance for tiny or unknown durations', async () => {
+    const s = setup()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    s.engine.load(track('clip.mp3'), true)
+    await s.advance(250)
+    // Unknown duration (metadata not loaded): advance as before.
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended'])
+    // Tiny duration (jingle/clip): advance as before, never recover.
+    s.els[0].duration = 4
+    s.els[0].currentTime = 1
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended', 'ended'])
+  })
+
+  it('reports genuine advances to the server log bridge', async () => {
+    const s = playingThreeHourTrack()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.els[0].currentTime = 10799
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended'])
+    expect(reports.some((m) => m.includes('ended, advancing'))).toBe(true)
+  })
+
+  it('reports cut-short ends to the server log bridge', async () => {
+    const s = playingThreeHourTrack()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    await s.advance(250)
+    s.els[0].currentTime = 47
+    s.els[0].fireEnded()
+    expect(reports.some((m) => m.includes('cut-short ended, recovering'))).toBe(true)
   })
 
   it('recovers a failed element at the last good position', async () => {

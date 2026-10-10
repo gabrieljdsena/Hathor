@@ -48,14 +48,27 @@ export function useChapterJump() {  const file = usePlayer((s) => s.currentSong?
 
   return useMemo(() => {
     if (!isPodcast || chapters.length === 0) return { prev: () => false, next: () => false }
+    // Same load-bearing guard as the auto-skip pump, evaluated at press
+    // time (not memo time): the store can still name the previous podcast
+    // while the element already plays the next song (slow or failed play
+    // call). Without this, the old episode's chapters seek the new song
+    // instead of changing track, and the queue looks frozen or wrong.
+    const guarded = () => {
+      const current = usePlayer.getState().currentSong
+      if (!current?.isPodcast) return false
+      if (!current.file || engine.currentFile() !== current.file) return false
+      return true
+    }
     return {
       prev: () => {
+        if (!guarded()) return false
         const target = prevChapterStart(chapters, engine.time())
         if (target === null) return false
         seekTo(target)
         return true
       },
       next: () => {
+        if (!guarded()) return false
         const target = nextChapterStart(chapters, engine.time())
         if (target === null) return false
         seekTo(target)

@@ -247,6 +247,40 @@ describe('useChapterJump', () => {
     expect(result.current.next()).toBe(false)
   })
 
+  it('never chapter-seeks a song the store still mistakes for a podcast', async () => {
+    // Store/engine divergence (switch mid-flight, failed play call): the
+    // store names the old episode with chapters while the element already
+    // plays a song. Transport must fall through to track change instead of
+    // seeking the song to the old episode's chapter point (which leaves the
+    // queue looking frozen or wrong).
+    mockList.mockResolvedValue(chapters)
+    mockEngineTime.mockReturnValue(10)
+    mockEngineFile.mockReturnValue('song.mp3')
+    mockSeek.mockResolvedValue({})
+    usePlayer.setState({ currentSong: episode })
+    const { result } = renderHook(() => useChapterJump(), { wrapper: hookWrapper() })
+    await waitFor(() => expect(mockList).toHaveBeenCalledWith('ep.mp3'))
+    expect(result.current.next()).toBe(false)
+    expect(result.current.prev()).toBe(false)
+    expect(mockEngineSeek).not.toHaveBeenCalled()
+    expect(mockSeek).not.toHaveBeenCalled()
+  })
+
+  it('chapter-jumps again once the element catches up to the store episode', async () => {
+    mockList.mockResolvedValue(chapters)
+    mockEngineTime.mockReturnValue(10)
+    mockEngineFile.mockReturnValue('song.mp3')
+    mockSeek.mockResolvedValue({})
+    usePlayer.setState({ currentSong: episode })
+    const { result } = renderHook(() => useChapterJump(), { wrapper: hookWrapper() })
+    await waitFor(() => expect(mockList).toHaveBeenCalledWith('ep.mp3'))
+    expect(result.current.next()).toBe(false)
+    // Server confirms: the element now renders the store's episode.
+    mockEngineFile.mockReturnValue('ep.mp3')
+    await waitFor(() => expect(result.current.next()).toBe(true))
+    expect(mockEngineSeek).toHaveBeenCalledWith(60)
+  })
+
   it('stays on track transport for songs and chapterless episodes', async () => {
     mockList.mockResolvedValue([])
     usePlayer.setState({ currentSong: { ...episode, isPodcast: false } })
