@@ -1,10 +1,18 @@
-webviewpy
+pywebview
 mutagen
-yt_dlp
-download
+yt-dlp
 pygame
-winsdk
 psutil
 pykakasi
-pymysql
-pillow
+# Sync now speaks the Hathor Web API over stdlib urllib
+# (services/api_sync.py) — PyMySQL was only for the retired remote DB.
+# Keep it installed manually only if you opt into the legacy JDBC path
+# via HATHOR_SYNC_LEGACY=1.
+Pillow
+python-dotenv
+# winsdk only ships wheels up to CPython 3.12. On 3.13+ pip falls back to an
+# sdist that needs VS Build Tools + CMake, which breaks the whole install.
+# Gate it so `pip install -r requirements.txt` completes everywhere; the app
+# runs without it (SMTC media overlay becomes a no-op — see
+# services/windows_media.py).
+winsdk==1.0.0b10; sys_platform == "win32" and python_version < "3.13"

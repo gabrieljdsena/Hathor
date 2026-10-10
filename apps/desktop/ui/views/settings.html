@@ -254,14 +254,14 @@
                     </svg>
                 </div>
                 <div>
-                    <h3 class="text-zinc-200 font-medium">Sync Local to Remote DB</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Pushes your songs, playlists, lyrics and history to the remote database</p>
+                    <h3 class="text-zinc-200 font-medium">Sync Local to Server</h3>
+                    <p class="text-xs text-zinc-500 mt-0.5">Pushes your songs, playlists, lyrics and history to the sync server</p>
                 </div>
             </div>
             <button
-                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Pushing to remote database...'); window.pywebview.api.sync_local_to_remote().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
+                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Pushing to sync server...'); window.pywebview.api.sync_local_to_remote().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
                 class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                Push to Remote
+                Push to Server
             </button>
         </div>
 
@@ -278,14 +278,14 @@
                     </svg>
                 </div>
                 <div>
-                    <h3 class="text-zinc-200 font-medium">Sync Remote DB to Local</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Fetches remote songs and starts downloading missing ones</p>
+                    <h3 class="text-zinc-200 font-medium">Sync Server to Local</h3>
+                    <p class="text-xs text-zinc-500 mt-0.5">Fetches server songs and downloads missing files</p>
                 </div>
             </div>
             <button
-                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Fetching remote database...'); window.pywebview.api.sync_remote_to_local_and_download().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
+                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Fetching from sync server...'); window.pywebview.api.sync_remote_to_local_and_download().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
                 class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                Sync Remote
+                Sync from Server
             </button>
         </div>
     </div>

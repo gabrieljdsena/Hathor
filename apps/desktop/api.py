@@ -473,18 +473,40 @@ class Api:
         return self.db.sync_local_songs_to_db()
 
     def sync_remote_to_local_and_download(self):
-        return self.db.sync_remote_to_local_and_download()
+        from services.api_sync import sync_backend, ApiSyncClient, RETIRED_MESSAGE, NOT_CONFIGURED
+        backend = sync_backend()
+        if backend == "api":
+            try:
+                return ApiSyncClient(self.db_path).pull_once()
+            except Exception as e:
+                print(f" [Python] Pull sync error: {e}")
+                return f"Error: {e}"
+        if backend == "retired":
+            return RETIRED_MESSAGE
+        if backend == "legacy":
+            return self.db.sync_remote_to_local_and_download()
+        return NOT_CONFIGURED
 
     def sync_local_to_remote(self):
-        """Manual one-shot push of the local library to the remote DB."""
-        if not os.getenv("DB_HOST"):
-            return "No remote DB configured. Remote sync unavailable."
-        try:
-            from sync import DatabaseSync
-            return DatabaseSync(self.db_path).sync_once()
-        except Exception as e:
-            print(f" [Python] Push sync error: {e}")
-            return f"Error: {e}"
+        """Manual one-shot push of the local library to the sync server."""
+        from services.api_sync import sync_backend, ApiSyncClient, RETIRED_MESSAGE, NOT_CONFIGURED
+        backend = sync_backend()
+        if backend == "api":
+            try:
+                return ApiSyncClient(self.db_path).push_once()
+            except Exception as e:
+                print(f" [Python] Push sync error: {e}")
+                return f"Error: {e}"
+        if backend == "retired":
+            return RETIRED_MESSAGE
+        if backend == "legacy":
+            try:
+                from sync import DatabaseSync
+                return DatabaseSync(self.db_path).sync_once()
+            except Exception as e:
+                print(f" [Python] Push sync error: {e}")
+                return f"Error: {e}"
+        return NOT_CONFIGURED
 
     # ==========================
     # Native Application Logic
