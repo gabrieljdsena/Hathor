@@ -12,11 +12,17 @@ namespace Hathor.Api.Controllers;
 [Route("api/v1/system")]
 public sealed class SystemController(
     ISystemProbe probe,
-    Hathor.Infrastructure.Maintenance.IFfmpegInstaller ffmpegInstaller) : ControllerBase
+    Hathor.Infrastructure.Maintenance.IFfmpegInstaller ffmpegInstaller,
+    Hathor.Infrastructure.Maintenance.IYtDlpInstaller ytdlpInstaller) : ControllerBase
 {
     [HttpGet("ffmpeg")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
     public ActionResult<FFmpegStatusDto> FFmpeg() => Ok(probe.GetFFmpegStatus());
+
+    // yt-dlp fallback binary status (same shape as FFmpeg).
+    [HttpGet("ytdlp")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public ActionResult<FFmpegStatusDto> YtDlp() => Ok(probe.GetYtDlpStatus());
 
     [HttpGet("libraries")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
@@ -42,6 +48,28 @@ public sealed class SystemController(
         try
         {
             return Accepted(ffmpegInstaller.StartDownload());
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    // Self-install progress for an in-flight (or finished) yt-dlp download.
+    [HttpGet("ytdlp/download")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public ActionResult<FfmpegDownloadDto> YtDlpDownloadStatus() => Ok(ytdlpInstaller.Status());
+
+    // Starts the background yt-dlp download+install (202 + current status).
+    // 409 while one is already running; already-installed returns ready
+    // unless force=true, which re-downloads the latest release (update).
+    [HttpPost("ytdlp/download")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public ActionResult<FfmpegDownloadDto> StartYtDlpDownload([FromQuery] bool force = false)
+    {
+        try
+        {
+            return Accepted(ytdlpInstaller.StartDownload(force));
         }
         catch (InvalidOperationException ex)
         {

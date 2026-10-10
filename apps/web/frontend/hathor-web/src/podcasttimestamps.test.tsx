@@ -39,20 +39,26 @@ vi.mock('./api/client', async (importOriginal) => {
   }
 })
 
-vi.mock('./audio/engine', () => ({
-  engine: {
-    time: (...args: unknown[]) => mockEngineTime(...args),
-    seek: (...args: unknown[]) => mockEngineSeek(...args),
-    currentFile: (...args: unknown[]) => mockEngineFile(...args),
-    // store/player wires these at module scope; no-op here.
-    setNextProvider: vi.fn(),
-    onEnded: vi.fn(),
-    isFading: () => false,
-    isPlaying: () => false,
-    play: vi.fn(),
-    pause: vi.fn(),
-  },
-}))
+vi.mock('./audio/engine', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./audio/engine')>()
+  return {
+    // Real pure helpers (clampSeekTarget): only the engine singleton is fake.
+    ...mod,
+    engine: {
+      time: (...args: unknown[]) => mockEngineTime(...args),
+      seek: (...args: unknown[]) => mockEngineSeek(...args),
+      currentFile: (...args: unknown[]) => mockEngineFile(...args),
+      duration: () => 0, // metadata-pending: chapter seeks clamp to catalog
+      // store/player wires these at module scope; no-op here.
+      setNextProvider: vi.fn(),
+      onEnded: vi.fn(),
+      isFading: () => false,
+      isPlaying: () => false,
+      play: vi.fn(),
+      pause: vi.fn(),
+    },
+  }
+})
 
 const chapters: PodcastTimestamp[] = [
   { id: 1, podcastFile: 'ep.mp3', name: 'Intro', startSecs: 0, endSecs: 60 },
@@ -352,6 +358,25 @@ describe('useChapterAutoSkip', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalledWith('ep.mp3'))
     await new Promise((r) => setTimeout(r, 700))
     expect(mockEngineSeek).not.toHaveBeenCalled()
+  })
+
+  it('clamps chapter seeks past the episode end instead of poisoning position', async () => {
+    // A user-entered chapter past EOF must park near the end: storing 120
+    // on a 100s episode would yank a later drift correction onto the
+    // duration edge, fire `ended`, and advance away mid-track.
+    mockList.mockResolvedValueOnce([
+      { id: 1, podcastFile: 'ep.mp3', name: 'Intro', startSecs: 120, endSecs: null },
+    ])
+    mockEngineTime.mockReturnValue(2)
+    mockSeek.mockResolvedValue({})
+    usePlayer.setState({
+      currentSong: { ...episode, duration: 100 },
+      isPlaying: true,
+      chapterSkip: true,
+    })
+    renderHook(() => useChapterAutoSkip(), { wrapper: hookWrapper() })
+    await waitFor(() => expect(mockEngineSeek).toHaveBeenCalledWith(99.75), { timeout: 3000 })
+    expect(mockSeek).toHaveBeenCalledWith(99.75)
   })
 
   it('ignores open-ended markers', async () => {

@@ -78,6 +78,12 @@ public sealed class PlayHandler(
         }
 
         await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
+        // A toggle that lands paused must not park past the track end (see
+        // PlaybackPositionClamp): wall-clock estimates outrun stalled
+        // elements, and the client's drift correction would land on the
+        // duration edge and auto-advance away.
+        if (!state.IsPlaying)
+            await PlaybackPositionClamp.ClampStoredAsync(state, songs, cmd.UserId, ct);
         PlaybackPushHooks.PushOnPause(scopes, cmd.UserId, state);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
@@ -107,6 +113,7 @@ public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadMod
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.Pause(DateTime.UtcNow);
+        await PlaybackPositionClamp.ClampStoredAsync(state, songs, cmd.UserId, ct);
         PlaybackPushHooks.PushOnPause(scopes, cmd.UserId, state);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
@@ -211,7 +218,16 @@ public sealed class SeekHandler(IPlaybackStateRepository playback, ISongReadMode
     public async Task<PlayerStateDto> Handle(SeekCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
-        state.Seek(cmd.Seconds, DateTime.UtcNow);
+        // Chapter marks are user-entered and can overshoot EOF: never store
+        // a position past the measured track length (see
+        // PlaybackPositionClamp).
+        var seconds = cmd.Seconds;
+        if (state.CurrentFile is not null)
+        {
+            var resolved = await songs.GetByFileAsync(cmd.UserId, state.CurrentFile, includeCover: false, ct);
+            seconds = PlaybackPositionClamp.Clamp(seconds, resolved?.Duration);
+        }
+        state.Seek(seconds, DateTime.UtcNow);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -226,7 +242,13 @@ public sealed class SeekByHandler(IPlaybackStateRepository playback, ISongReadMo
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         var now = DateTime.UtcNow;
-        state.Seek(state.EstimatedPositionSec(now) + cmd.DeltaSeconds, now);
+        var target = state.EstimatedPositionSec(now) + cmd.DeltaSeconds;
+        if (state.CurrentFile is not null)
+        {
+            var resolved = await songs.GetByFileAsync(cmd.UserId, state.CurrentFile, includeCover: false, ct);
+            target = PlaybackPositionClamp.Clamp(target, resolved?.Duration);
+        }
+        state.Seek(target, now);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -326,6 +348,30 @@ public sealed class GetQueuePageHandler(
             .ToList();
         var items = await songs.GetManyAsync(q.UserId, slice, includeCover: false, ct);
         return new QueuePageDto(items, state.NextFiles.Count, page, pageSize);
+    }
+}
+
+// Stored positions must never outlive the track: wall-clock estimates
+// keep running while an element stalls (long-file seek stalls), chapter
+// marks are user-entered and can overshoot EOF, and a tab left open keeps
+// "playing" for hours. A past-the-end position makes the client's drift
+// correction land on the duration edge — which fires `ended` and advances
+// the queue away mid-track (podcast vanishes from Up Next, another song
+// appears at 0:00). Clamp to the measured file length when known;
+// unknown lengths (0) keep the legacy unclamped behavior.
+public static class PlaybackPositionClamp
+{
+    public static double Clamp(double seconds, double? duration) =>
+        duration is > 0 ? Math.Clamp(seconds, 0, duration.Value) : Math.Max(0, seconds);
+
+    public static async Task ClampStoredAsync(
+        PlaybackState state, ISongReadModel songs, Guid userId, CancellationToken ct = default)
+    {
+        if (state.CurrentFile is null) return;
+        var resolved = await songs.GetByFileAsync(userId, state.CurrentFile, includeCover: false, ct);
+        if (resolved is null || resolved.Duration <= 0) return;
+        state.PositionOffsetSec = Math.Min(state.PositionOffsetSec, resolved.Duration);
+        state.PausePositionSec = Math.Min(state.PausePositionSec, resolved.Duration);
     }
 }
 

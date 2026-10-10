@@ -76,19 +76,36 @@ public sealed class YoutubeExplodeEngine(
     }
 
     public async Task DownloadAudioAsync(string url, string destMp3Path,
-        Action<double> progress, CancellationToken ct = default)
+        Action<double> progress, Action<string>? onPhase = null, CancellationToken ct = default)
     {
         string? container = null;
+        void Phase(string name)
+        {
+            try { onPhase?.Invoke(name); } catch { }
+        }
         try
         {
-            var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
+            Phase("manifest");
+            // Manifest resolution reports no progress and can hang on
+            // throttled/bot-checked videos: bound it well under the queue's
+            // 5-minute silence watchdog so a stall fails fast into the
+            // yt-dlp fallback instead of burning the whole watchdog window.
+            using var manifestCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            manifestCts.CancelAfter(ManifestTimeout(config));
+            var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, manifestCts.Token);
             var audio = manifest.GetAudioOnlyStreams().GetWithHighestBitrate();
+            // Phase-transition heartbeat for the queue's silence watchdog:
+            // manifest resolution reports no progress and can take a while
+            // on throttled/bot-checked videos.
+            try { progress(0.02); } catch { }
             var dir = Path.GetDirectoryName(destMp3Path)!;
             Directory.CreateDirectory(dir);
             container = Path.Combine(dir, Guid.NewGuid().ToString("N") + "." + audio.Container.Name);
+            Phase("download");
             await _youtube.Videos.Streams.DownloadAsync(
                 audio, container, new Progress<double>(progress), ct);
             progress(1.0);
+            Phase("transcode");
             await TranscodeAsync(container, destMp3Path, ct);
         }
         catch (Exception ex)
@@ -180,6 +197,13 @@ public sealed class YoutubeExplodeEngine(
     private static Exception FFmpegMissing() => new InvalidOperationException(
         "FFmpeg not found. Download it from Settings → FFmpeg, install FFmpeg on PATH, "
         + "or set the FFmpeg__Path environment variable.");
+
+    // Bound for the progress-blind manifest fetch (Downloads:ManifestTimeoutSec,
+    // default 120s, clamped 30..600): must stay well under the queue's
+    // 5-minute silence watchdog so a hung resolve fails fast into fallback.
+    internal static TimeSpan ManifestTimeout(IConfiguration config) =>
+        TimeSpan.FromSeconds(Math.Clamp(
+            config.GetValue("Downloads:ManifestTimeoutSec", 120), 30, 600));
 
     private static string Tail(string s, int max = 500) =>
         s.Length <= max ? s : s[^max..];

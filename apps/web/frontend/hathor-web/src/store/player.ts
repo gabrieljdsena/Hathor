@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, type PlayerState, type QueueSource, type Song } from '../api/client'
-import { engine, type EngineTrack } from '../audio/engine'
+import { DRIFT_EDGE_MARGIN_SEC, engine, type EngineTrack } from '../audio/engine'
 
 // Client playback store. Server PlaybackState is the source of truth
 // (pulled on load); the AudioEngine renders it with gapless handoff and
@@ -84,16 +84,20 @@ function syncEngine(state: PlayerState) {
   // Snap the element to the server on real drift only (refresh resume,
   // remote seek, repeat-one wrap) — small drift is left alone so
   // volume/shuffle responses never cause audible jumps. Never fight a fade.
-  // The correction is capped at the track's known length: a wall-clock
-  // estimate that outran a stalled element must never yank playback onto
-  // the duration edge (which fires `ended` and skips mid-song). engine.seek
-  // clamps to the element duration when metadata is loaded; the catalog
-  // duration covers the metadata-pending window.
+  // The correction stops short of the duration edge: a wall-clock estimate
+  // that outran a stalled element (or a chapter seek past EOF) must never
+  // yank playback onto the edge (which fires `ended` and advances away
+  // mid-track — the podcast vanishes from Up Next and the previous song
+  // appears at 0:00). engine.seek clamps to the element duration when
+  // metadata is loaded; the catalog duration covers the metadata-pending
+  // window.
   const pos = state.positionSec
   if (!engine.isFading() && Number.isFinite(pos) && pos >= 0 && Math.abs(engine.time() - pos) > 2) {
     const elDur = engine.duration()
     const known = elDur > 0 ? elDur : (song?.duration ?? 0)
-    engine.seek(known > 0 ? Math.min(pos, known) : pos)
+    // Tiny files keep the legacy exact cap (a margin would rewind them).
+    const cap = known > DRIFT_EDGE_MARGIN_SEC + 1 ? known - DRIFT_EDGE_MARGIN_SEC : known
+    engine.seek(known > 0 ? Math.min(pos, cap) : pos)
   }
 }
 

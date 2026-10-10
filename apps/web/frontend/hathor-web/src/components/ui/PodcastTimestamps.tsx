@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type PodcastTimestamp } from '../../api/client'
-import { engine } from '../../audio/engine'
+import { clampSeekTarget, engine } from '../../audio/engine'
 import { subscribeAudioClock, useAudioClock } from '../../audio/clock'
 import { formatTime, usePlayer } from '../../store/player'
 import Icon from './icons'
@@ -34,8 +34,16 @@ export function usePodcastChapters(file: string | null | undefined) {
 }
 
 function seekTo(secs: number) {
-  engine.seek(secs)
-  void api.seek(secs).catch(() => {})
+  // Clamp chapter seeks into playable range (same rule as the progress
+  // slider): a user-entered chapter past EOF must park near the end, never
+  // poison the server position past the track (which would yank a later
+  // drift correction onto the duration edge and auto-advance away).
+  const elDur = engine.duration()
+  const meta = usePlayer.getState().currentSong?.duration ?? 0
+  const known = elDur > 0 ? elDur : meta
+  const target = known > 0 ? clampSeekTarget(secs, known) : Math.max(0, secs)
+  engine.seek(target)
+  void api.seek(target).catch(() => {})
 }
 
 // Chapter-boundary transport for the current podcast episode. Returns true

@@ -129,6 +129,11 @@ const MAX_FADE_SEC = 12
 // Stay this far from the duration edge: landing exactly on it fires
 // `ended` and the track advances away (the long-podcast seek stall).
 export const END_EPSILON_SEC = 0.25
+// Drift corrections stop this far short of the known length (client +
+// catalog): server estimates can outrun a stalled element, so correcting
+// exactly onto the edge would fire `ended` and skip mid-track. The tail
+// still plays out naturally on resume.
+export const DRIFT_EDGE_MARGIN_SEC = 2
 // An `ended` this soon after a seek whose target was safely inside the
 // track is a spurious end (bad range past EOF), not a real finish.
 const SPURIOUS_END_WINDOW_MS = 1500
@@ -546,6 +551,17 @@ export class AudioEngine {
       }
     }
     if (slot === this.active) {
+      // A paused element never finishes a track: it reached the edge via a
+      // seek (or a metadata-load clamp after one), not by playing through.
+      // The usual source is a correction target at/past the real end — a
+      // server estimate that outran a stalled element, or a chapter past
+      // EOF. Advancing here skips the user's track over nothing, so park
+      // just inside and stay paused instead.
+      if (this.readPaused(slot.el)) {
+        this.report(`paused ended ignored, parking inside ${this.describeSlot(slot)}`)
+        this.parkInside(slot)
+        return
+      }
       // `ended` far from the known end (cut-short stream, truncated file):
       // the track didn't really finish. Recover like an element error
       // instead of advancing away mid-song. Bounded — a deterministically
@@ -598,10 +614,33 @@ export class AudioEngine {
     }
   }
 
+  private readPaused(el: AudioElementLike): boolean {
+    try {
+      return el.paused
+    } catch {
+      return false // unreadable: keep the legacy advance path
+    }
+  }
+
+  // Back off the duration edge after a paused `ended` (see handleEnded):
+  // re-seek the current position, which clampSeekTarget pulls inside when
+  // it sits on/past the edge and leaves alone otherwise. Never resumes —
+  // the user had it paused.
+  private parkInside(slot: Slot) {
+    let pos = 0
+    let ok = false
+    try {
+      pos = slot.el.currentTime
+      ok = Number.isFinite(pos) && pos >= 0
+    } catch {
+      ok = false
+    }
+    if (ok) this.seek(pos)
+  }
+
   // True when `ended` fired suspiciously soon after a seek whose target was
   // safely inside the known duration — i.e. not a real finish.
-  private isSpuriousEnd(): boolean {
-    if (this.deps.now() - this.lastSeekAt > SPURIOUS_END_WINDOW_MS) return false
+  private isSpuriousEnd(): boolean {    if (this.deps.now() - this.lastSeekAt > SPURIOUS_END_WINDOW_MS) return false
     const dur = this.active.el.duration
     if (!Number.isFinite(dur) || dur <= 0) return false
     return this.lastSeekTarget < dur - 2

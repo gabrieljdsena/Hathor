@@ -34,19 +34,25 @@ vi.mock('./api/client', async (importOriginal) => {
   }
 })
 
-vi.mock('./audio/engine', () => ({
-  engine: {
-    time: (...args: unknown[]) => mockEngineTime(...args),
-    seek: (...args: unknown[]) => mockEngineSeek(...args),
-    // store/player wires these at module scope; no-op here.
-    setNextProvider: vi.fn(),
-    onEnded: vi.fn(),
-    isFading: () => false,
-    isPlaying: () => false,
-    play: vi.fn(),
-    pause: vi.fn(),
-  },
-}))
+vi.mock('./audio/engine', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./audio/engine')>()
+  return {
+    // Real pure helpers (clampSeekTarget): only the engine singleton is fake.
+    ...mod,
+    engine: {
+      time: (...args: unknown[]) => mockEngineTime(...args),
+      seek: (...args: unknown[]) => mockEngineSeek(...args),
+      duration: () => 0,
+      // store/player wires these at module scope; no-op here.
+      setNextProvider: vi.fn(),
+      onEnded: vi.fn(),
+      isFading: () => false,
+      isPlaying: () => false,
+      play: vi.fn(),
+      pause: vi.fn(),
+    },
+  }
+})
 
 const chapters: PodcastTimestamp[] = [
   { id: 1, podcastFile: 'ep.mp3', name: 'Intro', startSecs: 0, endSecs: 60 },

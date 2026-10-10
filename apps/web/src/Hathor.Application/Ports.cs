@@ -164,8 +164,11 @@ public interface IDownloadEngine
     Task<VideoInfoDto> GetInfoAsync(string url, CancellationToken ct = default);
     // Downloads best audio, transcodes to 320k MP3 at destMp3Path.
     // Progress is 0..1 (scaled to 0..90 by the caller, desktop convention).
+    // onPhase reports transitions ("manifest", "download", "transcode",
+    // "ytdlp", …) so the caller can attribute stalls in job errors.
+    // Optional for source compatibility; the queue always passes one.
     Task DownloadAudioAsync(string url, string destMp3Path,
-        Action<double> progress, CancellationToken ct = default);
+        Action<double> progress, Action<string>? onPhase = null, CancellationToken ct = default);
     // Best-effort direct audio stream URL for previews (no download, no
     // transcode). Null when unresolvable (age-restricted/private/deleted).
     // URLs expire (~6h) and are loosely IP-bound: resolve on demand.

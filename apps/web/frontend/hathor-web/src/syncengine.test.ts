@@ -23,23 +23,29 @@ vi.mock('./api/client', async (importOriginal) => {
   }
 })
 
-vi.mock('./audio/engine', () => ({
-  engine: {
-    isFading: (...args: unknown[]) => mockFading(...args),
-    fadeTarget: () => null,
-    currentFile: (...args: unknown[]) => mockFile(...args),
-    load: vi.fn(),
-    duration: (...args: unknown[]) => mockDur(...args),
-    time: (...args: unknown[]) => mockTime(...args),
-    isPlaying: (...args: unknown[]) => mockPlaying(...args),
-    play: vi.fn(),
-    pause: vi.fn(),
-    seek: vi.fn(),
-    setVolume: vi.fn(),
-    setNextProvider: vi.fn(),
-    onEnded: vi.fn(),
-  },
-}))
+vi.mock('./audio/engine', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./audio/engine')>()
+  return {
+    // Real pure helpers/consts (DRIFT_EDGE_MARGIN_SEC): only the engine
+    // singleton is fake.
+    ...mod,
+    engine: {
+      isFading: (...args: unknown[]) => mockFading(...args),
+      fadeTarget: () => null,
+      currentFile: (...args: unknown[]) => mockFile(...args),
+      load: vi.fn(),
+      duration: (...args: unknown[]) => mockDur(...args),
+      time: (...args: unknown[]) => mockTime(...args),
+      isPlaying: (...args: unknown[]) => mockPlaying(...args),
+      play: vi.fn(),
+      pause: vi.fn(),
+      seek: vi.fn(),
+      setVolume: vi.fn(),
+      setNextProvider: vi.fn(),
+      onEnded: vi.fn(),
+    },
+  }
+})
 
 const song = {
   file: 's.mp3',
@@ -99,14 +105,16 @@ describe('syncEngine repeat-wrap guard', () => {
 })
 
 describe('syncEngine drift correction cap', () => {
-  it('caps a runaway server estimate at the catalog duration', () => {
+  it('caps a runaway server estimate short of the duration edge', () => {
     mockFile.mockReturnValue('s.mp3')
     mockDur.mockReturnValue(Number.NaN) // metadata pending
     mockTime.mockReturnValue(10)
     mockPlaying.mockReturnValue(true)
     vi.mocked(engine.seek).mockClear()
     syncWith({ positionSec: 5000 })
-    expect(engine.seek).toHaveBeenCalledWith(180)
+    // 180 would land exactly on the edge and fire `ended`, advancing away
+    // mid-track — stop at the margin so the tail plays out instead.
+    expect(engine.seek).toHaveBeenCalledWith(178)
     expect(engine.seek).not.toHaveBeenCalledWith(5000)
   })
 
@@ -118,6 +126,26 @@ describe('syncEngine drift correction cap', () => {
     vi.mocked(engine.seek).mockClear()
     syncWith({ positionSec: 120 })
     expect(engine.seek).toHaveBeenCalledWith(120)
+  })
+
+  it('stops at the margin when the estimate sits on the edge', () => {
+    mockFile.mockReturnValue('s.mp3')
+    mockDur.mockReturnValue(180)
+    mockTime.mockReturnValue(10)
+    mockPlaying.mockReturnValue(true)
+    vi.mocked(engine.seek).mockClear()
+    syncWith({ positionSec: 180 })
+    expect(engine.seek).toHaveBeenCalledWith(178)
+  })
+
+  it('keeps the legacy exact cap for tiny files', () => {
+    mockFile.mockReturnValue('s.mp3')
+    mockDur.mockReturnValue(3)
+    mockTime.mockReturnValue(0)
+    mockPlaying.mockReturnValue(true)
+    vi.mocked(engine.seek).mockClear()
+    syncWith({ positionSec: 2.9 })
+    expect(engine.seek).toHaveBeenCalledWith(2.9)
   })
 })
 

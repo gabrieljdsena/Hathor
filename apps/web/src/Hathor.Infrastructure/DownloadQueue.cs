@@ -197,6 +197,7 @@ public sealed class DownloadQueueService(
         var lastActivity = DateTime.UtcNow;
         var lastPush = DateTime.MinValue;
         var lastVal = -1.0;
+        var lastPhase = "starting";
         var watchdogFired = false;
         void Touch(double v) { lock (sync) { lastActivity = DateTime.UtcNow; lastVal = v; } }
 
@@ -264,6 +265,17 @@ public sealed class DownloadQueueService(
                     }
                 }
                 if (push) ReportLive();
+            },
+            // Engine phase transitions ("primary/manifest", "fallback/ytdlp",
+            // …) prove liveness like progress does, and pin down the stall
+            // point in failure messages below.
+            phase =>
+            {
+                lock (sync)
+                {
+                    lastActivity = DateTime.UtcNow;
+                    lastPhase = phase;
+                }
             }, cts.Token);
 
             job.Progress = 0.9; // finished download, processing (desktop stages)
@@ -352,10 +364,12 @@ public sealed class DownloadQueueService(
         catch (OperationCanceledException)
         {
             bool user;
+            string phase;
             lock (_cancelLock) user = _userCancelled.Remove(qid);
+            lock (sync) phase = lastPhase;
             job.Status = "cancelled";
             job.Error = user ? "Cancelled by user"
-                : watchdogFired ? "Stopped: no progress for 5 minutes (network/YouTube blocked?)"
+                : watchdogFired ? $"Stopped: no progress for 5 minutes (network/YouTube blocked? stalled in {phase})"
                 : "Download cancelled";
             job.UpdatedAtUtc = DateTime.UtcNow;
             await jobs.SaveChangesAsync();
@@ -367,8 +381,10 @@ public sealed class DownloadQueueService(
             // operator attention — the lab Postgres sink only persists
             // Error/Fatal, so Warning here never reached the logs table.
             log.LogError(ex, "Download {Qid} failed", qid);
+            string phase;
+            lock (sync) phase = lastPhase;
             job.Status = "failed";
-            job.Error = $"Download failed: {ex.Message}";
+            job.Error = $"Download failed: {ex.Message} (phase: {phase})";
             job.UpdatedAtUtc = DateTime.UtcNow;
             await jobs.SaveChangesAsync();
             await hub.BroadcastDownloadAsync(userId, DownloadJobMaps.ToDto(job));

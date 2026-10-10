@@ -599,6 +599,38 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     expect(s.engine.currentFile()).toBe('ep.mp3')
   })
 
+  it('ignores ended on a paused element instead of advancing', async () => {
+    // A paused element at the edge got there by seek (drift correction
+    // past the real end, chapter past EOF), not by playing through:
+    // advancing would skip the user's episode over nothing.
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.pause()
+    s.els[0].currentTime = 10799.9 // correction overshoot onto the edge
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+    expect(s.els[0].paused).toBe(true)
+    // Parked just inside so resume plays the tail instead of sitting on
+    // the edge (or skipping away).
+    expect(s.els[0].currentTime).toBeCloseTo(10800 - END_EPSILON_SEC, 5)
+  })
+
+  it('leaves a mid-track paused ended where it is', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.pause()
+    s.els[0].currentTime = 3600
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(3600)
+    expect(s.els[0].paused).toBe(true)
+  })
+
   it('keeps the legacy advance for tiny or unknown durations', async () => {
     const s = setup()
     const ended: string[] = []

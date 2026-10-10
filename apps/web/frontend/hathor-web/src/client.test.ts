@@ -56,3 +56,37 @@ describe('discover api', () => {
     expect(calls[0].init?.method).toBe('POST')
   })
 })
+
+describe('ytdlp api', () => {
+  function captureFetch(body: string) {
+    const calls: { input: unknown; init?: RequestInit }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        calls.push({ input, init })
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    return calls
+  }
+
+  it('GETs /system/ytdlp', async () => {
+    const calls = captureFetch(JSON.stringify({ found: true, exe: 'x', dir: null, error: null }))
+    await expect(api.ytdlpStatus()).resolves.toEqual({ found: true, exe: 'x', dir: null, error: null })
+    expect(calls[0].input).toBe('/api/v1/system/ytdlp')
+  })
+
+  it('POSTs /system/ytdlp/download without force by default', async () => {
+    const calls = captureFetch(JSON.stringify({ state: 'downloading', progress: 0, exe: null, error: null }))
+    await api.startYtdlpDownload()
+    expect(calls[0].input).toBe('/api/v1/system/ytdlp/download')
+    expect(calls[0].init?.method).toBe('POST')
+  })
+
+  it('POSTs /system/ytdlp/download?force=true for updates', async () => {
+    const calls = captureFetch(JSON.stringify({ state: 'downloading', progress: 0, exe: null, error: null }))
+    await api.startYtdlpDownload(true)
+    expect(calls[0].input).toBe('/api/v1/system/ytdlp/download?force=true')
+    expect(calls[0].init?.method).toBe('POST')
+  })
+})
