@@ -116,7 +116,7 @@ export function ArtistDetail() {
   })
   return (
     <div className="flex flex-col w-full h-full">
-      <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4">
+      <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
         <HeroArt url={art?.url} alt={artist} />
         <ViewHeader icon="users" compact title={artist} subtitle={`${songs?.length ?? 0} songs`} />
         {(songs ?? []).length > 0 && (
@@ -201,7 +201,7 @@ export function AlbumDetail() {
   })
   return (
     <div className="flex flex-col w-full h-full">
-      <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4">
+      <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
         <HeroArt url={art?.url} alt={album} />
         <ViewHeader icon="musicNote" compact title={album} subtitle={`${songs?.length ?? 0} songs`} />
         {(songs ?? []).length > 0 && (

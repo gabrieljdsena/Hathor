@@ -14,7 +14,7 @@ type SortKey = 'Title' | 'Album' | 'Duration' | 'DateDownload'
 
 const COLUMNS: Array<SortColumn<SortKey>> = [
   { key: 'Title', label: 'Song' },
-  { key: 'Album', label: 'Album' },
+  { key: 'Album', label: 'Album', hideOnMobile: true },
   { key: 'Duration', label: 'Duration', align: 'right' },
   { key: 'DateDownload', label: 'Added', align: 'right', hideOnMobile: true },
 ]
@@ -114,11 +114,13 @@ const sortColumn = (key: SortKey) => {
 
   return (
     <>
-      <div className="sticky top-0 w-full z-10 backdrop-blur-2xl bg-zinc-900/20 rounded-2xl border-b border-white/5 px-6 sm:px-8 py-4 mt-4 flex justify-end items-center">
-        <SearchInput value={search} onChange={setSearch} placeholder={searchPlaceholder} id={searchId} />
+      <div className="sticky top-0 w-full z-10 backdrop-blur-2xl bg-zinc-900/20 rounded-2xl border-b border-white/5 px-6 sm:px-8 py-4 mt-4 flex justify-end items-center max-[700px]:justify-stretch max-[700px]:px-3">
+        <div className="max-[700px]:w-full max-[700px]:[&>div]:w-full max-[700px]:[&_input]:w-full">
+          <SearchInput value={search} onChange={setSearch} placeholder={searchPlaceholder} id={searchId} />
+        </div>
       </div>
 
-      <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6">
+      <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6 max-[700px]:px-2">
         <SortableHeader columns={COLUMNS} sort={sort} dir={dir} onSort={sortColumn} gridClass={SONG_ROW_GRID} />
         {/* Glass backing so rows stay readable over custom backgrounds */}
         <div className="flex flex-col p-2 sm:p-3 rounded-2xl bg-black/20 backdrop-blur-2xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] divide-y divide-white/[0.06]">

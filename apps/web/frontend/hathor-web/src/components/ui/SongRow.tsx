@@ -4,10 +4,11 @@ import { formatTime } from '../../store/player'
 import CoverArt from './CoverArt'
 
 // Standard song row (desktop table pattern): title+artist / album /
-// duration / date added + trailing actions slot. The date column hides on
-// narrow screens (grid drops to 4 columns to match).
+// duration / date added + trailing actions slot. Phones (base breakpoint)
+// show title / duration / actions only — album + added hide below sm so a
+// 360px screen keeps a readable title column instead of squeezing four.
 export const SONG_ROW_GRID =
-  'grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_auto] sm:grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_150px_auto]'
+  'grid-cols-[minmax(0,1fr)_auto_auto] sm:grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_150px_auto]'
 
 export function formatAddedDate(iso: string | null): string {
   if (!iso) return '—'
@@ -50,12 +51,12 @@ export default function SongRow({
   return (
     <div
       onClick={onPlay}
-      className={`grid ${SONG_ROW_GRID} gap-4 items-center p-3 px-4 rounded-xl transition-all duration-300 cursor-pointer group ${
+      className={`grid ${SONG_ROW_GRID} gap-2 sm:gap-4 items-center p-2.5 px-3 sm:p-3 sm:px-4 rounded-xl transition-all duration-300 cursor-pointer group min-h-[60px] sm:min-h-0 ${
         active ? 'bg-orange-500/[0.06] ring-1 ring-orange-500/40' : 'hover:bg-white/5'
       }`}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <CoverArt src={song.coverArt} file={song.file} isPodcast={song.isPodcast} alt={song.title} className="w-10 h-10 rounded-lg flex-shrink-0" />
+        <CoverArt src={song.coverArt} file={song.file} isPodcast={song.isPodcast} alt={song.title} className="w-11 h-11 sm:w-10 sm:h-10 rounded-lg flex-shrink-0" />
         <div className="min-w-0">
           <div className="flex items-center gap-1 min-w-0">
             <div
@@ -92,12 +93,13 @@ export default function SongRow({
           // the whole column (including empty space around short names)
           // becomes one big album button. Shrink to the text so only the
           // name navigates; the rest of the cell plays the song per the row.
-          className="min-w-0 max-w-full justify-self-start text-sm text-zinc-400 truncate text-left hover:text-orange-400 transition-colors cursor-pointer"
+          // Phone: hidden (grid drops the album column below sm).
+          className="hidden sm:block min-w-0 max-w-full justify-self-start text-sm text-zinc-400 truncate text-left hover:text-orange-400 transition-colors cursor-pointer"
         >
           {song.album}
         </button>
       ) : (
-        <div className="text-sm text-zinc-400 truncate">{song.album}</div>
+        <div className="hidden sm:block text-sm text-zinc-400 truncate">{song.album}</div>
       )}
       <div className="text-sm text-zinc-500 text-right font-mono">{formatTime(song.duration)}</div>
       <div className="hidden sm:block text-sm text-zinc-500 text-right truncate">

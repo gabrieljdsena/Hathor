@@ -76,36 +76,52 @@ export default function CoverArt({
       setLazy(coverCache.get(file) ?? null)
       return
     }
-    const el = boxRef.current
-    if (!el || typeof IntersectionObserver === 'undefined') {
+    const load = () => {
       void fetchCover(file, isPodcast).then((cover) => {
         cacheSet(file, cover)
         setLazy(cover)
       })
+    }
+    // Phones: fetch eagerly. Small viewports + nested overflow containers
+    // (#main scrolls, strips scroll sideways) make intersection delivery
+    // unreliable, which left phone rows stuck on the note fallback.
+    if (typeof window !== 'undefined' && window.innerWidth <= 700) {
+      const t = window.setTimeout(load, 50)
+      return () => window.clearTimeout(t)
+    }
+    const el = boxRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      void load()
       return
     }
     let timer: number | undefined
+    let fallback: number | undefined
     const io = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
             io.disconnect()
+            if (fallback !== undefined) window.clearTimeout(fallback)
             // Debounce fast scrolls so a fling doesn't fan out requests.
-            timer = window.setTimeout(() => {
-              void fetchCover(file, isPodcast).then((cover) => {
-                cacheSet(file, cover)
-                setLazy(cover)
-              })
-            }, 150)
+            timer = window.setTimeout(load, 150)
           }
         }
       },
-      { rootMargin: '100px' },
+      // #main (not the viewport) scrolls: a generous margin keeps art
+      // loading just before rows scroll into view.
+      { rootMargin: '400px' },
     )
     io.observe(el)
+    // Safety net: if the observer never fires (nested scroller quirks),
+    // still resolve the art instead of showing the fallback forever.
+    fallback = window.setTimeout(() => {
+      io.disconnect()
+      load()
+    }, 2500)
     return () => {
       io.disconnect()
       if (timer !== undefined) window.clearTimeout(timer)
+      if (fallback !== undefined) window.clearTimeout(fallback)
     }
   }, [src, lazy, file, isPodcast])
 
