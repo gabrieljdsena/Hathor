@@ -43,27 +43,40 @@ public sealed class UpdatePodcastMetadataHandler(
         if (string.Equals(state.CurrentFile, cmd.File, StringComparison.OrdinalIgnoreCase))
         {
             // Same gapless rule as songs: stash, applied on track change.
-            await pending.UpsertAsync(new PendingMetadataEdit
-            {
-                UserId = cmd.UserId,
-                File = cmd.File,
-                IsPodcast = true,
-                Title = cmd.Title,
-                Artist = cmd.Artist,
-                CoverArt = cmd.CoverArt,
-                CreatedUtc = DateTime.UtcNow,
-            }, ct);
-            await pending.SaveChangesAsync(ct);
-            var current = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
-            return current is null ? null : new UpdatePodcastMetadataResult(current, Pending: true);
+            return await StashAsync(cmd, ct);
         }
-        await writer.WritePathAsync(storage.PodcastPath(cmd.UserId, cmd.File),
-            cmd.Title, cmd.Artist, null, null, null, cmd.CoverArt, ct);
+        try
+        {
+            await writer.WritePathAsync(storage.PodcastPath(cmd.UserId, cmd.File),
+                cmd.Title, cmd.Artist, null, null, null, cmd.CoverArt, ct);
+        }
+        catch (IOException ex) when (ex is not FileNotFoundException)
+        {
+            // Same lock fallback as songs (desktop player, active stream).
+            return await StashAsync(cmd, ct);
+        }
         var updated = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
         if (updated is not null)
             await records.EnsureAsync(cmd.UserId, cmd.File, updated.Title, updated.Artist, null, ct);
         await records.SaveChangesAsync(ct);
         return updated is null ? null : new UpdatePodcastMetadataResult(updated);
+    }
+
+    private async Task<UpdatePodcastMetadataResult?> StashAsync(UpdatePodcastMetadataCommand cmd, CancellationToken ct)
+    {
+        await pending.UpsertAsync(new PendingMetadataEdit
+        {
+            UserId = cmd.UserId,
+            File = cmd.File,
+            IsPodcast = true,
+            Title = cmd.Title,
+            Artist = cmd.Artist,
+            CoverArt = cmd.CoverArt,
+            CreatedUtc = DateTime.UtcNow,
+        }, ct);
+        await pending.SaveChangesAsync(ct);
+        var current = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
+        return current is null ? null : new UpdatePodcastMetadataResult(current, Pending: true);
     }
 }
 

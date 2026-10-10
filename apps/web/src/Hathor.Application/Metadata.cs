@@ -58,27 +58,23 @@ public sealed class UpdateSongMetadataHandler(
             // Gapless playback: the streamer holds the file open and tag
             // rewrites shift audio offsets under the playing element — stash
             // the payload instead (applied on track change). Last wins.
-            await pending.UpsertAsync(new PendingMetadataEdit
-            {
-                UserId = cmd.UserId,
-                File = cmd.File,
-                IsPodcast = false,
-                Title = cmd.Title,
-                Artist = cmd.Artist,
-                Album = cmd.Album,
-                Year = cmd.Year,
-                Genre = cmd.Genre,
-                CoverArt = cmd.CoverArt,
-                CreatedUtc = DateTime.UtcNow,
-            }, ct);
-            await pending.SaveChangesAsync(ct);
-            var current = await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);
-            return current is null ? null : new UpdateSongMetadataResult(current, 0, Pending: true);
+            return await StashAsync(cmd, ct);
         }
         var resumeSec = state.EstimatedPositionSec(DateTime.UtcNow);
 
-        await writer.WriteSongAsync(cmd.UserId, cmd.File,
-            cmd.Title, cmd.Artist, cmd.Album, cmd.Year, cmd.Genre, cmd.CoverArt, ct);
+        try
+        {
+            await writer.WriteSongAsync(cmd.UserId, cmd.File,
+                cmd.Title, cmd.Artist, cmd.Album, cmd.Year, cmd.Genre, cmd.CoverArt, ct);
+        }
+        catch (IOException ex) when (ex is not FileNotFoundException)
+        {
+            // Locked by another holder (desktop player sharing this library,
+            // an active stream, a scanner): stash like a playing file instead
+            // of losing the payload. The applier writes it on the next track
+            // change and keeps it across failures until the lock releases.
+            return await StashAsync(cmd, ct);
+        }
 
         var updated = await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);
         if (updated is not null)
@@ -88,6 +84,26 @@ public sealed class UpdateSongMetadataHandler(
 
         updated ??= await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);
         return updated is null ? null : new UpdateSongMetadataResult(updated, resumeSec);
+    }
+
+    private async Task<UpdateSongMetadataResult?> StashAsync(UpdateSongMetadataCommand cmd, CancellationToken ct)
+    {
+        await pending.UpsertAsync(new PendingMetadataEdit
+        {
+            UserId = cmd.UserId,
+            File = cmd.File,
+            IsPodcast = false,
+            Title = cmd.Title,
+            Artist = cmd.Artist,
+            Album = cmd.Album,
+            Year = cmd.Year,
+            Genre = cmd.Genre,
+            CoverArt = cmd.CoverArt,
+            CreatedUtc = DateTime.UtcNow,
+        }, ct);
+        await pending.SaveChangesAsync(ct);
+        var current = await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: true, ct);
+        return current is null ? null : new UpdateSongMetadataResult(current, 0, Pending: true);
     }
 }
 
