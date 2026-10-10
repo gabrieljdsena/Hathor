@@ -4,10 +4,8 @@ yt-dlp
 pygame
 psutil
 pykakasi
-# Sync now speaks the Hathor Web API over stdlib urllib
-# (services/api_sync.py) — PyMySQL was only for the retired remote DB.
-# Keep it installed manually only if you opt into the legacy JDBC path
-# via HATHOR_SYNC_LEGACY=1.
+# Sync speaks the Hathor Web API over stdlib urllib
+# (services/api_sync.py) — no DB driver needed.
 Pillow
 python-dotenv
 # winsdk only ships wheels up to CPython 3.12. On 3.13+ pip falls back to an

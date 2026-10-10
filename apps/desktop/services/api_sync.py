@@ -1,11 +1,11 @@
 """Sync the local SQLite library with the Hathor C# Web API.
 
-Replaces the retired remote MySQL/TiDB leg (``sync.py`` / PyMySQL).
-Scan, push and pull keep the same logic — only the transport changed:
+Syncs the local SQLite library with the Hathor server (the remote
+MySQL/TiDB leg is fully removed). Scan, push and pull keep the same
+logic — only the transport changed:
 
 - pull: ``GET /api/v1/sync/delta?cursor=`` merges rows with the same
-  upsert/link-reconcile/daily-mix semantics as
-  ``DatabaseManager.sync_remote_to_local_and_download``; files missing on
+  upsert/link-reconcile/daily-mix semantics the old pull had; files missing on
   disk stream down via ``GET /api/v1/sync/files/{file}`` (byte-identical,
   exact remote filename) instead of being re-downloaded from YouTube.
 - push: local rows + ``Sync_Deletions`` tombstones go up via
@@ -49,16 +49,10 @@ import urllib.request
 
 API_URL_ENV = "HATHOR_API_URL"
 API_KEY_ENV = "HATHOR_API_KEY"
-LEGACY_HOST_ENV = "DB_HOST"
-LEGACY_OPTOUT_ENV = "HATHOR_SYNC_LEGACY"  # set to "1" to keep the old JDBC path
 
 NOT_CONFIGURED = (
     "No sync server configured. "
     f"Set {API_URL_ENV} (e.g. http://<server>:5051) and {API_KEY_ENV} in .env."
-)
-RETIRED_MESSAGE = (
-    "Remote DB retired — the MySQL/TiDB remote is no longer used. "
-    f"Set {API_URL_ENV} and {API_KEY_ENV} in .env to sync via the Hathor server."
 )
 SERVER_MISSING = (
     "Sync server does not speak the sync-file endpoints yet "
@@ -71,14 +65,10 @@ class ApiSyncError(Exception):
 
 
 def sync_backend():
-    """Return 'api' | 'legacy' | 'retired' | 'unconfigured'."""
+    """Return 'api' | 'unconfigured' (the remote-DB leg is gone)."""
     url, key = get_api_config()
     if url and key:
         return "api"
-    if os.getenv(LEGACY_HOST_ENV) and os.getenv(LEGACY_OPTOUT_ENV) == "1":
-        return "legacy"
-    if os.getenv(LEGACY_HOST_ENV):
-        return "retired"
     return "unconfigured"
 
 

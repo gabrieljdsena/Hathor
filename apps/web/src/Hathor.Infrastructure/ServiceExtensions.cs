@@ -129,18 +129,6 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<Application.Ports.ISystemProbe, Maintenance.SystemProbe>();
         services.AddSingleton<Maintenance.IFfmpegInstaller, Maintenance.FfmpegInstaller>();
         services.AddScoped<Application.Ports.ISyncService, Sync.EfSyncService>();
-        services.AddScoped<Application.Ports.IRemotePullService>(sp =>
-            new Sync.RemotePullService(
-                sp.GetRequiredService<Application.Ports.ISyncService>(),
-                sp.GetRequiredService<Application.Ingest.IDownloadQueue>(),
-                sp.GetRequiredService<Application.Ports.ILibraryStorage>(),
-                config.GetSection("RemoteDb").Get<Sync.RemoteDbOptions>() ?? new Sync.RemoteDbOptions(),
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Sync.RemotePullService>>()));
-        services.AddScoped<Application.Ports.IRemotePushService>(sp =>
-            new Sync.RemotePushService(
-                sp.GetRequiredService<Ef.HathorDbContext>(),
-                config.GetSection("RemoteDb").Get<Sync.RemoteDbOptions>() ?? new Sync.RemoteDbOptions(),
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Sync.RemotePushService>>()));
         services.AddScoped<Application.Ports.ISongReadModel, Library.DapperSongReadModel>();
         services.AddScoped<Application.Ports.IPlaylistReadModel, Library.DapperPlaylistReadModel>();
         services.AddScoped<Application.Ports.IPodcastTagReadModel, Library.DapperPodcastTagReadModel>();
@@ -165,7 +153,18 @@ public static class InfrastructureServiceExtensions
                 sp.GetRequiredService<Library.SongMetadataCache>()));
         services.AddSingleton<Application.Ports.IJwtTokenService, JwtTokenService>();
         services.AddSingleton<Application.Ports.IApiKeyService, ApiKeyService>();
-        services.AddSingleton<Application.Ports.IDownloadEngine, Ingest.YoutubeExplodeEngine>();
+        // YouTube ingest: YoutubeExplode primary, yt-dlp fallback on any
+        // primary download failure (403/bot-checks, cipher changes).
+        // Factory form: the fallback wraps the primary, so IDownloadEngine
+        // itself cannot be the injected primary (that would self-resolve).
+        services.AddSingleton<Ingest.YoutubeExplodeEngine>();
+        services.AddSingleton<Ingest.YtDlpDownloader>();
+        services.AddSingleton<Application.Ports.IDownloadEngine>(sp =>
+            new Ingest.FallbackDownloadEngine(
+                sp.GetRequiredService<Ingest.YoutubeExplodeEngine>(),
+                sp.GetRequiredService<Ingest.YtDlpDownloader>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ingest.FallbackDownloadEngine>>()));
+        services.AddSingleton<Maintenance.IYtDlpInstaller, Maintenance.YtDlpInstaller>();
         services.AddSingleton<Application.Ports.ILoudnessAnalyzer, Enrichment.LoudnessAnalyzer>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
@@ -188,6 +187,8 @@ public static class InfrastructureServiceExtensions
         // FFmpeg static builds are ~80MB; the installer enforces its own
         // timeout, so the client itself never times out.
         services.AddHttpClient("ffmpeg").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
+        // yt-dlp single-file binary (~30MB); same no-client-timeout shape.
+        services.AddHttpClient("ytdlp").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
         services.AddHttpClient("nuget").ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(15));
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(
             typeof(Application.Auth.LoginCommand).Assembly));

@@ -48,11 +48,8 @@ Until the two **new** endpoints land, the desktop API path returns
    - Scan (`sync_local_songs_to_db` / `sync_local_podcasts_to_db`) untouched.
 2. **Config** — `.env`: `HATHOR_API_URL=http://<server>:5051`,
    `HATHOR_API_KEY=hth_...` (implemented: `sync_backend()` in
-   `services/api_sync.py`). If legacy `DB_HOST` is set (and no API URL),
-   sync refuses with the retired message. Escape hatch while verifying:
-   `HATHOR_SYNC_LEGACY=1` keeps the old JDBC path. `sync.py` (PyMySQL) is
-   deleted once the API path is verified; `PyMySQL` already dropped from
-   `requirements.txt`.
+   `services/api_sync.py`). The old `sync.py` (PyMySQL) leg is deleted;
+   `PyMySQL` dropped from `requirements.txt`.
 3. **Cursor store** — `sync_cursor.txt` next to `music_player.db`
    (avoids DDL churn; history still uses incremental `MAX(id)` semantics
    server-side).
@@ -82,8 +79,8 @@ Until the two **new** endpoints land, the desktop API path returns
 
 - [x] No API configured → friendly "not configured" message (no crash).
       (smoke-tested `sync_backend()` routing)
-- [x] Legacy `DB_*` only → "retired" message, no JDBC attempt
-      (`HATHOR_SYNC_LEGACY=1` escape hatch keeps the old path).
+- [x] Remote-DB leg fully removed (`sync.py` deleted, JDBC pull deleted,
+      no `DB_*` reads left in code).
 - [x] Merge logic: rows merge, links guarded-reconcile, lyrics/history/mix,
       deletions tolerated, cursor advances; second (empty) pull is a no-op.
       (smoke-tested against a stubbed delta)

@@ -96,17 +96,6 @@ export interface FfmpegDownloadStatus {
   error: string | null
 }
 
-export interface RemotePullResult {
-  added: number
-  downloadsStarted: number
-  message: string
-}
-
-export interface RemotePushResult {
-  rows: number
-  message: string
-}
-
 export interface ApiKey {
   id: string
   name: string
@@ -727,6 +716,16 @@ export const api = {
   ffmpegDownloadStatus: () => request<FfmpegDownloadStatus>('/system/ffmpeg/download'),
   startFfmpegDownload: () =>
     request<FfmpegDownloadStatus>('/system/ffmpeg/download', { method: 'POST' }),
+  // yt-dlp fallback-downloader status + self-install (Settings → yt-dlp).
+  // Same status shape as FFmpeg (state/progress/exe/error); force=true
+  // re-downloads the latest release even when one is installed (update).
+  // The status Error field carries the --version output when found on PATH.
+  ytdlpStatus: () => request<SystemStatus>('/system/ytdlp'),
+  ytdlpDownloadStatus: () => request<FfmpegDownloadStatus>('/system/ytdlp/download'),
+  startYtdlpDownload: (force = false) =>
+    request<FfmpegDownloadStatus>(`/system/ytdlp/download${force ? '?force=true' : ''}`, {
+      method: 'POST',
+    }),
   // Live NuGet check for YoutubeExplode/TagLibSharp (Settings → YouTube
   // downloader). An update means "update the package and redeploy".
   checkLibraryUpdates: () => request<LibraryInfo[]>('/system/libraries/check', { method: 'POST' }),
@@ -736,12 +735,4 @@ export const api = {
       body: JSON.stringify({ Message: message, Route: route, Stack: stack }),
     }).catch(() => {}),
 
-  // Per-library pull from the desktop TiDB remote (desktop
-  // sync_remote_to_local_and_download, split in two): merges remote rows
-  // and queues downloads for files missing on disk.
-  pullSongs: () => request<RemotePullResult>('/sync/pull-songs', { method: 'POST' }),
-  pullPodcasts: () => request<RemotePullResult>('/sync/pull-podcasts', { method: 'POST' }),
-  // Push this user's rows back into the desktop TiDB remote (desktop push).
-  pushSongs: () => request<RemotePushResult>('/sync/push-songs', { method: 'POST' }),
-  pushPodcasts: () => request<RemotePushResult>('/sync/push-podcasts', { method: 'POST' }),
 }

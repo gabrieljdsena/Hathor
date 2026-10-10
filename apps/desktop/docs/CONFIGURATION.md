@@ -33,36 +33,29 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 - `set_crossfade(enabled, seconds)` / `get_playback_settings()`
 - `pick_background()`
 
-## Remote sync (`.env`)
+## Sync server (`.env`)
 
-Remote sync is **disabled by default**. It is only activated when `DB_HOST` is present in the environment (loaded by `python-dotenv` in `main.py`). Without it, `main.py` prints:
+Sync is **disabled by default**. It is only activated when `HATHOR_API_URL` and `HATHOR_API_KEY` are present in the environment (loaded by `python-dotenv` in `main.py`). Without them, `main.py` prints:
 
 ```
-[Sync] No remote DB configured in .env, sync disabled.
+[Sync] No sync server configured in .env (HATHOR_API_URL/HATHOR_API_KEY), sync disabled.
 ```
 
 ### Environment variables
 
 | Variable | Required | Example | Purpose |
 | -------- | -------- | ------- | ------- |
-| `DB_HOST` | yes | `gateway01.ap-northeast-1.prod.aws.tidbcloud.com` | MySQL/TiDB host or gateway |
-| `DB_PORT` | no (default `4000`) | `4000` | Port. TiDB Cloud defaults to `4000`; standard MySQL is `3306` |
-| `DB_USER` | yes | `root` | Remote user (e.g. `<user>.auth` for TiDB Cloud) |
-| `DB_PASSWORD` | yes | `••••` | Remote password |
-| `DB_NAME` | yes | `music_app` | Target database |
-| `DB_SSL_CA` | no | `CA.pem` | Path to a CA bundle. Falls back to `certifi`'s bundle. |
+| `HATHOR_API_URL` | yes | `http://192.168.1.10:5051` | Hathor server on the LAN |
+| `HATHOR_API_KEY` | yes | `hth_…` | Per-device key (`library:read` + `library:write`) |
 
 A minimal `.env`:
 
 ```env
-DB_HOST=gateway01.ap-northeast-1.prod.aws.tidbcloud.com
-DB_PORT=4000
-DB_USER=2YourName.auth
-DB_PASSWORD=your-password
-DB_NAME=music_app
+HATHOR_API_URL=http://192.168.1.10:5051
+HATHOR_API_KEY=hth_your-device-key
 ```
 
-> **Security**: `.env` (and `CA.pem`) are ignored by `.gitignore` — never commit real credentials.
+> **Security**: `.env` is ignored by `.gitignore` — never commit real credentials.
 
 ### Where the `.env` is read
 
@@ -73,10 +66,10 @@ DB_NAME=music_app
 
 ### Behavior when configured
 
-- On **first run** with sync configured, the app prompts the user to load the remote library (songs, podcasts, playlists, lyrics, daily mix, history) and queue missing downloads into their respective folders.
-- After that, everything is manual: **Push to Remote** uploads one full cycle; **Sync Remote** pulls remote rows down (see [Database & remote sync](DATABASE.md)).
+- On **first run** with sync configured, the app prompts the user to load the server library (songs, podcasts, playlists, lyrics, daily mix, history) and download missing files into their respective folders.
+- After that, everything is manual: **Push to Server** uploads rows + new file bytes; **Sync from Server** pulls the incremental delta down (see [Database & sync](DATABASE.md) and [Sync API migration](SYNC_API_MIGRATION.md)).
 - Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history).
 
 ## Turning sync off
 
-Delete or comment out `DB_HOST`, or remove the `.env` file entirely. The next launch will run fully local.
+Delete or comment out `HATHOR_API_URL`/`HATHOR_API_KEY`, or remove the `.env` file entirely. The next launch will run fully local.

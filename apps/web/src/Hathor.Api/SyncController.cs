@@ -8,11 +8,10 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Hathor.Api.Controllers;
 
-// Snapshot exchange with desktop/mobile clients (desktop sync pull/push,
-// adapted): export everything (history incremental via sinceId), import and
-// merge anything present, pull/push per library against the desktop TiDB
-// remote. There is no separate /sync/push — pushes from snapshot clients
-// are POST /sync/import; remote pushes are the pull-/push- endpoints below.
+// Snapshot exchange with desktop/mobile clients: export everything
+// (history incremental via sinceId), import and merge anything present.
+// There is no separate /sync/push — pushes from snapshot clients are
+// POST /sync/import.
 //
 // Device sync (replaces the remote DB): GET /sync/delta?cursor= for
 // incremental pulls, GET/PUT /sync/files/{file} for raw MP3 bytes, and
@@ -83,35 +82,9 @@ public sealed class SyncController(IMediator mediator, ILibraryStorage storage) 
         return Ok(new { file });
     }
 
-    // Per-library pull from the desktop TiDB remote (desktop
-    // sync_remote_to_local_and_download, split in two): merge remote rows
-    // into this user's tables and queue downloads for missing files.
-    [HttpPost("pull-songs")]
-    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<RemotePullResult>> PullSongs(CancellationToken ct) =>
-        Ok(await mediator.Send(new PullSongsCommand(CurrentUserId()), ct));
-
-    [HttpPost("pull-podcasts")]
-    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<RemotePullResult>> PullPodcasts(CancellationToken ct) =>
-        Ok(await mediator.Send(new PullPodcastsCommand(CurrentUserId()), ct));
-
-    // Per-library push to the desktop TiDB remote (desktop DatabaseSync
-    // push, split in two): upsert this user's rows into the shared remote
-    // tables and propagate deletion tombstones.
-    [HttpPost("push-songs")]
-    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<RemotePushResult>> PushSongs(CancellationToken ct) =>
-        Ok(await mediator.Send(new PushSongsCommand(CurrentUserId()), ct));
-
-    [HttpPost("push-podcasts")]
-    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<RemotePushResult>> PushPodcasts(CancellationToken ct) =>
-        Ok(await mediator.Send(new PushPodcastsCommand(CurrentUserId()), ct));
-
-    // Resume across devices: snapshot this user's playback spot (upserted
-    // fire-and-forget on pause — never blocks playback), or read back the
-    // latest foreign spot as a resume affordance (nothing auto-plays).
+    // Resume spot: the player's persisted state (push is a no-op success;
+    // latest surfaces it fresh-only) as a resume affordance (nothing
+    // auto-plays).
     [HttpPost("playback")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<ActionResult<bool>> PushPlayback(CancellationToken ct) =>

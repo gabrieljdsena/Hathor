@@ -446,11 +446,10 @@ class PlaybackController:
             return
 
         def work():
-            try:
-                import sync as sync_mod
-                sync_mod.push_playback_state(filename, position, is_podcast)
-            except Exception as e:
-                print(f" [Python] Resume push failed: {str(e)}")
+            # Resume push used to write the retired remote DB (sync.py).
+            # Re-homing it on the server needs a device-spots table — until
+            # then the pause spot stays local-only.
+            return
 
         try:
             threading.Thread(target=work, daemon=True).start()

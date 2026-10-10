@@ -173,12 +173,10 @@ class Api:
 
     def get_resume_spot(self):
         """Latest foreign playback spot (resume across devices), if any."""
-        try:
-            import sync as sync_mod
-            return sync_mod.get_latest_playback() or None
-        except Exception as e:
-            print(f" [Python] Resume spot lookup failed: {str(e)}")
-            return None
+        # Cross-device resume used to ride the retired remote DB (sync.py).
+        # Re-homing it on the server needs a device-spots table — until
+        # then there is no foreign spot to offer.
+        return None
 
     def resume_spot_play(self, file, position_secs, is_podcast=False):
         """Play a synced resume spot at its position. Returns True on success."""
@@ -473,40 +471,25 @@ class Api:
         return self.db.sync_local_songs_to_db()
 
     def sync_remote_to_local_and_download(self):
-        from services.api_sync import sync_backend, ApiSyncClient, RETIRED_MESSAGE, NOT_CONFIGURED
-        backend = sync_backend()
-        if backend == "api":
-            try:
-                return ApiSyncClient(self.db_path).pull_once()
-            except Exception as e:
-                print(f" [Python] Pull sync error: {e}")
-                return f"Error: {e}"
-        if backend == "retired":
-            return RETIRED_MESSAGE
-        if backend == "legacy":
-            return self.db.sync_remote_to_local_and_download()
-        return NOT_CONFIGURED
+        from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
+        if sync_backend() != "api":
+            return NOT_CONFIGURED
+        try:
+            return ApiSyncClient(self.db_path).pull_once()
+        except Exception as e:
+            print(f" [Python] Pull sync error: {e}")
+            return f"Error: {e}"
 
     def sync_local_to_remote(self):
         """Manual one-shot push of the local library to the sync server."""
-        from services.api_sync import sync_backend, ApiSyncClient, RETIRED_MESSAGE, NOT_CONFIGURED
-        backend = sync_backend()
-        if backend == "api":
-            try:
-                return ApiSyncClient(self.db_path).push_once()
-            except Exception as e:
-                print(f" [Python] Push sync error: {e}")
-                return f"Error: {e}"
-        if backend == "retired":
-            return RETIRED_MESSAGE
-        if backend == "legacy":
-            try:
-                from sync import DatabaseSync
-                return DatabaseSync(self.db_path).sync_once()
-            except Exception as e:
-                print(f" [Python] Push sync error: {e}")
-                return f"Error: {e}"
-        return NOT_CONFIGURED
+        from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
+        if sync_backend() != "api":
+            return NOT_CONFIGURED
+        try:
+            return ApiSyncClient(self.db_path).push_once()
+        except Exception as e:
+            print(f" [Python] Push sync error: {e}")
+            return f"Error: {e}"
 
     # ==========================
     # Native Application Logic

@@ -4,7 +4,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${LOCALDB_PASSWORD:-hathor}
+      POSTGRES_PASSWORD: ${LOCALDB_PASSWORD:?set LOCALDB_PASSWORD in .env (see .env.example)}
       POSTGRES_DB: hathor
     volumes:
       - localdbdata:/var/lib/postgresql/data
@@ -18,20 +18,6 @@ services:
       timeout: 5s
       retries: 5
 
-  db:
-    # TiDB-compatible wire protocol; swap image for TiDB if desired.
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-hathor}
-      MYSQL_DATABASE: ${DB_NAME:-hathor}
-    volumes:
-      - dbdata:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   api:
     build:
       context: .
@@ -41,7 +27,7 @@ services:
       Jwt__Issuer: hathor
       Jwt__Audience: hathor-clients
       Database__Provider: postgres
-      Database__ConnectionString: "Host=localdb;Port=5432;Database=hathor;Username=postgres;Password=${LOCALDB_PASSWORD:-hathor}"
+      Database__ConnectionString: "Host=localdb;Port=5432;Database=hathor;Username=postgres;Password=${LOCALDB_PASSWORD:?set LOCALDB_PASSWORD in .env}"
       Database__StorageRoot: /data/library
       # Shared lab Postgres hosting the `logs` table (myhomelab /logs reads
       # application='hathor' rows). host.docker.internal reaches the host's
@@ -65,8 +51,6 @@ services:
     depends_on:
       localdb:
         condition: service_healthy
-      db:
-        condition: service_healthy
 
   web:
     build:
@@ -86,5 +70,4 @@ services:
 
 volumes:
   localdbdata:
-  dbdata:
   library:

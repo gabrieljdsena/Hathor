@@ -96,39 +96,7 @@ public interface IPodcastReadModel
     SongDto ReadLocalEpisode(Guid userId, string file);
 }
 
-// Remote-library pull port (desktop DatabaseManager.
-// sync_remote_to_local_and_download, split per library): read rows from the
-// desktop TiDB remote, merge them into this user's tables, enqueue
-// downloads for files missing on disk.
-public interface IRemotePullService
-{
-    Task<Application.Sync.RemotePullResult> PullSongsAsync(Guid userId,
-        CancellationToken ct = default);
-    Task<Application.Sync.RemotePullResult> PullPodcastsAsync(Guid userId,
-        CancellationToken ct = default);
-    // Latest foreign playback spot (resume across devices): the newest row
-    // not written by this user, ignoring stale ones. Null when none.
-    Task<Application.Sync.PlaybackSpotDto?> GetLatestPlaybackAsync(Guid userId,
-        CancellationToken ct = default);
-}
-
-// Remote-library push port (desktop DatabaseSync.sync_once/_run_sync,
-// split per library): write this user's rows into the desktop TiDB remote
-// (single global namespace — last writer wins, like desktop multi-device).
-public interface IRemotePushService
-{
-    Task<Application.Sync.RemotePushResult> PushSongsAsync(Guid userId,
-        CancellationToken ct = default);
-    Task<Application.Sync.RemotePushResult> PushPodcastsAsync(Guid userId,
-        CancellationToken ct = default);
-    // Upsert this user's playback spot (file + position). Fire-and-forget
-    // from pause/track-change; never blocks playback. False when skipped
-    // (no remote, nothing playing) or failed.
-    Task<bool> PushPlaybackAsync(Guid userId, string file, double positionSec,
-        bool isPodcast, string device, CancellationToken ct = default);
-}
-
-// Snapshot exchange port (desktop sync.py pull/push semantics).
+// Snapshot exchange port (device sync semantics).
 public interface ISyncService
 {
     Task<Application.Sync.SyncSnapshot> ExportAsync(Guid userId, long sinceId,

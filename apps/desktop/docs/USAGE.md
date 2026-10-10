@@ -113,11 +113,11 @@ There is **no background auto-sync**. Both directions run only when you click:
 
 Hathor registers **System Media Transport Controls** via `winsdk` (see `services/windows_media.py`). Media keys (Play/Pause, Next, Previous) on your keyboard control playback, the OS media overlay shows the song title/artist/album art, and its press status stays in sync with the app's play state.
 
-## First-run remote sync
+## First-run server sync
 
-If a `.env` with `DB_HOST` is present, the first launch asks whether to load the library from the remote DB. Choosing **"Yes, load from remote"**:
+If a `.env` with `HATHOR_API_URL`/`HATHOR_API_KEY` is present, the first launch asks whether to load the library from the sync server. Choosing **"Yes, load from server"**:
 
 1. Pulls songs, podcasts, playlists, lyrics, daily mix, and history down into the local SQLite DB.
-2. Queues downloads for any songs/podcasts whose files aren't present locally (each into its own folder).
+2. Downloads any songs/podcasts whose files aren't present locally, straight from the server (each into its own folder).
 
 Afterwards, sync stays fully manual via the Settings buttons above.

@@ -114,59 +114,36 @@ Sync_Deletions(                             -- tombstones for remote deletion sy
 
 `Settings` is populated with a single default row (`INSERT OR IGNORE ... VALUES (1, ...)`).
 
-> The playlist `thumbnail` column: local it's a `BLOB`; `sync.py` normalizes it to UTF-8 **text** (a base64 image) for the remote DB.
+> The playlist `thumbnail` column: local it's a `BLOB`; sync normalizes it to UTF-8 **text** (a base64 image) for the server.
 
-## Remote schema (`sync.py`)
+## Server sync (`services/api_sync.py`)
 
-The remote database mirrors the local one **except `Settings`** (kept local-only — per-machine state). Tables are created on first sync:
-
-| Local | Remote |
-| ----- | ------ |
-| `Songs` | `songs` |
-| `Podcasts` | `podcasts` |
-| `Playlists` | `playlists` |
-| `Song_Playlist` | `song_playlist` |
-| `Lyrics` | `lyrics` (+`offset_ms`) |
-| `Music_History` | `music_history` |
-| `Playlist_History` | `playlist_history` |
-| `Daily_Mix` | `daily_mix` |
-| `Podcast_Tags` / `Podcast_Tag_Links` | `podcast_tags` / `podcast_tag_links` |
-| `Podcast_Chapters` | `podcast_chapters` |
-
-`Sync_Deletions`, `Download_Queue`, and `Daily_Mix`-adjacent housekeeping stay local-only except where noted below (`daily_mix` *is* mirrored — see pull/push rules).
+The Hathor server (Postgres) is the source of truth — there is no remote database anymore. Full protocol in [Sync API migration](SYNC_API_MIGRATION.md).
 
 ## How the sync works
 
 Sync is **manual-only**: no background thread exists. Two directions, both from Settings buttons (or the first-run prompt):
 
-### Push — "Push to Remote" (`Api.sync_local_to_remote` → `DatabaseSync.sync_once`)
+### Push — "Push to Server" (`Api.sync_local_to_remote` → `ApiSyncClient.push_once`)
 
-Runs one full `_run_sync()` cycle:
+1. Collect local rows + `Sync_Deletions` tombstones and `POST` them to `/api/v1/sync/import` (server applies scoped replaces and idempotent history inserts).
+2. Upload raw MP3 bytes for files the server names in `missingFiles` (`PUT /api/v1/sync/files/{file}`).
+3. Clear sent tombstones only after the server accepts them (a failed push retries everything idempotently).
 
-1. **`_apply_deletions`** — read all `Sync_Deletions` rows, `DELETE` the matching remote rows (mapping `songs→file`, `podcasts→file`, `playlists→id`, `lyrics→song_file`, `music_history→song_file`, `playlist_history→playlist_id`, `podcast_tags→id`, `podcast_chapters→podcast_file`), then clear the local tombstone table.
-2. **`_sync_songs`** — UPSERT all songs (`INSERT ... ON DUPLICATE KEY UPDATE`).
-3. **`_sync_podcasts`** — UPSERT all podcasts, same pattern.
-4. **`_sync_playlists`** — UPSERT all playlists **including `id`**, then `_align_auto_increment` so future `AUTO_INCREMENT` ids don't collide.
-5. **`_sync_song_playlist`** — full replace: `DELETE` all remote `song_playlist` rows, re-insert everything, align auto-increment.
-6. **`_sync_lyrics`** — UPSERT lyrics with explicit ids **including `offset_ms`**.
-7. **`_sync_podcast_chapters`** — scoped replace: `DELETE` remote chapters for our own episode files, re-insert ours, align auto-increment (shared remote, same rule as tag links).
-7. **`_sync_daily_mix`** — UPSERT the local daily mix (last writer wins per `mix_date`) and prune remote mixes older than the newest local one, so an outdated device can never delete a newer mix.
-8. **`_sync_history`** (×2) — *incremental* for `music_history` / `playlist_history`: reads the remote `MAX(id)` and inserts only local rows with `id > max`, using `INSERT IGNORE`.
+### Pull — "Sync from Server" (`Api.sync_remote_to_local_and_download` → `ApiSyncClient.pull_once`)
 
-### Pull — "Sync Remote" (`DatabaseManager.sync_remote_to_local_and_download`)
-
-Fetches remote songs, podcasts, playlists, lyrics (+`offset_ms` where the remote has it), podcast tags/links, chapters, history, and the daily mix into SQLite (guarded so remote DBs predating `podcasts`/`daily_mix`/tags/chapters don't break the pull), then queues downloads for missing files — songs into the songs folder, podcasts into the podcasts folder. Adopting the remote daily mix makes every device play the same mix of the day; locally stored mixes older than today are pruned.
+`GET /api/v1/sync/delta?cursor=` merges changed rows (upserts, guarded link reconcile, daily-mix adopt + prune, tombstones applied incl. file removal), then streams missing files byte-identical from `GET /api/v1/sync/files/{file}` — songs into the songs folder, podcasts into the podcasts folder. The cursor (`sync_cursor.txt` next to the DB) advances only on full success.
 
 ### Connections
 
-- `pymysql` connections are wrapped in `_get_conn()`, which reconnects if the connection dropped.
-- TLS: uses `DB_SSL_CA` if provided and present on disk, otherwise `certifi`'s bundle.
-- Any exception during a cycle logs `[Sync] Sync error: ...` and forces a reconnect next cycle — sync failures never crash the app.
+- Stdlib `urllib` over HTTP to `HATHOR_API_URL` with `Bearer HATHOR_API_KEY`; no DB driver.
+- 401 → the key is wrong or lacks scope; unreachable → "is the server running?".
+- Sync failures return message strings — they never crash the app.
 
-## First-run remote import
+## First-run server import
 
-If sync is configured and the local DB is brand new, `main.py` prompts the user. If accepted, `DatabaseManager.sync_remote_to_local_and_download()`:
+If sync is configured and the local DB is brand new, `main.py` prompts the user. If accepted, `ApiSyncClient.pull_once()`:
 
-1. Pulls remote songs, podcasts, playlists, lyrics, daily mix, and history into SQLite.
-2. Compares against local files and **queues downloads** for missing songs and episodes (each into its own folder).
+1. Pulls the server library (songs, podcasts, playlists, lyrics, daily mix, history) into SQLite.
+2. Downloads missing files directly from the server (each into its own folder).
 3. Nothing else starts afterwards — further syncs are manual via the Settings buttons.
