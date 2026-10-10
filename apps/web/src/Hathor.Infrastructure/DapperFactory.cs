@@ -26,8 +26,12 @@ public static class DatabaseConnection
         // connection string from a higher layer (e.g. test overrides).
         var connectionString = HighestPrecedenceConnection(config, provider)
             ?? DefaultConnectionString(provider);
-        var password = config.GetValue<string>("Database:Password")
-            ?? Environment.GetEnvironmentVariable(PasswordEnvVar);
+        // Whitespace (e.g. "Password": "" shipped in appsettings.json)
+        // counts as unset so the environment fallback still applies — ??
+        // alone only falls through on null.
+        var password = config.GetValue<string>("Database:Password");
+        if (string.IsNullOrWhiteSpace(password))
+            password = Environment.GetEnvironmentVariable(PasswordEnvVar);
         if (IsPlaceholder(password)) return connectionString;
         return ApplyPassword(provider, connectionString, password!);
     }
@@ -52,10 +56,13 @@ public static class DatabaseConnection
         return IsPlaceholder(mergedHost) ? null : BuildFromParts(config, provider);
     }
 
+    // NOTE: no password baked in — Database:Password (gitignored secrets
+    // file) or HATHOR_DB_PASSWORD is applied over this base string by
+    // Resolve(). Keeps scanners quiet and dev defaults out of git.
     private static string DefaultConnectionString(string provider) =>
         provider == "mysql"
-            ? "server=localhost;database=hathor;user=root;password=hathor"
-            : "Host=localhost;Port=5432;Database=hathor;Username=postgres;Password=postgres";
+            ? "server=localhost;database=hathor;user=root"
+            : "Host=localhost;Port=5432;Database=hathor;Username=postgres";
 
     private static string? BuildFromParts(IConfiguration config, string provider)
     {
@@ -141,6 +148,6 @@ public sealed class DatabaseOptions
 {
     public string Provider { get; set; } = "postgres";
     public string ConnectionString { get; set; } =
-        "Host=localhost;Port=5432;Database=hathor;Username=postgres;Password=postgres";
+        "Host=localhost;Port=5432;Database=hathor;Username=postgres";
     public string StorageRoot { get; set; } = "data";
 }

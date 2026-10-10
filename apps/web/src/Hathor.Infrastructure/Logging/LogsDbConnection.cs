@@ -21,8 +21,11 @@ public static class LogsDbConnection
             connectionString = BuildFromParts(config);
         if (string.IsNullOrWhiteSpace(connectionString)) return null;
 
-        var password = config.GetValue<string>("Logging:Password")
-            ?? Environment.GetEnvironmentVariable(PasswordEnvVar);
+        // Same whitespace rule as the main database password: an empty
+        // appsettings value must not block the environment fallback.
+        var password = config.GetValue<string>("Logging:Password");
+        if (string.IsNullOrWhiteSpace(password))
+            password = Environment.GetEnvironmentVariable(PasswordEnvVar);
         if (string.IsNullOrWhiteSpace(password)) return connectionString;
 
         return new NpgsqlConnectionStringBuilder(connectionString)
