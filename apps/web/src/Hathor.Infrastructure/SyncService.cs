@@ -10,7 +10,7 @@ namespace Hathor.Infrastructure.Sync;
 // DatabaseSync push, adapted): upsert everything present, insert-if-absent
 // for append-only history, adopt daily mixes (prune < today), apply
 // tombstones. Missing sections are skipped (guarded old-DB behavior).
-public sealed class EfSyncService(HathorDbContext db) : ISyncService
+public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage = null) : ISyncService
 {
     public async Task<SyncSnapshot> ExportAsync(Guid userId, long sinceId, CancellationToken ct = default) =>
         new(
@@ -48,7 +48,170 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
                 .Select(d => new DeletionRowDto(d.TableName, d.RowKey))
                 .ToListAsync(ct));
 
-    public async Task<SyncSummary> ImportAsync(Guid userId, SyncSnapshot s, CancellationToken ct = default,
+    // Opaque delta cursor: "<utcTicks>:<musicHistoryMaxId>:<playlistHistoryMaxId>".
+    // Rows use >= against the time watermark (overlap is idempotent on
+    // clients); history stays exact via id comparison.
+    private static (DateTime Since, long MusicId, long PlaylistId) ParseCursor(string cursor)
+    {
+        var parts = (cursor ?? "").Split(':');
+        var since = parts.Length > 0 && long.TryParse(parts[0], out var ticks)
+            ? new DateTime(Math.Max(DateTime.MinValue.Ticks, Math.Min(ticks, DateTime.UtcNow.Ticks)), DateTimeKind.Utc)
+            : DateTime.MinValue;
+        var music = parts.Length > 1 && long.TryParse(parts[1], out var m) ? Math.Max(0, m) : 0;
+        var list = parts.Length > 2 && long.TryParse(parts[2], out var p) ? Math.Max(0, p) : 0;
+        return (since, music, list);
+    }
+
+    private static string BuildCursor(DateTime since, long musicId, long playlistId) =>
+        $"{since.Ticks}:{musicId}:{playlistId}";
+
+    public async Task<SyncDelta> GetDeltaAsync(Guid userId, string cursor, CancellationToken ct = default)
+    {
+        var (since, musicId, playlistId) = ParseCursor(cursor);
+        var watermark = since;
+
+        List<SongRowDto>? songs = null;
+        var songRows = await db.Songs.Where(s => s.UserId == userId && s.UpdatedAtUtc >= since)
+            .Select(s => new { s.UpdatedAtUtc, Row = new SongRowDto(s.File, s.DownloadedLink, s.Title, s.DateDownloadUtc, s.Artist, s.LoudnessDb) })
+            .ToListAsync(ct);
+        if (songRows.Count > 0)
+        {
+            songs = songRows.Select(x => x.Row).ToList();
+            watermark = songRows.Max(x => x.UpdatedAtUtc) > watermark ? songRows.Max(x => x.UpdatedAtUtc) : watermark;
+        }
+
+        List<PodcastRowDto>? podcasts = null;
+        var podcastRows = await db.Podcasts.Where(p => p.UserId == userId && p.UpdatedAtUtc >= since)
+            .Select(p => new { p.UpdatedAtUtc, Row = new PodcastRowDto(p.File, p.DownloadedLink, p.Title, p.DateDownloadUtc, p.Artist) })
+            .ToListAsync(ct);
+        if (podcastRows.Count > 0)
+        {
+            podcasts = podcastRows.Select(x => x.Row).ToList();
+            if (podcastRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = podcastRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        List<PlaylistRowDto>? playlists = null;
+        var playlistRows = await db.Playlists.Where(p => p.UserId == userId && p.UpdatedAtUtc >= since)
+            .Select(p => new { p.UpdatedAtUtc, Row = new PlaylistRowDto(p.Id, p.Title, p.Description, p.Thumbnail) })
+            .ToListAsync(ct);
+        if (playlistRows.Count > 0)
+        {
+            playlists = playlistRows.Select(x => x.Row).ToList();
+            if (playlistRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = playlistRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        List<SongLinkRowDto>? songLinks = null;
+        var songLinkRows = await db.SongPlaylists.Where(l => l.UserId == userId && l.UpdatedAtUtc >= since)
+            .Select(l => new { l.UpdatedAtUtc, Row = new SongLinkRowDto(l.Id, l.SongFile, l.PlaylistId, l.DateAddedUtc) })
+            .ToListAsync(ct);
+        if (songLinkRows.Count > 0)
+        {
+            songLinks = songLinkRows.Select(x => x.Row).ToList();
+            if (songLinkRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = songLinkRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        List<TagRowDto>? tags = null;
+        var tagRows = await db.PodcastTags.Where(t => t.UserId == userId && t.UpdatedAtUtc >= since)
+            .Select(t => new { t.UpdatedAtUtc, Row = new TagRowDto(t.Id, t.Name) })
+            .ToListAsync(ct);
+        if (tagRows.Count > 0)
+        {
+            tags = tagRows.Select(x => x.Row).ToList();
+            if (tagRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = tagRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        List<TagLinkRowDto>? tagLinks = null;
+        var tagLinkRows = await db.PodcastTagLinks.Where(l => l.UserId == userId && l.UpdatedAtUtc >= since)
+            .Select(l => new { l.UpdatedAtUtc, Row = new TagLinkRowDto(l.Id, l.PodcastFile, l.TagId) })
+            .ToListAsync(ct);
+        if (tagLinkRows.Count > 0)
+        {
+            tagLinks = tagLinkRows.Select(x => x.Row).ToList();
+            if (tagLinkRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = tagLinkRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        List<LyricRowDto>? lyrics = null;
+        var lyricRows = await db.Lyrics.Where(l => l.UserId == userId && l.UpdatedAtUtc >= since)
+            .Select(l => new { l.UpdatedAtUtc, Row = new LyricRowDto(l.Id, l.SongFile, l.LyricsJson, l.OffsetMs) })
+            .ToListAsync(ct);
+        if (lyricRows.Count > 0)
+        {
+            lyrics = lyricRows.Select(x => x.Row).ToList();
+            if (lyricRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = lyricRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        List<MixRowDto>? mixes = null;
+        var mixRows = await db.DailyMixes.Where(m => m.UserId == userId && m.UpdatedAtUtc >= since)
+            .Select(m => new { m.UpdatedAtUtc, Row = new MixRowDto(m.MixDate, m.SongFilesJson) })
+            .ToListAsync(ct);
+        if (mixRows.Count > 0)
+        {
+            mixes = mixRows.Select(x => x.Row).ToList();
+            if (mixRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = mixRows.Max(x => x.UpdatedAtUtc);
+        }
+
+        var musicHistory = await db.MusicHistory.Where(h => h.UserId == userId && h.Id > musicId)
+            .Select(h => new MusicHistoryRowDto(h.Id, h.SongFile, h.DatePlayedUtc))
+            .ToListAsync(ct);
+        var playlistHistory = await db.PlaylistHistory.Where(h => h.UserId == userId && h.Id > playlistId)
+            .Select(h => new PlaylistHistoryRowDto(h.Id, h.PlaylistId, h.DatePlayedUtc))
+            .ToListAsync(ct);
+
+        List<DeletionRowDto>? deletions = null;
+        var deletionRows = await db.SyncDeletions.Where(d => d.UserId == userId && d.DeletedAtUtc >= since)
+            .Select(d => new { d.DeletedAtUtc, d.Id, Row = new DeletionRowDto(d.TableName, d.RowKey) })
+            .ToListAsync(ct);
+        if (deletionRows.Count > 0)
+        {
+            deletions = deletionRows.Select(x => x.Row).ToList();
+            if (deletionRows.Max(x => x.DeletedAtUtc) > watermark) watermark = deletionRows.Max(x => x.DeletedAtUtc);
+        }
+
+        if (musicHistory.Count > 0) musicId = Math.Max(musicId, musicHistory.Max(h => h.Id));
+        if (playlistHistory.Count > 0) playlistId = Math.Max(playlistId, playlistHistory.Max(h => h.Id));
+
+        return new SyncDelta(BuildCursor(watermark, musicId, playlistId), new SyncSnapshot(
+            songs, podcasts, playlists, songLinks, tags, tagLinks, lyrics,
+            musicHistory.Count > 0 ? musicHistory : null,
+            playlistHistory.Count > 0 ? playlistHistory : null,
+            mixes, deletions));
+    }
+
+    public async Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
+        CancellationToken ct = default)
+    {
+        if (storage is null) throw new InvalidOperationException("Library storage is not configured.");
+        var path = isPodcast ? storage.PodcastPath(userId, file) : storage.SongPath(userId, file);
+        await File.WriteAllBytesAsync(path, bytes, ct);
+        var title = Path.GetFileNameWithoutExtension(file);
+        if (isPodcast)
+        {
+            var existing = await db.Podcasts.FindAsync([userId, file], ct);
+            if (existing is null)
+                await db.Podcasts.AddAsync(new Podcast
+                {
+                    UserId = userId, File = file, Title = title,
+                    DateDownloadUtc = DateTime.UtcNow,
+                }, ct);
+            else
+                existing.DateDownloadUtc = DateTime.UtcNow;
+        }
+        else
+        {
+            var existing = await db.Songs.FindAsync([userId, file], ct);
+            if (existing is null)
+                await db.Songs.AddAsync(new Song
+                {
+                    UserId = userId, File = file, Title = title,
+                    DateDownloadUtc = DateTime.UtcNow,
+                }, ct);
+            else
+                existing.DateDownloadUtc = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<ImportResult> ImportAsync(Guid userId, SyncSnapshot s, CancellationToken ct = default,
         bool reconcileLinks = false)
     {
         var counts = new int[11];
@@ -365,8 +528,26 @@ public sealed class EfSyncService(HathorDbContext db) : ISyncService
         await db.SaveChangesAsync(ct);
         await AlignAutoIncrementAsync(ct);
 
-        return new SyncSummary(counts[0], counts[1], counts[2], counts[3], counts[4],
+        var summary = new SyncSummary(counts[0], counts[1], counts[2], counts[3], counts[4],
             counts[5], counts[6], counts[7], counts[8], counts[9], counts[10]);
+
+        // Files the catalog references but the disk lacks: the pushing
+        // device uploads these via PUT /sync/files/{file} to complete the
+        // push (Exists guards traversal — bad names report missing and the
+        // PUT path rejects them).
+        var missing = new List<string>();
+        if (storage is not null)
+        {
+            if (s.Songs is not null)
+                foreach (var r in s.Songs)
+                    if (!string.IsNullOrWhiteSpace(r.File) && !storage.SongExists(userId, r.File))
+                        missing.Add(r.File);
+            if (s.Podcasts is not null)
+                foreach (var r in s.Podcasts)
+                    if (!string.IsNullOrWhiteSpace(r.File) && !storage.PodcastExists(userId, r.File))
+                        missing.Add(r.File);
+        }
+        return new ImportResult(summary, missing);
     }
 
     // Desktop REMOTE_DELETE_COLUMNS mapping (lowercase web table names here).

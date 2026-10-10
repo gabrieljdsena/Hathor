@@ -32,6 +32,11 @@ Delta contract (server must speak this; see
         "deletions": [{table_name, row_key}] }
 
 Stdlib only (urllib) — no new pip dependency.
+
+Wire notes: the server speaks camelCase JSON (ASP.NET Core default) while
+this module works in snake_case internally. Responses are normalized on
+the way in (_norm) and push payloads are emitted in PascalCase (which the
+server binds case-insensitively) with ISO-8601 UTC datetimes.
 """
 
 import datetime
@@ -81,6 +86,88 @@ def get_api_config():
     url = (os.getenv(API_URL_ENV) or "").strip().rstrip("/")
     key = (os.getenv(API_KEY_ENV) or "").strip()
     return url, key
+
+
+# server-field -> local-field per delta section (server sends camelCase;
+# local merge code reads snake_case). Unknown shapes pass through untouched.
+FIELD_MAPS = {
+    "songs": {"file": "file", "downloadedLink": "downloaded_link",
+              "title": "title", "dateDownloadUtc": "date_download",
+              "artist": "artist", "loudnessDb": "loudness_db"},
+    "podcasts": {"file": "file", "downloadedLink": "downloaded_link",
+                 "title": "title", "dateDownloadUtc": "date_download",
+                 "artist": "artist"},
+    "playlists": {"id": "id", "title": "title", "description": "description",
+                  "thumbnail": "thumbnail"},
+    "song_playlist": {"id": "id", "songFile": "song_file",
+                      "playlistId": "playlist_id", "dateAddedUtc": "date_added"},
+    "lyrics": {"id": "id", "songFile": "song_file", "lyricsJson": "lyrics",
+               "offsetMs": "offset_ms"},
+    "music_history": {"id": "id", "songFile": "song_file",
+                      "datePlayedUtc": "date_played"},
+    "playlist_history": {"id": "id", "playlistId": "playlist_id",
+                         "datePlayedUtc": "date_played"},
+    "podcast_tags": {"id": "id", "name": "name"},
+    "podcast_tag_links": {"id": "id", "podcastFile": "podcast_file",
+                          "tagId": "tag_id"},
+    "daily_mix": {"mixDate": "mix_date", "songFilesJson": "song_files"},
+    "deletions": {"tableName": "table_name", "rowKey": "row_key"},
+}
+
+# server section name -> local section name.
+SECTION_MAP = {
+    "songs": "songs", "podcasts": "podcasts", "playlists": "playlists",
+    "songLinks": "song_playlist", "podcastTags": "podcast_tags",
+    "podcastTagLinks": "podcast_tag_links", "lyrics": "lyrics",
+    "musicHistory": "music_history", "playlistHistory": "playlist_history",
+    "dailyMix": "daily_mix", "deletions": "deletions",
+}
+
+
+def _norm_section(rows, mapping):
+    """Map one delta section's rows to local snake_case field names."""
+    normed = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        out = {}
+        for server_key, local_key in mapping.items():
+            for candidate in (local_key, server_key,
+                              server_key[0].upper() + server_key[1:]):
+                if candidate in row and row[candidate] is not None:
+                    out[local_key] = row[candidate]
+                    break
+        normed.append(out)
+    return normed
+
+
+def _norm_snapshot(snap):
+    """Normalize a delta/export payload to local section + field names."""
+    normed = {}
+    for server_section, local_section in SECTION_MAP.items():
+        for candidate in (local_section, server_section,
+                          server_section[0].upper() + server_section[1:]):
+            if candidate in snap and isinstance(snap[candidate], list):
+                normed[local_section] = _norm_section(
+                    snap[candidate], FIELD_MAPS[local_section])
+                break
+    for key in ("cursor", "Cursor"):
+        if snap.get(key):
+            normed["cursor"] = snap[key]
+            break
+    return normed
+
+
+def _iso(dt):
+    """'YYYY-MM-DD HH:MM:SS' (UTC, local DB shape) -> ISO-8601 UTC."""
+    if not dt:
+        return None
+    s = str(dt).strip()
+    if " " in s and "T" not in s:
+        s = s.replace(" ", "T", 1)
+    if not s.endswith("Z") and "+" not in s[10:]:
+        s += "Z"
+    return s
 
 
 def cursor_path(db_path):
@@ -161,7 +248,7 @@ class ApiSyncClient:
 
         cursor = read_cursor(self.db_path)
         try:
-            snap = self.get_delta(cursor)
+            snap = _norm_snapshot(self.get_delta(cursor))
         except ApiSyncError:
             raise
         except Exception as e:
@@ -181,10 +268,10 @@ class ApiSyncClient:
 
         # Fetch missing bytes straight from the server (exact filenames).
         for row in snap.get("songs") or []:
-            if self._fetch_missing(settings.path, row.get("file")):
+            if self._fetch_missing(settings.path, row.get("file"), "songs"):
                 downloaded["songs"] += 1
         for row in snap.get("podcasts") or []:
-            if self._fetch_missing(settings.podcasts_path, row.get("file")):
+            if self._fetch_missing(settings.podcasts_path, row.get("file"), "podcasts"):
                 downloaded["podcasts"] += 1
 
         write_cursor(self.db_path, snap.get("cursor", ""))
@@ -199,7 +286,7 @@ class ApiSyncClient:
             )
         return msg
 
-    def _fetch_missing(self, folder, filename):
+    def _fetch_missing(self, folder, filename, library="songs"):
         """Download one file if absent on disk. Returns True when fetched."""
         if not filename or "/" in filename or "\\" in filename:
             return False
@@ -209,7 +296,8 @@ class ApiSyncClient:
         os.makedirs(folder, exist_ok=True)
         tmp = dest + ".hathor-part"
         req = urllib.request.Request(
-            self.base + "/files/" + urllib.parse.quote(filename),
+            self.base + "/files/" + urllib.parse.quote(filename)
+            + "?" + urllib.parse.urlencode({"library": library}),
             headers={
                 "Authorization": f"Bearer {self.key}",
                 "User-Agent": "hathor-desktop/1",
@@ -251,7 +339,9 @@ class ApiSyncClient:
 
         uploaded = 0
         try:
-            for filename in resp.get("missing_files") or []:
+            missing = (resp.get("missing_files") or resp.get("missingFiles")
+                       or resp.get("MissingFiles") or [])
+            for filename in missing:
                 if self._upload_local_file(filename):
                     uploaded += 1
         except ApiSyncError:
@@ -271,37 +361,85 @@ class ApiSyncClient:
         return msg
 
     def _collect_local(self):
+        """Local rows shaped as the server's SyncSnapshot (PascalCase keys,
+        ISO-8601 UTC datetimes). Missing tables read as [] (old installs)."""
         payload = {}
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            tables = {
-                "songs": "SELECT file, downloaded_link, title, date_download, artist FROM Songs",
-                "podcasts": "SELECT file, downloaded_link, title, date_download, artist FROM Podcasts",
-                "playlists": "SELECT id, title, description, thumbnail FROM Playlists",
-                "song_playlist": "SELECT id, song_file, playlist_id, date_added FROM Song_Playlist",
-                "lyrics": "SELECT id, song_file, lyrics FROM Lyrics",
-                "music_history": "SELECT id, song_file, date_played FROM Music_History",
-                "playlist_history": "SELECT id, playlist_id, date_played FROM Playlist_History",
-                "podcast_tags": "SELECT id, name FROM Podcast_Tags",
-                "podcast_tag_links": "SELECT id, podcast_file, tag_id FROM Podcast_Tag_Links",
-                "podcast_chapters": "SELECT id, podcast_file, name, start_secs, end_secs FROM Podcast_Chapters",
-                "daily_mix": "SELECT mix_date, song_files FROM Daily_Mix",
-                "deletions": "SELECT table_name, row_key FROM Sync_Deletions",
-            }
-            for key, sql in tables.items():
+
+            def rows(sql):
                 try:
-                    payload[key] = [dict(r) for r in conn.execute(sql).fetchall()]
+                    return [dict(r) for r in conn.execute(sql).fetchall()]
                 except sqlite3.OperationalError:
-                    payload[key] = []  # table predates this install; server tolerates []
+                    return []
+
             try:
-                payload["lyrics_offsets"] = [
-                    {"song_file": r[0], "offset_ms": r[1]}
-                    for r in conn.execute(
-                        "SELECT song_file, offset_ms FROM Lyrics WHERE offset_ms <> 0"
-                    ).fetchall()
-                ]
+                song_rows = [dict(r) for r in conn.execute(
+                    "SELECT file, downloaded_link, title, date_download, artist, loudness_db FROM Songs").fetchall()]
             except sqlite3.OperationalError:
-                payload["lyrics_offsets"] = []
+                # loudness_db postdates this install; play-time fills it.
+                song_rows = rows("SELECT file, downloaded_link, title, date_download, artist FROM Songs")
+            payload["Songs"] = [
+                {"File": r.get("file"), "DownloadedLink": r.get("downloaded_link"),
+                 "Title": r.get("title"), "DateDownloadUtc": _iso(r.get("date_download")),
+                 "Artist": r.get("artist"), "LoudnessDb": r.get("loudness_db")}
+                for r in song_rows
+            ]
+            payload["Podcasts"] = [
+                {"File": r.get("file"), "DownloadedLink": r.get("downloaded_link"),
+                 "Title": r.get("title"), "DateDownloadUtc": _iso(r.get("date_download")),
+                 "Artist": r.get("artist")}
+                for r in rows("SELECT file, downloaded_link, title, date_download, artist FROM Podcasts")
+            ]
+            payload["Playlists"] = [
+                {"Id": r.get("id"), "Title": r.get("title"),
+                 "Description": r.get("description"), "Thumbnail": r.get("thumbnail")}
+                for r in rows("SELECT id, title, description, thumbnail FROM Playlists")
+            ]
+            payload["SongLinks"] = [
+                {"Id": r.get("id"), "SongFile": r.get("song_file"),
+                 "PlaylistId": r.get("playlist_id"), "DateAddedUtc": _iso(r.get("date_added"))}
+                for r in rows("SELECT id, song_file, playlist_id, date_added FROM Song_Playlist")
+            ]
+            payload["Lyrics"] = [
+                {"Id": r.get("id"), "SongFile": r.get("song_file"),
+                 "LyricsJson": r.get("lyrics"), "OffsetMs": r.get("offset_ms") or 0}
+                for r in rows("SELECT id, song_file, lyrics, offset_ms FROM Lyrics")
+            ] or [
+                {"Id": r.get("id"), "SongFile": r.get("song_file"),
+                 "LyricsJson": r.get("lyrics"), "OffsetMs": 0}
+                for r in rows("SELECT id, song_file, lyrics FROM Lyrics")
+            ]
+            payload["MusicHistory"] = [
+                {"Id": r.get("id"), "SongFile": r.get("song_file"),
+                 "DatePlayedUtc": _iso(r.get("date_played"))}
+                for r in rows("SELECT id, song_file, date_played FROM Music_History")
+            ]
+            payload["PlaylistHistory"] = [
+                {"Id": r.get("id"), "PlaylistId": r.get("playlist_id"),
+                 "DatePlayedUtc": _iso(r.get("date_played"))}
+                for r in rows("SELECT id, playlist_id, date_played FROM Playlist_History")
+            ]
+            payload["PodcastTags"] = [
+                {"Id": r.get("id"), "Name": r.get("name")}
+                for r in rows("SELECT id, name FROM Podcast_Tags")
+            ]
+            payload["PodcastTagLinks"] = [
+                {"Id": r.get("id"), "PodcastFile": r.get("podcast_file"),
+                 "TagId": r.get("tag_id")}
+                for r in rows("SELECT id, podcast_file, tag_id FROM Podcast_Tag_Links")
+            ]
+            # No server section yet (known gap) — still sent for forward-compat.
+            payload["PodcastChapters"] = rows(
+                "SELECT id, podcast_file, name, start_secs, end_secs FROM Podcast_Chapters")
+            payload["DailyMix"] = [
+                {"MixDate": r.get("mix_date"), "SongFilesJson": r.get("song_files")}
+                for r in rows("SELECT mix_date, song_files FROM Daily_Mix")
+            ]
+            payload["Deletions"] = [
+                {"TableName": r.get("table_name"), "RowKey": r.get("row_key")}
+                for r in rows("SELECT table_name, row_key FROM Sync_Deletions")
+            ]
         return payload
 
     def _upload_local_file(self, filename):
@@ -310,16 +448,19 @@ class ApiSyncClient:
 
         if not filename or "/" in filename or "\\" in filename:
             return False
+        library = "songs"
         for folder in (settings.path, settings.podcasts_path):
             src = os.path.join(folder, filename)
             if os.path.exists(src):
+                library = "podcasts" if folder == settings.podcasts_path else "songs"
                 break
         else:
             return False
         with open(src, "rb") as f:
             data = f.read()
         req = urllib.request.Request(
-            self.base + "/files/" + urllib.parse.quote(filename),
+            self.base + "/files/" + urllib.parse.quote(filename)
+            + "?" + urllib.parse.urlencode({"library": library}),
             data=data,
             headers={
                 "Authorization": f"Bearer {self.key}",
@@ -448,6 +589,16 @@ class ApiSyncClient:
                 " lyrics = excluded.lyrics",
                 (ly.get("id"), ly.get("song_file"), ly.get("lyrics")),
             )
+            # Server embeds the offset in each lyric row (older shapes
+            # carried a separate lyrics_offsets section — still honored).
+            if ly.get("offset_ms"):
+                try:
+                    conn.execute(
+                        "UPDATE Lyrics SET offset_ms = ? WHERE song_file = ?",
+                        (ly["offset_ms"], ly.get("song_file")),
+                    )
+                except sqlite3.OperationalError:
+                    pass
         for off in snap.get("lyrics_offsets") or []:
             if "::chapter:" in (off.get("song_file") or ""):
                 continue

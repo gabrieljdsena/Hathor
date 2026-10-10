@@ -12,18 +12,22 @@
   (tombstones, scoped link replaces, incremental history via remote `MAX(id)`,
   last-writer-wins daily mix, add-only scan).
 
-## Server dependency (must exist before desktop cutover works)
+## Server dependency — IMPLEMENTED (commit with this slice)
 
 Desktop's new client speaks this contract (all under `/api/v1/sync`,
-`Authorization: Bearer hth_...`):
+`Authorization: Bearer hth_...`). Delta semantics: `UpdatedAtUtc`
+server-stamped via a single `SaveChanges` hook; cursor
+`<ticks>:<musicId>:<playlistId>`; time sections `>=` (idempotent overlap),
+history exact by id, tombstones by `DeletedAtUtc`. Known gap: podcast
+chapters have no snapshot section yet (sent, ignored, omitted).
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/sync/delta?cursor=` | Changed rows since cursor + new cursor + tombstones since cursor |
+| `GET` | `/sync/delta?cursor=` | Changed rows since cursor + new cursor + tombstones since cursor (**done**) |
 | `GET` | `/sync/export?sinceId=` | Full bootstrap snapshot (already exists) |
-| `POST` | `/sync/import` | Push rows + tombstones (already exists; needs delta-friendly merge **+ `missing_files: [filename]` in the response** so the client knows which bytes to PUT) |
-| `GET` | `/sync/files/{file}` | Download MP3 bytes (range + `Content-Length`; **new**) |
-| `PUT` | `/sync/files/{file}` | Upload MP3 bytes for new local files (**new**) |
+| `POST` | `/sync/import` | Push rows + tombstones → `ImportResult { summary, missingFiles }` (**done**) |
+| `GET` | `/sync/files/{file}?library=` | Download MP3 bytes (range; **done**) |
+| `PUT` | `/sync/files/{file}?library=` | Upload MP3 bytes for new local files, 100 MB cap (**done**) |
 | `POST/GET` | `/sync/playback` | Resume spot (already exists, unchanged) |
 
 Server also needs `UpdatedAt` (server-set) on synced tables + migration.

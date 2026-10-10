@@ -136,9 +136,18 @@ public interface ISyncService
     // reconcileLinks (pull path only): drop local link rows absent from a
     // full snapshot. Never true for /sync/import — partial snapshots must
     // not wipe links.
-    Task<Application.Sync.SyncSummary> ImportAsync(Guid userId,
+    Task<Application.Sync.ImportResult> ImportAsync(Guid userId,
         Application.Sync.SyncSnapshot snapshot, CancellationToken ct = default,
         bool reconcileLinks = false);
+    // Incremental delta for device sync: rows with UpdatedAtUtc >= the
+    // cursor time (overlap is idempotent client-side), append-only history
+    // by id, tombstones by DeletedAtUtc. Opaque cursor round-trips.
+    Task<Application.Sync.SyncDelta> GetDeltaAsync(Guid userId, string cursor,
+        CancellationToken ct = default);
+    // Persist raw MP3 bytes pushed by a device (PUT /sync/files/{file}):
+    // writes to the shared library folder and upserts the catalog row.
+    Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
+        CancellationToken ct = default);
 }
 
 // Startup-maintenance probe port (desktop startup_maintenance status
@@ -147,6 +156,8 @@ public interface ISyncService
 public interface ISystemProbe
 {
     FFmpegStatusDto GetFFmpegStatus();
+    // yt-dlp fallback binary (same shape as FFmpeg: found/exe/version-or-error).
+    FFmpegStatusDto GetYtDlpStatus();
     IReadOnlyList<LibraryStatusDto> GetLibraryStatus();
     MaintenanceResultDto RunChecks();
     // Live NuGet check for YoutubeExplode/TagLibSharp (latest stable +

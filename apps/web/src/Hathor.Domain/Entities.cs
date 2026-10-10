@@ -42,13 +42,22 @@ public sealed class ApiKey
     public bool Revoked { get; set; }
 }
 
-public sealed class Song
+// Change-feed marker for delta sync (GET /api/v1/sync/delta): the
+// DbContext stamps this on every insert/update, so no write path needs
+// to remember it. Server clock only — client clocks never matter.
+public interface ITrackUpdatedAt
+{
+    DateTime UpdatedAtUtc { get; set; }
+}
+
+public sealed class Song : ITrackUpdatedAt
 {
     public Guid UserId { get; set; }
     public string File { get; set; } = ""; // PK with UserId; filename in songs folder
     public string? DownloadedLink { get; set; }
     public string Title { get; set; } = "";
     public DateTime DateDownloadUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
     public string? Artist { get; set; }
     // Materialized file tags (indexed search/sort without opening MP3s).
     // File tags stay the source of truth; these mirror them (see Scan).
@@ -62,47 +71,52 @@ public sealed class Song
     public double? LoudnessDb { get; set; }
 }
 
-public sealed class Podcast
+public sealed class Podcast : ITrackUpdatedAt
 {
     public Guid UserId { get; set; }
     public string File { get; set; } = "";
     public string? DownloadedLink { get; set; }
     public string Title { get; set; } = "";
     public DateTime DateDownloadUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
     public string? Artist { get; set; }
 }
 
-public sealed class Playlist
+public sealed class Playlist : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string Title { get; set; } = "";
     public string? Description { get; set; }
     public string? Thumbnail { get; set; } // TEXT base64 (sync.py normalizes BLOB→text)
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class SongPlaylist
+public sealed class SongPlaylist : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string SongFile { get; set; } = "";
     public long PlaylistId { get; set; }
     public DateTime DateAddedUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class PodcastTag
+public sealed class PodcastTag : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string Name { get; set; } = "";
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class PodcastTagLink
+public sealed class PodcastTagLink : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string PodcastFile { get; set; } = "";
     public long TagId { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 // Chapter marks inside a podcast episode (podcast "timestamps"):
@@ -138,7 +152,7 @@ public sealed class DownloadJob
     public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class Lyric
+public sealed class Lyric : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
@@ -147,6 +161,7 @@ public sealed class Lyric
     // Per-song highlight timing correction, milliseconds (-20000..20000).
     // Zero = none (no row needed, but harmless when present).
     public int OffsetMs { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 // Deferred metadata edit: PATCH on the currently-playing file stores the
@@ -195,12 +210,13 @@ public sealed class SyncDeletion
     public DateTime DeletedAtUtc { get; set; }
 }
 
-public sealed class DailyMix
+public sealed class DailyMix : ITrackUpdatedAt
 {
     public Guid UserId { get; set; }
     public string MixDate { get; set; } = ""; // YYYY-MM-DD, PK with UserId
     public string SongFilesJson { get; set; } = "[]";
     public DateTime CreatedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 // Discover cache (packages/contracts/discover.md): one row per user per day,

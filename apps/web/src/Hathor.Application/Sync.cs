@@ -55,6 +55,17 @@ public sealed record SyncSummary(
     int PodcastTags, int PodcastTagLinks, int Lyrics,
     int MusicHistory, int PlaylistHistory, int DailyMix, int Deletions);
 
+// Import outcome: the merge counts plus catalog files whose bytes are
+// missing on disk — the pushing device uploads those via
+// PUT /sync/files/{file} to complete the push.
+public sealed record ImportResult(SyncSummary Summary, List<string> MissingFiles);
+
+// Incremental delta (GET /sync/delta): the changed-sections snapshot plus
+// the opaque cursor to send back next time. Sections reuse SyncSnapshot
+// (null = nothing changed there); history stays id-cursored, tombstones
+// ride in Deletions filtered by DeletedAtUtc.
+public sealed record SyncDelta(string Cursor, SyncSnapshot Snapshot);
+
 // Per-library remote pull (desktop sync_remote_to_local_and_download split
 // in two): new rows merged + missing files queued for download.
 public sealed record RemotePullResult(int Added, int DownloadsStarted, string Message);
@@ -127,7 +138,8 @@ public sealed class GetLatestPlaybackHandler(Ports.IRemotePullService pull)
 }
 
 public sealed record ExportSnapshotQuery(Guid UserId, long SinceId = 0) : IRequest<SyncSnapshot>;
-public sealed record ImportSnapshotCommand(Guid UserId, SyncSnapshot Snapshot) : IRequest<SyncSummary>;
+public sealed record ImportSnapshotCommand(Guid UserId, SyncSnapshot Snapshot) : IRequest<ImportResult>;
+public sealed record GetDeltaQuery(Guid UserId, string Cursor = "") : IRequest<SyncDelta>;
 
 public sealed class ExportSnapshotHandler(ISyncService sync)
     : IRequestHandler<ExportSnapshotQuery, SyncSnapshot>
@@ -137,8 +149,28 @@ public sealed class ExportSnapshotHandler(ISyncService sync)
 }
 
 public sealed class ImportSnapshotHandler(ISyncService sync)
-    : IRequestHandler<ImportSnapshotCommand, SyncSummary>
+    : IRequestHandler<ImportSnapshotCommand, ImportResult>
 {
-    public Task<SyncSummary> Handle(ImportSnapshotCommand cmd, CancellationToken ct) =>
+    public Task<ImportResult> Handle(ImportSnapshotCommand cmd, CancellationToken ct) =>
         sync.ImportAsync(cmd.UserId, cmd.Snapshot, ct);
+}
+
+public sealed class GetDeltaHandler(ISyncService sync)
+    : IRequestHandler<GetDeltaQuery, SyncDelta>
+{
+    public Task<SyncDelta> Handle(GetDeltaQuery q, CancellationToken ct) =>
+        sync.GetDeltaAsync(q.UserId, q.Cursor, ct);
+}
+
+public sealed record SaveSyncFileCommand(Guid UserId, string File, bool IsPodcast, byte[] Bytes)
+    : IRequest<bool>;
+
+public sealed class SaveSyncFileHandler(ISyncService sync)
+    : IRequestHandler<SaveSyncFileCommand, bool>
+{
+    public async Task<bool> Handle(SaveSyncFileCommand cmd, CancellationToken ct)
+    {
+        await sync.SaveFileAsync(cmd.UserId, cmd.File, cmd.IsPodcast, cmd.Bytes, ct);
+        return true;
+    }
 }

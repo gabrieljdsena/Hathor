@@ -94,7 +94,7 @@ public sealed class RemotePullService(
                 RemoteMySql.Describe($"Error connecting to remote DB [{RemoteMySql.EndpointOf(connStr)}]", ex));
         }
 
-        SyncSummary summary;
+        ImportResult summary;
         try
         {
             summary = await sync.ImportAsync(userId, new SyncSnapshot(
@@ -138,8 +138,8 @@ public sealed class RemotePullService(
             }
         }
 
-        return new RemotePullResult(summary.Songs, downloads,
-            $"Synced {summary.Songs} new entries from remote DB. Started downloading {downloads} songs.");
+        return new RemotePullResult(summary.Summary.Songs, downloads,
+            $"Synced {summary.Summary.Songs} new entries from remote DB. Started downloading {downloads} songs.");
     }
 
     public async Task<RemotePullResult> PullPodcastsAsync(Guid userId, CancellationToken ct = default)
@@ -176,7 +176,7 @@ public sealed class RemotePullService(
                 RemoteMySql.Describe($"Error connecting to remote DB [{RemoteMySql.EndpointOf(connStr)}]", ex));
         }
 
-        SyncSummary summary;
+        ImportResult summary;
         try
         {
             summary = await sync.ImportAsync(userId, new SyncSnapshot(
@@ -217,8 +217,8 @@ public sealed class RemotePullService(
             }
         }
 
-        return new RemotePullResult(summary.Podcasts, downloads,
-            $"Synced {summary.Podcasts} new entries from remote DB. Started downloading {downloads} podcasts.");
+        return new RemotePullResult(summary.Summary.Podcasts, downloads,
+            $"Synced {summary.Summary.Podcasts} new entries from remote DB. Started downloading {downloads} podcasts.");
     }
 
     // Desktop download-target rule: reuse the stored link, else fall back to
