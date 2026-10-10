@@ -71,15 +71,6 @@ public sealed class DatabaseConnectionTests : IAsyncLifetime
     }
 
     [Fact]
-    public void ApplyPassword_MySql_ReplacesPassword()
-    {
-        var resolved = DatabaseConnection.ApplyPassword(
-            "mysql", "server=db;database=hathor;user=root;password=old", "new-secret");
-        resolved.Should().Contain("Password=new-secret");
-        resolved.Should().Contain("Server=db");
-    }
-
-    [Fact]
     public void Resolve_HostPart_BuildsFromParts_WhenNoConnectionString()
     {
         var config = new StubConfig(new Dictionary<string, string?>

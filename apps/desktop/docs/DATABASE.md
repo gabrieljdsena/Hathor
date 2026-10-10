@@ -1,6 +1,6 @@
 # Database Schema & Remote Sync
 
-Hathor stores everything locally in **SQLite** (`music_player.db`). When configured, the library (songs, podcasts, playlists, lyrics, history, daily mix) can be pushed to / pulled from a **MySQL/TiDB** database — always manually, via the Settings buttons. There is no background sync thread.
+Hathor stores everything locally in **SQLite** (`music_player.db`). When configured, the library (songs, podcasts, playlists, lyrics, history, daily mix) can be pushed to / pulled from the **Hathor server** — always manually, via the Settings buttons. There is no background sync thread.
 
 ## Local schema (`database.sql`)
 

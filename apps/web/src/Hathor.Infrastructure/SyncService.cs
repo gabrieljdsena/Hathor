@@ -574,7 +574,6 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     counts[10]++;
 
         await db.SaveChangesAsync(ct);
-        await AlignAutoIncrementAsync(ct);
 
         var summary = new SyncSummary(counts[0], counts[1], counts[2], counts[3], counts[4],
             counts[5], counts[6], counts[7], counts[8], counts[9], counts[10]);
@@ -634,25 +633,4 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
         }
         return false;
     }
-
-    // Keep AUTO_INCREMENT aligned after explicit-id inserts (desktop
-    // _align_auto_increment; SQLite handles this natively — MySQL only).
-    // Table/column names are hardcoded constants; only the long max varies.
-#pragma warning disable EF1002
-    private async Task AlignAutoIncrementAsync(CancellationToken ct)
-    {
-        if (!db.Database.IsMySql()) return;
-        foreach (var (table, idCol) in new[]
-            { ("Playlists", "Id"), ("Song_Playlist", "Id"), ("Podcast_Tags", "Id"),
-              ("Podcast_Tag_Links", "Id"), ("Lyrics", "Id"), ("Music_History", "Id"),
-              ("Playlist_History", "Id") })
-        {
-            var max = await db.Database
-                .SqlQueryRaw<long>($"SELECT COALESCE(MAX(`{idCol}`), 0) FROM `{table}`")
-                .SingleAsync(ct);
-            await db.Database.ExecuteSqlRawAsync(
-                $"ALTER TABLE `{table}` AUTO_INCREMENT = {max + 1}", ct);
-        }
-    }
-#pragma warning restore EF1002
 }

@@ -1,15 +1,15 @@
 using System.Data;
 using Microsoft.Extensions.Configuration;
-using MySqlConnector;
 using Npgsql;
 
 namespace Hathor.Infrastructure.Dapper;
 
 // Database connection resolution shared by EF Core and Dapper (plan §2):
-// one connection string drives both. The password never has to live in
-// the connection string itself — "Database:Password" (gitignored secrets
-// file) or HATHOR_DB_PASSWORD overrides just that part, so local `dotnet
-// run` against a native Postgres only needs the password, not a full URL.
+// one connection string drives both. Postgres-only: the MySQL/TiDB remote
+// is retired, so the provider switch is gone. The password never has to
+// live in the connection string itself — "Database:Password" (gitignored
+// secrets file) or HATHOR_DB_PASSWORD overrides just that part, so local
+// `dotnet run` against a native Postgres only needs the password.
 public static class DatabaseConnection
 {
     public const string PasswordEnvVar = "HATHOR_DB_PASSWORD";
@@ -19,13 +19,16 @@ public static class DatabaseConnection
 
     public static string Resolve(IConfiguration config)
     {
-        var provider = Provider(config);
         // Layer-aware: the highest-precedence config source that mentions
         // the database wins as a whole (its connection string, else its
         // parts). A Host part in one layer must not hijack a full
         // connection string from a higher layer (e.g. test overrides).
-        var connectionString = HighestPrecedenceConnection(config, provider)
-            ?? DefaultConnectionString(provider);
+        var provider = Provider(config);
+        if (provider != "postgres")
+            throw new InvalidOperationException(
+                $"Unsupported Database:Provider '{provider}'. Hathor is Postgres-only.");
+        var connectionString = HighestPrecedenceConnection(config)
+            ?? DefaultConnectionString();
         // Whitespace (e.g. "Password": "" shipped in appsettings.json)
         // counts as unset so the environment fallback still applies — ??
         // alone only falls through on null.
@@ -33,10 +36,10 @@ public static class DatabaseConnection
         if (string.IsNullOrWhiteSpace(password))
             password = Environment.GetEnvironmentVariable(PasswordEnvVar);
         if (IsPlaceholder(password)) return connectionString;
-        return ApplyPassword(provider, connectionString, password!);
+        return ApplyPassword(connectionString, password!);
     }
 
-    private static string? HighestPrecedenceConnection(IConfiguration config, string provider)
+    private static string? HighestPrecedenceConnection(IConfiguration config)
     {
         if (config is IConfigurationRoot root)
         {
@@ -45,7 +48,7 @@ public static class DatabaseConnection
                 if (source.TryGet("Database:ConnectionString", out var cs) && !IsPlaceholder(cs))
                     return cs;
                 if (source.TryGet("Database:Host", out var host) && !IsPlaceholder(host))
-                    return BuildFromParts(config, provider);
+                    return BuildFromParts(config);
             }
             return null;
         }
@@ -53,51 +56,32 @@ public static class DatabaseConnection
         var mergedCs = config.GetValue<string>("Database:ConnectionString");
         if (!IsPlaceholder(mergedCs)) return mergedCs;
         var mergedHost = config.GetValue<string>("Database:Host");
-        return IsPlaceholder(mergedHost) ? null : BuildFromParts(config, provider);
+        return IsPlaceholder(mergedHost) ? null : BuildFromParts(config);
     }
 
     // NOTE: no password baked in — Database:Password (gitignored secrets
     // file) or HATHOR_DB_PASSWORD is applied over this base string by
     // Resolve(). Keeps scanners quiet and dev defaults out of git.
-    private static string DefaultConnectionString(string provider) =>
-        provider == "mysql"
-            ? "server=localhost;database=hathor;user=root"
-            : "Host=localhost;Port=5432;Database=hathor;Username=postgres";
+    private static string DefaultConnectionString() =>
+        "Host=localhost;Port=5432;Database=hathor;Username=postgres";
 
-    private static string? BuildFromParts(IConfiguration config, string provider)
+    private static string? BuildFromParts(IConfiguration config)
     {
         var host = config.GetValue<string>("Database:Host");
         if (IsPlaceholder(host)) return null;
-        if (provider == "mysql")
+        var user = config.GetValue<string>("Database:Username");
+        var database = config.GetValue<string>("Database:Database");
+        return new NpgsqlConnectionStringBuilder
         {
-            var user = config.GetValue<string>("Database:Username");
-            var database = config.GetValue<string>("Database:Database");
-            return new MySqlConnectionStringBuilder
-            {
-                Server = host,
-                Port = config.GetValue<uint?>("Database:Port") ?? 3306,
-                Database = IsPlaceholder(database) ? "hathor" : database,
-                UserID = IsPlaceholder(user) ? "root" : user,
-            }.ConnectionString;
-        }
-        else
-        {
-            var user = config.GetValue<string>("Database:Username");
-            var database = config.GetValue<string>("Database:Database");
-            return new NpgsqlConnectionStringBuilder
-            {
-                Host = host,
-                Port = config.GetValue<int?>("Database:Port") ?? 5432,
-                Database = IsPlaceholder(database) ? "hathor" : database,
-                Username = IsPlaceholder(user) ? "postgres" : user,
-            }.ConnectionString;
-        }
+            Host = host,
+            Port = config.GetValue<int?>("Database:Port") ?? 5432,
+            Database = IsPlaceholder(database) ? "hathor" : database,
+            Username = IsPlaceholder(user) ? "postgres" : user,
+        }.ConnectionString;
     }
 
-    internal static string ApplyPassword(string provider, string connectionString, string password) =>
-        provider == "mysql"
-            ? new MySqlConnectionStringBuilder(connectionString) { Password = password }.ConnectionString
-            : new NpgsqlConnectionStringBuilder(connectionString) { Password = password }.ConnectionString;
+    internal static string ApplyPassword(string connectionString, string password) =>
+        new NpgsqlConnectionStringBuilder(connectionString) { Password = password }.ConnectionString;
 
     // An unfilled secrets example must behave like "not configured".
     private static bool IsPlaceholder(string? value) =>
@@ -105,36 +89,24 @@ public static class DatabaseConnection
 }
 
 // One connection string drives both EF Core and Dapper (plan §2).
-// Provider switch: Database:Provider = postgres (local default) | mysql (remote-compat/TiDB prod).
+// Postgres-only: the provider switch is gone (Resolve rejects mysql).
 public sealed class DapperConnectionFactory(IConfiguration config)
 {
     public string Provider { get; } = DatabaseConnection.Provider(config);
 
     public string ConnectionString { get; } = DatabaseConnection.Resolve(config);
 
-    public bool IsMySql => Provider == "mysql";
+    public IDbConnection Create() => new NpgsqlConnection(ConnectionString);
 
-    public IDbConnection Create()
-    {
-        if (IsMySql) return new MySqlConnection(ConnectionString);
-        return new NpgsqlConnection(ConnectionString);
-    }
-
-    // ANSI-compatible identifier quoting per provider (plan: no RETURNING, LAST_INSERT_ID()).
     // Postgres folds unquoted identifiers to lowercase while EF creates
-    // quoted PascalCase tables/columns, so Postgres SQL must quote; MySQL
-    // keeps its historical unquoted shape (case-insensitive there).
-    public string Quote(string identifier) => IsMySql ? $"`{identifier}`" : $"\"{identifier}\"";
+    // quoted PascalCase tables/columns, so Postgres SQL must quote.
+    public string Quote(string identifier) => $"\"{identifier}\"";
 
-    // EF stores Guids as uppercase CHAR on MySQL but as native uuid on
-    // Postgres, where UPPER(uuid) is invalid — cast to text first.
-    // The @UserId parameter stays the uppercase "D" form (see UserKey).
+    // EF stores Guids as native uuid on Postgres, where UPPER(uuid) is
+    // invalid — cast to text first. The @UserId parameter stays the
+    // uppercase "D" form (see UserKey).
     public string UserIdPredicate(string? tableAlias = null)
     {
-        if (IsMySql)
-            return tableAlias is null
-                ? "UPPER(UserId) = @UserId"
-                : $"UPPER({tableAlias}.UserId) = @UserId";
         var column = tableAlias is null
             ? Quote("UserId")
             : $"{Quote(tableAlias)}.{Quote("UserId")}";

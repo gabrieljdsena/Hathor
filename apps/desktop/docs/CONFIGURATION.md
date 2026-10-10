@@ -3,7 +3,7 @@
 Hathor has two configuration surfaces:
 
 1. **Persisted app settings** — stored in the `Settings` row of the local SQLite database and editable from the UI.
-2. **Environment configuration** — a `.env` file used exclusively for the optional **MySQL/TiDB remote sync**.
+2. **Environment configuration** — a `.env` file used exclusively for the optional **Hathor server sync**.
 
 ## App settings (SQLite `Settings` table)
 

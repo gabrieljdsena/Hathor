@@ -3,7 +3,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Hathor.Application\Hathor.Application.csproj" />
     <ProjectReference Include="..\Hathor.Infrastructure\Hathor.Infrastructure.csproj" />
-    <ProjectReference Include="..\Hathor.Migrations.MySql\Hathor.Migrations.MySql.csproj" />
     <ProjectReference Include="..\Hathor.Migrations.Postgres\Hathor.Migrations.Postgres.csproj" />
   </ItemGroup>
 

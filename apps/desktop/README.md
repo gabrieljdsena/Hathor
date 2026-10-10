@@ -2,7 +2,7 @@
 
 > Part of the [Hathor monorepo](../../README.md) (`apps/desktop`). Web app: `../../web/`, mobile: `../../mobile/`.
 
-A Windows desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can mirror your library to a MySQL/TiDB database for multi-device sync.
+A Windows desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can sync your library with the Hathor server for multi-device use.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d6)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
@@ -21,7 +21,7 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 - **History** — download history and playback (played songs / played playlists) with pagination.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
-- **Remote sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history to a MySQL or TiDB server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
+- **Server sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history with the Hathor server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
 
 ## Tech stack
 
@@ -32,7 +32,7 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 | Downloads | `yt-dlp`, FFmpeg |
 | Metadata | `mutagen` (ID3), iTunes Search API |
 | Lyrics  | `pykakasi` (romanization), `urllib` |
-| Storage | SQLite (`sqlite3`), optional MySQL/TiDB (`pymysql`) |
+| Storage | SQLite (`sqlite3`); sync via the Hathor Web API (`urllib`, no DB driver) |
 | Media keys | `winsdk` (Windows.Media / SMTC) |
 | Packaging | PyInstaller |
 
@@ -66,15 +66,11 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Remote sync is opt-in and configured exclusively through a `.env` file next to `main.py` (or the executable):
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured exclusively through a `.env` file next to `main.py` (or the executable):
 
 ```env
-DB_HOST=your-mysql-or-tidb-host
-DB_PORT=4000
-DB_USER=user
-DB_PASSWORD=password
-DB_NAME=dbname
-DB_SSL_CA=path/to/ca.pem
+HATHOR_API_URL=http://192.168.1.10:5051
+HATHOR_API_KEY=hth_your-device-key
 ```
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
@@ -94,8 +90,8 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 main.py            App entry point, window creation, startup + first-run flow
 api.py             pywebview JS bridge: every method the UI calls
 Download.py        yt-dlp YouTube downloader + iTunes metadata/artwork lookup
-sync.py            Manual one-shot MySQL/TiDB push (DatabaseSync) + remote schema
 database.sql       SQLite schema
+services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
 settings.py        Loads persisted settings from the SQLite Settings table
 monitor.py         Debug RAM usage monitor (currently disabled)
 services/          Domain logic: playback (+crossfade), metadata, database, lyrics, windows_media, downloads, apple

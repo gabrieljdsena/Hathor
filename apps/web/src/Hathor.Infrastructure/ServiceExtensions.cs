@@ -90,17 +90,12 @@ public static class InfrastructureServiceExtensions
     public static IServiceCollection AddHathorInfrastructure(
         this IServiceCollection services, IConfiguration config)
     {
-        var provider = Hathor.Infrastructure.Dapper.DatabaseConnection.Provider(config);
         var connectionString = Hathor.Infrastructure.Dapper.DatabaseConnection.Resolve(config);
 
         services.AddDbContext<HathorDbContext>(options =>
         {
-            if (provider == "mysql")
-                options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString),
-                    x => x.MigrationsAssembly("Hathor.Migrations.MySql"));
-            else
-                options.UseNpgsql(connectionString,
-                    x => x.MigrationsAssembly("Hathor.Migrations.Postgres"));
+            options.UseNpgsql(connectionString,
+                x => x.MigrationsAssembly("Hathor.Migrations.Postgres"));
         });
 
         var storageRoot = Path.GetFullPath(
@@ -223,7 +218,6 @@ public static class InfrastructureServiceExtensions
     // the individual steps below are duplicate-tolerant anyway.
     private static IDisposable? AcquireStartupLock(HathorDbContext db)
     {
-        if (db.Database.IsMySql()) return null;
         try
         {
             var connectionString = db.Database.GetConnectionString();
@@ -250,7 +244,6 @@ public static class InfrastructureServiceExtensions
     // maintenance database. Wrong passwords still fail loudly below.
     private static void EnsurePostgresDatabaseExists(HathorDbContext db)
     {
-        if (db.Database.IsMySql()) return;
         var connectionString = db.Database.GetConnectionString();
         if (string.IsNullOrWhiteSpace(connectionString)) return;
         var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
@@ -292,7 +285,6 @@ public static class InfrastructureServiceExtensions
     // extension privileges still work.
     private static void EnsurePgFuzzyExtensions(HathorDbContext db)
     {
-        if (db.Database.IsMySql()) return;
         try
         {
             // DO-block (not bare CREATE EXTENSION): concurrent boots racing
@@ -353,28 +345,15 @@ public static class InfrastructureServiceExtensions
     private static void StampMigration(HathorDbContext db, string initial)
     {
         var version = typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "9.0.0";
-        if (db.Database.IsMySql())
-        {
-            db.Database.ExecuteSqlRaw(
-                "CREATE TABLE IF NOT EXISTS `__EFMigrationsHistory` " +
-                "(`MigrationId` varchar(150) NOT NULL, `ProductVersion` varchar(32) NOT NULL, " +
-                "PRIMARY KEY (`MigrationId`))");
-            db.Database.ExecuteSqlRaw(
-                "INSERT IGNORE INTO `__EFMigrationsHistory` (`MigrationId`, `ProductVersion`) VALUES ({0}, {1})",
-                initial, version);
-        }
-        else
-        {
-            db.Database.ExecuteSqlRaw(
-                "CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\" " +
-                "(\"MigrationId\" character varying(150) NOT NULL, " +
-                "\"ProductVersion\" character varying(32) NOT NULL, " +
-                "CONSTRAINT \"PK___EFMigrationsHistory\" PRIMARY KEY (\"MigrationId\"))");
-            db.Database.ExecuteSqlRaw(
-                "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") " +
-                "VALUES ({0}, {1}) ON CONFLICT DO NOTHING",
-                initial, version);
-        }
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\" " +
+            "(\"MigrationId\" character varying(150) NOT NULL, " +
+            "\"ProductVersion\" character varying(32) NOT NULL, " +
+            "CONSTRAINT \"PK___EFMigrationsHistory\" PRIMARY KEY (\"MigrationId\"))");
+        db.Database.ExecuteSqlRaw(
+            "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") " +
+            "VALUES ({0}, {1}) ON CONFLICT DO NOTHING",
+            initial, version);
     }
 
     private static HashSet<string> GetAppliedMigrations(HathorDbContext db)
@@ -388,10 +367,7 @@ public static class InfrastructureServiceExtensions
             try
             {
                 using var cmd = conn.CreateCommand();
-                if (db.Database.IsMySql())
-                    cmd.CommandText = "SELECT `MigrationId` FROM `__EFMigrationsHistory`";
-                else
-                    cmd.CommandText = "SELECT \"MigrationId\" FROM \"__EFMigrationsHistory\"";
+                cmd.CommandText = "SELECT \"MigrationId\" FROM \"__EFMigrationsHistory\"";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read()) applied.Add(reader.GetString(0));
             }
@@ -513,12 +489,8 @@ public static class InfrastructureServiceExtensions
             try
             {
                 using var cmd = conn.CreateCommand();
-                if (db.Database.IsMySql())
-                    cmd.CommandText = "SELECT table_name FROM information_schema.tables " +
-                        "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'";
-                else
-                    cmd.CommandText = "SELECT table_name FROM information_schema.tables " +
-                        "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'";
+                cmd.CommandText = "SELECT table_name FROM information_schema.tables " +
+                    "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read()) names.Add(reader.GetString(0));
             }
@@ -545,12 +517,8 @@ public static class InfrastructureServiceExtensions
             try
             {
                 using var cmd = conn.CreateCommand();
-                if (db.Database.IsMySql())
-                    cmd.CommandText = "SELECT column_name FROM information_schema.columns " +
-                        "WHERE table_schema = DATABASE() AND table_name = @t";
-                else
-                    cmd.CommandText = "SELECT column_name FROM information_schema.columns " +
-                        "WHERE table_schema = current_schema() AND table_name = @t";
+                cmd.CommandText = "SELECT column_name FROM information_schema.columns " +
+                    "WHERE table_schema = current_schema() AND table_name = @t";
                 var par = cmd.CreateParameter();
                 par.ParameterName = "@t";
                 par.Value = table;
@@ -572,7 +540,7 @@ public static class InfrastructureServiceExtensions
     }
 
     // EnsureCreated never alters existing databases, so columns added later
-    // need an explicit ensure (both providers).
+    // need an explicit ensure.
     private static void EnsureDownloadTargetColumn(HathorDbContext db)
     {
         try
@@ -582,35 +550,17 @@ public static class InfrastructureServiceExtensions
             if (!wasOpen) conn.Open();
             try
             {
-                if (db.Database.IsMySql())
+                using var check = conn.CreateCommand();
+                check.CommandText =
+                    "SELECT COUNT(*) FROM information_schema.columns " +
+                    "WHERE table_schema = current_schema() AND table_name = 'Download_Queue' " +
+                    "AND column_name = 'TargetFile'";
+                if (Convert.ToInt64(check.ExecuteScalar()) == 0)
                 {
-                    using var check = conn.CreateCommand();
-                    check.CommandText =
-                        "SELECT COUNT(*) FROM information_schema.columns " +
-                        "WHERE table_schema = DATABASE() AND table_name = 'Download_Queue' " +
-                        "AND column_name = 'TargetFile'";
-                    if (Convert.ToInt64(check.ExecuteScalar()) == 0)
-                    {
-                        using var alter = conn.CreateCommand();
-                        alter.CommandText =
-                            "ALTER TABLE `Download_Queue` ADD COLUMN `TargetFile` TEXT NULL";
-                        alter.ExecuteNonQuery();
-                    }
-                }
-                else
-                {
-                    using var check = conn.CreateCommand();
-                    check.CommandText =
-                        "SELECT COUNT(*) FROM information_schema.columns " +
-                        "WHERE table_schema = current_schema() AND table_name = 'Download_Queue' " +
-                        "AND column_name = 'TargetFile'";
-                    if (Convert.ToInt64(check.ExecuteScalar()) == 0)
-                    {
-                        using var alter = conn.CreateCommand();
-                        alter.CommandText =
-                            "ALTER TABLE \"Download_Queue\" ADD COLUMN \"TargetFile\" text NULL";
-                        alter.ExecuteNonQuery();
-                    }
+                    using var alter = conn.CreateCommand();
+                    alter.CommandText =
+                        "ALTER TABLE \"Download_Queue\" ADD COLUMN \"TargetFile\" text NULL";
+                    alter.ExecuteNonQuery();
                 }
             }
             finally

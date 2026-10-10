@@ -49,7 +49,7 @@ A separate library for podcasts and other spoken audio, kept fully apart from mu
 - **Chapters** – per-episode chapter marks (name + start, optional end; `mm:ss` input). Click a chapter's time chip to jump there. With **Chapter auto-skip** on (Settings), episodes start at the first chapter and skip to the next chapter when one ends; open-ended chapters never auto-jump.
 - **No playlists, but queues merge** – episodes queue among themselves, and Play Next / Add to Queue work in both directions, so one queue can mix songs and episodes. Episode plays don't pollute music history, Daily Mix, or Recently Played.
 - **Editing** – Edit Info opens the shared metadata modal and writes tags to the episode file plus the `Podcasts` table.
-- **Sync** – podcasts sync both ways with the remote DB like songs do (see [Database & remote sync](DATABASE.md)).
+- **Sync** – podcasts sync both ways with the server like songs do (see [Database & sync](DATABASE.md)).
 
 ## Now Playing & shortcuts
 
@@ -62,7 +62,7 @@ A separate library for podcasts and other spoken audio, kept fully apart from mu
 - **New playlist** – name + optional description + optional cover image.
 - **Add songs** – from any song, pick one or more playlists to add it to.
 - **Open a playlist** – shows its songs; playing one queues the rest of the playlist.
-- **Edit / Delete** – rename, change description/cover, or delete. Deletion is recorded for remote sync (see [Database & remote sync](DATABASE.md)).
+- **Edit / Delete** – rename, change description/cover, or delete. Deletion is recorded for server sync (see [Database & sync](DATABASE.md)).
 
 ## Download Songs
 
@@ -101,12 +101,12 @@ Two paginated lists:
 - **Volume** – default playback volume.
 - **Crossfade** – enable/disable overlap between consecutive tracks (1–12 s, equal-power curve). Applies to automatic transitions; manual next/previous stay instant. Track handoff is gapless whether crossfade is on or off.
 
-## Remote sync (manual)
+## Server sync (manual)
 
 There is **no background auto-sync**. Both directions run only when you click:
 
-- **Push to Remote** – one-shot upload of songs, podcasts, playlists, lyrics, and history to the remote DB.
-- **Sync Remote** (pull) – downloads remote rows into SQLite and queues downloads for missing files (songs → songs folder, podcasts → podcasts folder). Pulling also adopts the remote daily mix of the day.
+- **Push to Server** – one-shot upload of songs, podcasts, playlists, lyrics, and history rows plus new file bytes to the server.
+- **Sync from Server** (pull) – downloads the incremental delta into SQLite and fetches missing files straight from the server (songs → songs folder, podcasts → podcasts folder). Pulling also adopts the server daily mix of the day.
 - **Sync Local Songs to Database** – rescans the songs folder into the DB (see Podcasts folder row for the podcast equivalent).
 
 ## Windows media keys / overlay

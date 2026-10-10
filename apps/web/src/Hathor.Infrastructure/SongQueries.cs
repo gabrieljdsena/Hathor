@@ -67,8 +67,8 @@ public sealed class DapperSongReadModel(
         using var conn = factory.Create();
         foreach (var chunk in files.Chunk(500))
         {
-            // Numbered parameters (not Dapper list-expansion): identical
-            // SQL shape on Postgres and MySQL, no array-typing pitfalls.
+            // Numbered parameters (not Dapper list-expansion): stable SQL
+            // shape, no array-typing pitfalls.
             var names = chunk.Select((_, ix) => $"@f{ix}").ToArray();
             var parameters = new DynamicParameters();
             parameters.Add("UserId",

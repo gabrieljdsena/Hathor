@@ -22,10 +22,11 @@ background, glass surfaces, orange accent.
 - **Lyrics** — lrclib synced/plain fetch with offline Room cache plus a
   per-song highlight-timing correction (±20 s stepper, persisted)
 - **Playlists & history** — playlist CRUD, played/download history tabs
-- **Remote sync** — pulls the library from the same MySQL/TiDB database the
-  desktop app pushes to, so the phone mirrors the PC collection
+- **Server sync** — pulls the library from the Hathor server over the LAN
+  (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast
-  chapters, tags, history, daily mix)
+  chapters, tags, history, daily mix); pushes local rows and new file
+  bytes back the same way
 
 ## Requirements
 

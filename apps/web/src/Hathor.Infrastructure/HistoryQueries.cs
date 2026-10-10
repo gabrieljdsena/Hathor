@@ -4,9 +4,8 @@ using Hathor.Application.Ports;
 namespace Hathor.Infrastructure.Library;
 
 // History pages + recents (desktop get_download/played_history, recents strips).
-// Identifiers are quoted per provider (Postgres needs quoted PascalCase;
-// MySQL keeps working with backticks); UserId compares uppercase on both
-// (EF Guids are uuid on Postgres, CHAR on MySQL).
+// Identifiers are quoted (Postgres needs quoted PascalCase); UserId compares
+// uppercase (EF Guids are native uuid on Postgres — cast to text first).
 public sealed class DapperHistoryReadModel(
     Hathor.Infrastructure.Dapper.DapperConnectionFactory factory) : IHistoryReadModel
 {
