@@ -78,8 +78,8 @@ Until the two **new** endpoints land, the desktop API path returns
       (smoke-tested against a stubbed delta)
 - [x] Push collects rows + tombstones, clears them only on server accept.
       (smoke-tested against a stubbed import)
-- [ ] LIVE (needs server endpoints from the table above): pull against seeded
-      server — missing MP3s byte-identical; push new local file — row + bytes
-      land server-side via `missing_files` → PUT.
+- [x] LIVE (2026-10-10, deployed service): delta → import (`missingFiles`)
+      → PUT → GET byte-identical → incremental delta with cursor advance;
+      temp key revoked, test song deleted. Migration confirmed on live DB.
 - [ ] History incremental (no duplicates), links scoped-replace only own sets.
 - [ ] Server down mid-pull → error string, cursor saved only on full success.
