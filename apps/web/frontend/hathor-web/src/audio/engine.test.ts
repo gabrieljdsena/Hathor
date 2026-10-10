@@ -263,6 +263,33 @@ describe('AudioEngine crossfade', () => {
     expect(begun).toEqual(['b.mp3'])
   })
 
+  it('hands the outgoing file to the advance callback', async () => {
+    const s = playingFiveMinuteTrack()
+    const seen: Array<{ expected: string; out: string | null }> = []
+    s.engine.setNextProvider(
+      () => track('b.mp3'),
+      async (t, outFile) => {
+        seen.push({ expected: t.file, out: outFile })
+        return t
+      },
+    )
+    await s.advance(250)
+    expect(seen).toEqual([{ expected: 'b.mp3', out: 'a.mp3' }])
+  })
+
+  it('pauses both slots when pausing mid-fade', async () => {
+    const s = playingFiveMinuteTrack()
+    s.engine.setNextProvider(() => track('b.mp3'), async () => null)
+    await s.advance(250) // fade starts, both slots audible
+    expect(s.els[0].paused).toBe(false)
+    expect(s.els[1].paused).toBe(false)
+    s.engine.pause()
+    expect(s.els[0].paused).toBe(true)
+    expect(s.els[1].paused).toBe(true)
+    expect(s.engine.isPlaying()).toBe(false)
+    expect(s.engine.isFading()).toBe(true) // frozen, resumable
+  })
+
   it('does not fade when disabled, for podcasts, or without a next track', async () => {
     const s = playingFiveMinuteTrack()
     s.engine.setCrossfade(false, 5)

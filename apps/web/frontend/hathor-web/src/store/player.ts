@@ -257,7 +257,15 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     // reconciles us on response. Only when a song is loaded; otherwise
     // the server decides (nothing loaded yet).
     const before = get()
-    const canFlip = before.currentSong !== null && engine.currentFile() === before.currentSong.file
+    // During a fade the element's active slot is still the outgoing track
+    // while the store already names the incoming one — by design, not
+    // divergence — so a fading engine always allows the instant flip.
+    // Without this, pausing mid-fade does nothing locally: audio plays on
+    // until the server round trip, and a fade handoff landing after the
+    // pause resurrects playback entirely.
+    const canFlip =
+      before.currentSong !== null &&
+      (engine.isFading() || engine.currentFile() === before.currentSong.file)
     if (canFlip) {
       if (before.isPlaying) engine.pause()
       else engine.play()

@@ -123,6 +123,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         var now = DateTime.UtcNow;
         var oldFile = state.CurrentFile;
+        var wasPlaying = state.IsPlaying;
 
         // Conditional advance (crossfade handoff): the fade computed its
         // target from a queue snapshot that a manual transport may have
@@ -160,6 +161,14 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
                 if (!state.CurrentIsPodcast)
                     PlayerEvents.RaiseSongPlayed(cmd.UserId, next, state.CurrentPlaylistId);
             }
+        }
+
+        // Fade handoffs start while playing; a paused state here means the
+        // user's pause toggle landed before this advance. Move the queue
+        // but stay paused instead of resurrecting playback mid-fade.
+        if (cmd.ExpectedFile is not null && !wasPlaying && state.IsPlaying && state.CurrentFile is not null)
+        {
+            state.Pause(now);
         }
 
         await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);

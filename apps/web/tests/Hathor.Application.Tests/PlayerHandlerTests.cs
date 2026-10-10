@@ -167,6 +167,37 @@ public sealed class PlayHandlerTests
     }
 
     [Fact]
+    public async Task Next_WithExpectedFileWhilePaused_AdvancesButStaysPaused()
+    {
+        // Pause landing between fade start and its server advance: the
+        // queue still moves, but playback must not resurrect.
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var userId = Guid.NewGuid();
+        var state = new PlaybackState
+        {
+            UserId = userId,
+            CurrentFile = "a.mp3",
+            FirstPlay = false,
+            IsPlaying = false,
+            PositionOffsetSec = 0,
+            LastPlayUtc = DateTime.UtcNow,
+            NextFiles = new List<string> { "b.mp3" },
+        };
+        playback.GetOrCreateAsync(userId, Arg.Any<CancellationToken>()).Returns(state);
+        SongsResolve(songs, "b.mp3", 200, out _);
+
+        var dto = await new NextHandler(playback, songs, NoOpApplier(), hub)
+            .Handle(new NextCommand(userId, ExpectedFile: "a.mp3"), CancellationToken.None);
+
+        state.CurrentFile.Should().Be("b.mp3");
+        state.NextFiles.Should().BeEmpty();
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeLessThan(1);
+    }
+
+    [Fact]
     public async Task StateDto_ClampsRunawayPositionToTrackDuration()
     {
         // Wall-clock estimate outliving the track (stalled client element)

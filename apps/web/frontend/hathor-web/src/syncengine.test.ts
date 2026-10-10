@@ -1,18 +1,31 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { engine } from './audio/engine'
 import { usePlayer } from './store/player'
 import type { PlayerState } from './api/client'
 
-const { mockFile, mockDur, mockTime, mockPlaying } = vi.hoisted(() => ({
+const { mockFile, mockDur, mockTime, mockPlaying, mockFading, mockToggle } = vi.hoisted(() => ({
   mockFile: vi.fn(),
   mockDur: vi.fn(),
   mockTime: vi.fn(),
   mockPlaying: vi.fn(),
+  mockFading: vi.fn(),
+  mockToggle: vi.fn(),
 }))
+
+vi.mock('./api/client', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./api/client')>()
+  return {
+    ...mod,
+    api: {
+      ...mod.api,
+      toggle: (...args: unknown[]) => mockToggle(...args),
+    },
+  }
+})
 
 vi.mock('./audio/engine', () => ({
   engine: {
-    isFading: () => false,
+    isFading: (...args: unknown[]) => mockFading(...args),
     fadeTarget: () => null,
     currentFile: (...args: unknown[]) => mockFile(...args),
     load: vi.fn(),
@@ -58,6 +71,10 @@ function syncWith(over: Partial<PlayerState>) {
   usePlayer.getState().syncAudio()
 }
 
+beforeEach(() => {
+  mockFading.mockReturnValue(false)
+})
+
 describe('syncEngine repeat-wrap guard', () => {
   it('does not rewind a finished song when repeat is off', () => {
     mockFile.mockReturnValue('s.mp3')
@@ -101,5 +118,56 @@ describe('syncEngine drift correction cap', () => {
     vi.mocked(engine.seek).mockClear()
     syncWith({ positionSec: 120 })
     expect(engine.seek).toHaveBeenCalledWith(120)
+  })
+})
+
+describe('toggle during a fade', () => {
+  const songB = { ...song, file: 'b.mp3', title: 'Next' }
+
+  function pausedB(): PlayerState {
+    return {
+      currentSong: songB as PlayerState['currentSong'],
+      isPlaying: false,
+      positionSec: 0,
+      volume: 0.7,
+      shuffle: false,
+      repeat: false,
+      queue: [],
+      source: null,
+      isCustomQueue: false,
+      firstPlay: false,
+      queueTotal: 0,
+    }
+  }
+
+  it('pauses instantly even though the element disagrees with the store', async () => {
+    // Fade A->B: the store names the incoming track while the element's
+    // active slot still holds the outgoing one. Pause must flip instantly
+    // instead of waiting out (or losing to) the server round trip.
+    mockFading.mockReturnValue(true)
+    mockFile.mockReturnValue('a.mp3')
+    mockDur.mockReturnValue(200)
+    mockTime.mockReturnValue(197)
+    mockPlaying.mockReturnValue(true)
+    mockToggle.mockResolvedValue(pausedB())
+    vi.mocked(engine.pause).mockClear()
+    syncWith({ currentSong: songB as PlayerState['currentSong'], isPlaying: true, positionSec: 0 })
+    await usePlayer.getState().toggle()
+    expect(engine.pause).toHaveBeenCalled()
+    expect(usePlayer.getState().isPlaying).toBe(false)
+  })
+
+  it('resumes instantly mid-fade', async () => {
+    mockFading.mockReturnValue(true)
+    mockFile.mockReturnValue('a.mp3')
+    mockDur.mockReturnValue(200)
+    mockTime.mockReturnValue(197)
+    mockPlaying.mockReturnValue(false)
+    mockToggle.mockResolvedValue({ ...pausedB(), isPlaying: true })
+    vi.mocked(engine.play).mockClear()
+    syncWith({ currentSong: songB as PlayerState['currentSong'], isPlaying: false, positionSec: 0 })
+    await usePlayer.getState().toggle()
+    expect(engine.play).toHaveBeenCalled()
+    expect(usePlayer.getState().isPlaying).toBe(true)
   })
 })
