@@ -30,12 +30,10 @@ Rules all apps follow:
   (desktop, web, mobile alike): exact file lookups never match them;
   episode delete/move drops them and tombstones each key
 - `podcast_chapters` (`id`, `podcast_file`, `name`, `start_secs`, `end_secs`
-  NULL = open-ended): full replace scoped to the pusher's own episode files
-  (shared remote, like `song_playlist`); episode delete propagates via a
-  `podcast_chapters` tombstone keyed by file; pull upserts by id and never
-  wipes local rows on empty snapshots.
-  KNOWN GAP (v1 API sync): chapters have no snapshot section yet — devices
-  send `PodcastChapters` (ignored server-side) and delta omits them. Adding
-  the section + import merge is the follow-up before retiring the note.
+  NULL = open-ended): upsert by id with cross-user re-key (like lyrics);
+  episode delete propagates via a `podcast_chapters` tombstone keyed by file
+  (server deletes by episode, like clients); pull upserts by id and never
+  wipes local rows on empty snapshots. Wire section: `podcastChapters`
+  (`Id`, `PodcastFile`, `Name`, `StartSecs`, `EndSecs`).
 
 Do not change the wire shape in one app without updating the other two in the same PR.

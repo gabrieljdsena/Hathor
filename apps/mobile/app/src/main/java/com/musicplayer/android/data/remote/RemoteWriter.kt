@@ -80,6 +80,10 @@ object RemoteWriter {
         payload.put("PodcastTagLinks", JSONArray(db.podcastTagLinkDao().all().map {
             JSONObject().put("Id", it.id).put("PodcastFile", it.podcastFile).put("TagId", it.tagId)
         }.also { rows += it.size() }))
+        payload.put("PodcastChapters", JSONArray(db.podcastChapterDao().all().map {
+            JSONObject().put("Id", it.id).put("PodcastFile", it.podcastFile)
+                .put("Name", it.name).put("StartSecs", it.startSecs).put("EndSecs", it.endSecs)
+        }.also { rows += it.size() }))
         payload.put("Deletions", deletionsJson(db, podcastTables))
 
         val result = try {

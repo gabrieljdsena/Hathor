@@ -122,7 +122,7 @@ public sealed class PodcastTagLink : ITrackUpdatedAt
 // Chapter marks inside a podcast episode (podcast "timestamps"):
 // start offset in seconds, display name, optional end offset. Times are
 // media offsets (not wall-clock); EndSecs null means "runs open-ended".
-public sealed class PodcastTimestamp
+public sealed class PodcastTimestamp : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
@@ -130,6 +130,7 @@ public sealed class PodcastTimestamp
     public string Name { get; set; } = "";
     public double StartSecs { get; set; }
     public double? EndSecs { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 public sealed class DownloadJob

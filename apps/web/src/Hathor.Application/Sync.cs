@@ -21,6 +21,8 @@ public sealed record LyricRowDto(long Id, string SongFile, string? LyricsJson, i
 public sealed record MusicHistoryRowDto(long Id, string SongFile, DateTime DatePlayedUtc);
 public sealed record PlaylistHistoryRowDto(long Id, long PlaylistId, DateTime DatePlayedUtc);
 public sealed record MixRowDto(string MixDate, string SongFilesJson);
+public sealed record PodcastChapterRowDto(
+    long Id, string PodcastFile, string Name, double StartSecs, double? EndSecs);
 public sealed record DeletionRowDto(string TableName, string RowKey);
 
 // Resume-across-devices spot: latest foreign playback state. user_key is
@@ -48,7 +50,8 @@ public sealed record SyncSnapshot(
     List<MusicHistoryRowDto>? MusicHistory,
     List<PlaylistHistoryRowDto>? PlaylistHistory,
     List<MixRowDto>? DailyMix,
-    List<DeletionRowDto>? Deletions);
+    List<DeletionRowDto>? Deletions,
+    List<PodcastChapterRowDto>? PodcastChapters = null);
 
 public sealed record SyncSummary(
     int Songs, int Podcasts, int Playlists, int SongLinks,

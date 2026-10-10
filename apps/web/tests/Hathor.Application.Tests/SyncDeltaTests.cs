@@ -46,6 +46,8 @@ public sealed class SyncDeltaTests
             { Id = 1, UserId = UserId, SongFile = "a.mp3", DatePlayedUtc = DateTime.UtcNow });
         db.SyncDeletions.Add(new SyncDeletion
             { Id = 1, UserId = UserId, TableName = "songs", RowKey = "gone.mp3", DeletedAtUtc = DateTime.UtcNow });
+        db.PodcastTimestamps.Add(new PodcastTimestamp
+            { Id = 1, UserId = UserId, PodcastFile = "ep.mp3", Name = "Intro", StartSecs = 0 });
         await db.SaveChangesAsync();
     }
 
@@ -61,6 +63,7 @@ public sealed class SyncDeltaTests
         delta.Snapshot.Playlists.Should().ContainSingle(p => p.Id == 1);
         delta.Snapshot.MusicHistory.Should().ContainSingle(h => h.Id == 1);
         delta.Snapshot.Deletions.Should().ContainSingle(d => d.RowKey == "gone.mp3");
+        delta.Snapshot.PodcastChapters.Should().ContainSingle(c => c.PodcastFile == "ep.mp3");
         delta.Cursor.Should().NotBeNullOrEmpty();
     }
 
@@ -132,6 +135,56 @@ public sealed class SyncDeltaTests
         result.Summary.Songs.Should().Be(1);
         result.MissingFiles.Should().BeEquivalentTo("new.mp3");
         (await db.Songs.SingleAsync()).UpdatedAtUtc.Should().BeAfter(DateTime.MinValue);
+    }
+
+    // Chapters need ExecuteDelete (tombstones) — InMemory can't do that,
+    // so this one runs on ephemeral Postgres (needs HATHOR_TEST_PG).
+    [Fact]
+    public async Task Import_Chapters_UpsertAndTombstone()
+    {
+        var (connectionString, database) = await TestPostgres.CreateDatabaseAsync("hathor_chapters");
+        try
+        {
+            await using var db = new HathorDbContext(TestPostgres.Options(connectionString));
+            Hathor.Infrastructure.Auth.InfrastructureServiceExtensions.EnsureDatabaseCreated(db);
+        var svc = new EfSyncService(db);
+
+        await svc.ImportAsync(UserId, new SyncSnapshot(
+            Songs: null, Podcasts: null, Playlists: null, SongLinks: null, PodcastTags: null,
+            PodcastTagLinks: null, Lyrics: null, MusicHistory: null,
+            PlaylistHistory: null, DailyMix: null, Deletions: null,
+            PodcastChapters: [new PodcastChapterRowDto(10, "ep.mp3", "Intro", 0, 62.5)]),
+            CancellationToken.None);
+
+        var row = await db.PodcastTimestamps.SingleAsync();
+        row.PodcastFile.Should().Be("ep.mp3");
+        row.EndSecs.Should().Be(62.5);
+
+        // Same id, new content -> update in place, no duplicate.
+        await svc.ImportAsync(UserId, new SyncSnapshot(
+            Songs: null, Podcasts: null, Playlists: null, SongLinks: null, PodcastTags: null,
+            PodcastTagLinks: null, Lyrics: null, MusicHistory: null,
+            PlaylistHistory: null, DailyMix: null, Deletions: null,
+            PodcastChapters: [new PodcastChapterRowDto(10, "ep.mp3", "Intro v2", 0, null)]),
+            CancellationToken.None);
+
+        (await db.PodcastTimestamps.CountAsync()).Should().Be(1);
+        (await db.PodcastTimestamps.SingleAsync()).Name.Should().Be("Intro v2");
+
+        // Episode tombstone drops its chapters.
+        await svc.ImportAsync(UserId, new SyncSnapshot(
+            Songs: null, Podcasts: null, Playlists: null, SongLinks: null, PodcastTags: null,
+            PodcastTagLinks: null, Lyrics: null, MusicHistory: null,
+            PlaylistHistory: null, DailyMix: null,
+            Deletions: [new DeletionRowDto("podcast_chapters", "ep.mp3")]),
+            CancellationToken.None);
+
+        (await db.PodcastTimestamps.CountAsync()).Should().Be(0);
+        }
+        finally
+        {
+            await TestPostgres.DropDatabaseAsync(database);
+        }
     }
 
     [Fact]

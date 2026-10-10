@@ -129,6 +129,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.Property(x => x.PodcastFile).HasMaxLength(255);
             e.Property(x => x.Name).HasMaxLength(255);
             e.HasIndex(x => new { x.UserId, x.PodcastFile });
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<DownloadJob>(e =>
         {

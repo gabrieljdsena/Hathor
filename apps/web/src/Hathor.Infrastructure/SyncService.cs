@@ -46,6 +46,9 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 .ToListAsync(ct),
             Deletions: await db.SyncDeletions.Where(d => d.UserId == userId)
                 .Select(d => new DeletionRowDto(d.TableName, d.RowKey))
+                .ToListAsync(ct),
+            PodcastChapters: await db.PodcastTimestamps.Where(c => c.UserId == userId)
+                .Select(c => new PodcastChapterRowDto(c.Id, c.PodcastFile, c.Name, c.StartSecs, c.EndSecs))
                 .ToListAsync(ct));
 
     // Opaque delta cursor: "<utcTicks>:<musicHistoryMaxId>:<playlistHistoryMaxId>".
@@ -150,6 +153,16 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
             if (mixRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = mixRows.Max(x => x.UpdatedAtUtc);
         }
 
+        List<PodcastChapterRowDto>? chapters = null;
+        var chapterRows = await db.PodcastTimestamps.Where(c => c.UserId == userId && c.UpdatedAtUtc >= since)
+            .Select(c => new { c.UpdatedAtUtc, Row = new PodcastChapterRowDto(c.Id, c.PodcastFile, c.Name, c.StartSecs, c.EndSecs) })
+            .ToListAsync(ct);
+        if (chapterRows.Count > 0)
+        {
+            chapters = chapterRows.Select(x => x.Row).ToList();
+            if (chapterRows.Max(x => x.UpdatedAtUtc) > watermark) watermark = chapterRows.Max(x => x.UpdatedAtUtc);
+        }
+
         var musicHistory = await db.MusicHistory.Where(h => h.UserId == userId && h.Id > musicId)
             .Select(h => new MusicHistoryRowDto(h.Id, h.SongFile, h.DatePlayedUtc))
             .ToListAsync(ct);
@@ -174,7 +187,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
             songs, podcasts, playlists, songLinks, tags, tagLinks, lyrics,
             musicHistory.Count > 0 ? musicHistory : null,
             playlistHistory.Count > 0 ? playlistHistory : null,
-            mixes, deletions));
+            mixes, deletions, chapters));
     }
 
     public async Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
@@ -496,6 +509,41 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 }
             }
 
+        // Episode chapters (desktop scoped-replace semantics on push live
+        // server-side as upsert-by-id; deletes flow via podcast_chapters
+        // tombstones keyed by episode file).
+        if (s.PodcastChapters is not null)
+            foreach (var r in s.PodcastChapters)
+            {
+                var existing = await db.PodcastTimestamps.FindAsync([r.Id], ct);
+                if (existing is null)
+                {
+                    // Chapters ride outside the summary counters (the 11-slot
+                    // SyncSummary shape is frozen for older clients).
+                    await db.PodcastTimestamps.AddAsync(new PodcastTimestamp
+                    {
+                        Id = r.Id, UserId = userId, PodcastFile = r.PodcastFile,
+                        Name = r.Name, StartSecs = r.StartSecs, EndSecs = r.EndSecs,
+                    }, ct);
+                }
+                else if (existing.UserId == userId)
+                {
+                    existing.PodcastFile = r.PodcastFile;
+                    existing.Name = r.Name;
+                    existing.StartSecs = r.StartSecs;
+                    existing.EndSecs = r.EndSecs;
+                }
+                else
+                {
+                    // Another user's row owns this id — re-key a copy.
+                    await db.PodcastTimestamps.AddAsync(new PodcastTimestamp
+                    {
+                        UserId = userId, PodcastFile = r.PodcastFile,
+                        Name = r.Name, StartSecs = r.StartSecs, EndSecs = r.EndSecs,
+                    }, ct);
+                }
+            }
+
         // Adopt remote mixes; prune anything older than today.
         if (s.DailyMix is not null)
         {
@@ -569,6 +617,8 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 .Where(x => x.UserId == userId && x.PlaylistId == hid).ExecuteDeleteAsync(ct),
             "podcast_tags" when long.TryParse(key, out var tid) => await db.PodcastTags
                 .Where(x => x.UserId == userId && x.Id == tid).ExecuteDeleteAsync(ct),
+            "podcast_chapters" => await db.PodcastTimestamps
+                .Where(x => x.UserId == userId && x.PodcastFile == key).ExecuteDeleteAsync(ct),
             _ => 0,
         };
         if (deleted > 0)

@@ -70,6 +70,14 @@ data class RemoteTagRow(val id: Long, val name: String)
 
 data class RemoteTagLinkRow(val id: Long, val podcastFile: String, val tagId: Long)
 
+data class RemoteChapterRow(
+    val id: Long,
+    val podcastFile: String,
+    val name: String,
+    val startSecs: Double,
+    val endSecs: Double?,
+)
+
 data class RemoteMixRow(val mixDate: String, val songFilesJson: String)
 
 data class RemoteDeletionRow(val tableName: String, val rowKey: String)
@@ -84,6 +92,7 @@ data class RemoteSnapshot(
     val playlistHistory: List<RemotePlaylistHistoryRow>,
     val tags: List<RemoteTagRow>,
     val tagLinks: List<RemoteTagLinkRow>,
+    val chapters: List<RemoteChapterRow>,
     val mixes: List<RemoteMixRow>,
     val deletions: List<RemoteDeletionRow>,
 )
@@ -327,6 +336,13 @@ class SyncApi(val baseUrl: String, private val token: String) {
                 },
                 tagLinks = snap.rows("podcastTagLinks").map {
                     RemoteTagLinkRow(it.optLong("id"), it.optString("podcastFile"), it.optLong("tagId"))
+                },
+                chapters = snap.rows("podcastChapters").map {
+                    val end = if (it.isNull("endSecs")) null else it.optDouble("endSecs")
+                    RemoteChapterRow(
+                        it.optLong("id"), it.optString("podcastFile"),
+                        it.optString("name"), it.optDouble("startSecs"), end,
+                    )
                 },
                 mixes = snap.rows("dailyMix").map {
                     RemoteMixRow(it.optString("mixDate"), it.optString("songFilesJson", "[]"))

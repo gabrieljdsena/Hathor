@@ -438,12 +438,17 @@ namespace Hathor.Migrations.MySql.Migrations
                     b.Property<double>("StartSecs")
                         .HasColumnType("double");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime(6)");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("char(36)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("UserId", "PodcastFile");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Podcast_Timestamps", (string)null);
                 });

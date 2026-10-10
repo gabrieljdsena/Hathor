@@ -50,6 +50,7 @@ public sealed class Phase6SyncTests : IAsyncLifetime
             playlistHistory = new[] { new { id = ph, playlistId = pl, datePlayedUtc = DateTime.UtcNow } },
             dailyMix = new[] { new { mixDate = DateTime.UtcNow.ToString("yyyy-MM-dd"), songFilesJson = "[\"s.mp3\"]" } },
             deletions = Array.Empty<object>(),
+            podcastChapters = new[] { new { id = b + 7, podcastFile = "e.mp3", name = "Intro", startSecs = 0.0, endSecs = (double?)62.5 } },
         };
 
         using var imp = new HttpRequestMessage(HttpMethod.Post, "/api/v1/sync/import");
@@ -82,6 +83,7 @@ public sealed class Phase6SyncTests : IAsyncLifetime
         full.Songs.Should().HaveCount(1);
         full.Playlists.Should().HaveCount(1);
         full.MusicHistory.Should().HaveCount(1);
+        full.PodcastChapters.Should().ContainSingle(c => c.PodcastFile == "e.mp3" && c.EndSecs == 62.5);
 
         using var expSince = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/sync/export?sinceId={mh}");
         expSince.Headers.Authorization = Bearer(token);
@@ -280,7 +282,9 @@ public sealed class Phase6SyncTests : IAsyncLifetime
     // Full-fidelity round-trip shapes (partial rows would 400 on required members).
     private sealed record Snapshot(
         List<SongFull> Songs, List<PlaylistFull> Playlists, List<HistFull> MusicHistory,
-        List<Del> Deletions);
+        List<Del> Deletions, List<ChapterFull>? PodcastChapters);
+    private sealed record ChapterFull(
+        long Id, string PodcastFile, string Name, double StartSecs, double? EndSecs);
     private sealed record SongFull(
         string File, string? DownloadedLink, string Title, DateTime DateDownloadUtc, string? Artist);
     private sealed record Delta(string Cursor, DeltaSnap Snapshot);

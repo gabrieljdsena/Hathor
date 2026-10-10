@@ -101,6 +101,9 @@ FIELD_MAPS = {
     "podcast_tag_links": {"id": "id", "podcastFile": "podcast_file",
                           "tagId": "tag_id"},
     "daily_mix": {"mixDate": "mix_date", "songFilesJson": "song_files"},
+    "podcast_chapters": {"id": "id", "podcastFile": "podcast_file",
+                         "name": "name", "startSecs": "start_secs",
+                         "endSecs": "end_secs"},
     "deletions": {"tableName": "table_name", "rowKey": "row_key"},
 }
 
@@ -110,7 +113,8 @@ SECTION_MAP = {
     "songLinks": "song_playlist", "podcastTags": "podcast_tags",
     "podcastTagLinks": "podcast_tag_links", "lyrics": "lyrics",
     "musicHistory": "music_history", "playlistHistory": "playlist_history",
-    "dailyMix": "daily_mix", "deletions": "deletions",
+    "dailyMix": "daily_mix", "podcastChapters": "podcast_chapters",
+    "deletions": "deletions",
 }
 
 
@@ -419,9 +423,12 @@ class ApiSyncClient:
                  "TagId": r.get("tag_id")}
                 for r in rows("SELECT id, podcast_file, tag_id FROM Podcast_Tag_Links")
             ]
-            # No server section yet (known gap) — still sent for forward-compat.
-            payload["PodcastChapters"] = rows(
-                "SELECT id, podcast_file, name, start_secs, end_secs FROM Podcast_Chapters")
+            payload["PodcastChapters"] = [
+                {"Id": r.get("id"), "PodcastFile": r.get("podcast_file"),
+                 "Name": r.get("name"), "StartSecs": r.get("start_secs"),
+                 "EndSecs": r.get("end_secs")}
+                for r in rows("SELECT id, podcast_file, name, start_secs, end_secs FROM Podcast_Chapters")
+            ]
             payload["DailyMix"] = [
                 {"MixDate": r.get("mix_date"), "SongFilesJson": r.get("song_files")}
                 for r in rows("SELECT mix_date, song_files FROM Daily_Mix")
@@ -638,6 +645,8 @@ class ApiSyncClient:
                     "DELETE FROM Podcast_Tag_Links WHERE tag_id = ? AND podcast_file = ?", stale
                 )
         for c in snap.get("podcast_chapters") or []:
+            if not c.get("podcast_file") or not c.get("name"):
+                continue
             conn.execute(
                 "INSERT INTO Podcast_Chapters (id, podcast_file, name, start_secs, end_secs)"
                 " VALUES (?, ?, ?, ?, ?)"
