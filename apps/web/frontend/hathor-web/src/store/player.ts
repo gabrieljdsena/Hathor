@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, deviceId, deviceLabel, type PlayerState, type QueueSource, type Song } from '../api/client'
-import { DRIFT_EDGE_MARGIN_SEC, engine, type EngineTrack } from '../audio/engine'
+import { engine, type EngineTrack } from '../audio/engine'
 
 // Client playback store. Server PlaybackState is the source of truth
 // (pulled on load); the AudioEngine renders it with gapless handoff and
@@ -147,20 +147,15 @@ function syncEngine(state: PlayerState) {
   // Snap the element to the server on real drift only (refresh resume,
   // remote seek, repeat-one wrap) — small drift is left alone so
   // volume/shuffle responses never cause audible jumps. Never fight a fade.
-  // The correction stops short of the duration edge: a wall-clock estimate
-  // that outran a stalled element (or a chapter seek past EOF) must never
-  // yank playback onto the edge (which fires `ended` and advances away
-  // mid-track — the podcast vanishes from Up Next and the previous song
-  // appears at 0:00). engine.seek clamps to the element duration when
-  // metadata is loaded; the catalog duration covers the metadata-pending
-  // window.
-  const pos = state.positionSec
-  if (!engine.isFading() && Number.isFinite(pos) && pos >= 0 && Math.abs(engine.time() - pos) > 2) {
-    const elDur = engine.duration()
-    const known = elDur > 0 ? elDur : (song?.duration ?? 0)
-    // Tiny files keep the legacy exact cap (a margin would rewind them).
-    const cap = known > DRIFT_EDGE_MARGIN_SEC + 1 ? known - DRIFT_EDGE_MARGIN_SEC : known
-    engine.seek(known > 0 ? Math.min(pos, cap) : pos)
+  // driftTarget owns both caps: the duration edge (a wall-clock estimate
+  // that outran a stalled element must never land on the edge — it fires
+  // `ended` and advances away mid-track) and the recovery ceiling (after a
+  // far-seek stall the server still names the poisoned target; jumping back
+  // into it loops until the budget is exhausted and the bar freezes with a
+  // dead toggle). System seek: never mints fresh recovery budget.
+  if (!engine.isFading()) {
+    const target = engine.driftTarget(state.positionSec, song?.duration ?? 0)
+    if (target !== null) engine.seek(target, false)
   }
 }
 
@@ -174,6 +169,10 @@ async function advanceForFade(outFile: string | null) {
   const state = await api.next(outFile)
   usePlayer.setState(state)
   syncEngine(state)
+  // A fade handoff implies the outgoing track played ~fully: a real advance
+  // resets the instant-death run (a convergence — server kept our file —
+  // leaves it alone).
+  if ((state.currentSong?.file ?? null) !== (outFile ?? null)) instantDeaths = 0
   const song = state.currentSong
   return song ? toTrack(song) : null
 }
@@ -199,13 +198,125 @@ engine.onReport = (message) => {
 }
 
 engine.onEnded(() => {
+  // Classify while the element still holds the outgoing track (the advance
+  // response hasn't applied yet): played to a sane end, or real media time
+  // observed, means a genuine finish and resets the chain.
+  let diedInstantly = true
+  try {
+    const d = engine.duration()
+    diedInstantly = !(d > 0 && engine.time() >= d - 2) && engine.lastGoodPosition() < INSTANT_DEATH_MEDIA_SEC
+  } catch {
+    diedInstantly = true
+  }
+  autoAdvance(diedInstantly)
+})
+
+// Consecutive instant-death breaker: corrupt/empty files end within moments
+// of loading and the legacy rule advances past each one — a bad batch (or a
+// replay loop) then auto-skips several tracks in seconds. Genuine finishes
+// (played to the end, or real media time observed) reset the run, and only
+// automatic advances evaluate it, so a user hopping short clips manually
+// can never trip it. On break the chain pauses instead of sailing on.
+const INSTANT_DEATH_MEDIA_SEC = 8
+const INSTANT_DEATH_BREAK_AFTER = 3
+let instantDeaths = 0
+// Test-only reset (the streak is module state like transportGen).
+export function resetAutoAdvanceStreak(): void {
+  instantDeaths = 0
+}
+// True when the chain must break (caller pauses instead of advancing).
+export function noteAutoAdvance(diedInstantly: boolean): boolean {
+  if (diedInstantly) instantDeaths += 1
+  else instantDeaths = 0
+  return instantDeaths >= INSTANT_DEATH_BREAK_AFTER
+}
+
+function breakAdvanceChain(): void {
+  instantDeaths = 0
+  const message = 'auto-advance chain broken: repeated instant track deaths (corrupt batch?)'
+  try {
+    if (typeof console !== 'undefined' && console.warn) console.warn(`[audio] ${message}`)
+  } catch {
+    /* reporting must never break playback */
+  }
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('hathor:token'))
+      void api.logClient(`audio engine: ${message}`.slice(0, 2000), location.pathname).catch(() => {})
+  } catch {
+    /* reporting must never break playback */
+  }
+  void api
+    .pause()
+    .then((s) => {
+      usePlayer.setState(s)
+      usePlayer.getState().syncAudio()
+    })
+    .catch(() => {})
+}
+
+// Raw queue advance with one guarded retry: a lost auto-advance strands the
+// finished song at the edge forever (pause/unpause just re-parks it). Chain
+// counting happens in the callers via noteAutoAdvance, not here.
+function requestNext(): void {
+  const expected = usePlayer.getState().currentSong?.file ?? null
   void api
     .next()
     .then((s) => {
       usePlayer.setState(s)
       syncEngine(s)
     })
-    .catch(() => {})
+    .catch(() => {
+      globalThis.setTimeout?.(() => {
+        try {
+          // A manual track change in between wins; the stale retry dissolves
+          // instead of clobbering it.
+          const cur = usePlayer.getState()
+          if (cur.currentSong?.file !== expected || engine.currentFile() !== expected) return
+          void api
+            .next()
+            .then((s2) => {
+              if (usePlayer.getState().currentSong?.file !== expected) return
+              usePlayer.setState(s2)
+              syncEngine(s2)
+            })
+            .catch(() => {})
+        } catch {
+          /* a dead retry must never break playback */
+        }
+      }, 2000)
+    })
+}
+
+// Automatic advance from a finished track. diedInstantly marks runs of
+// files that die moments after loading (corrupt batch / replay loop).
+// Exported for tests (the onEnded/onTailStuck wiring itself is module scope).
+export function autoAdvance(diedInstantly: boolean): void {
+  if (noteAutoAdvance(diedInstantly)) {
+    breakAdvanceChain()
+    return
+  }
+  requestNext()
+}
+
+// Tail strand: the final bytes are unplayable so `ended` never fires (the
+// bar freezes ~a second short and toggles just re-park it). Repeat-one
+// replays the track; otherwise this counts as an instant death and advances
+// like a natural finish. A deliberately paused strand stays put.
+engine.onTailStuck(() => {
+  const st = usePlayer.getState()
+  if (!st.isPlaying) return
+  if (st.repeat) {
+    engine.seek(0)
+    void api
+      .seek(0)
+      .then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio()
+      })
+      .catch(() => {})
+    return
+  }
+  autoAdvance(true)
 })
 
 export const usePlayer = create<PlayerStore>((set, get) => ({

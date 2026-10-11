@@ -803,3 +803,365 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     expect(reports.some((m) => m.includes('spurious ended ignored'))).toBe(true)
   })
 })
+
+describe('AudioEngine driftTarget (server correction caps)', () => {
+  function playingThreeHourTrack() {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 3600
+    return s
+  }
+
+  it('returns null when element and server agree', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250) // tick records lastGoodTime = 3600
+    expect(s.engine.driftTarget(3600.5, 10800)).toBeNull()
+    expect(s.engine.driftTarget(3601.9, 10800)).toBeNull()
+  })
+
+  it('returns null for garbage server positions', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    expect(s.engine.driftTarget(Number.NaN, 10800)).toBeNull()
+    expect(s.engine.driftTarget(-5, 10800)).toBeNull()
+  })
+
+  it('caps a runaway estimate short of the duration edge', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    // No recovery yet: plain edge-capped forward jump (refresh-resume path).
+    expect(s.engine.driftTarget(10799.9, 10800)).toBeCloseTo(10800 - 2, 5)
+  })
+
+  it('allows forward jumps before any recovery (refresh resume)', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    // 3600 -> 5000 is a legitimate remote seek: no failure recorded yet.
+    expect(s.engine.driftTarget(5000, 10800)).toBe(5000)
+  })
+
+  it('caps forward drift at the observed-playable ceiling after a recovery', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250) // lastGoodTime = 3600
+    // Slider seek far forward into an unplayable range, then an element
+    // error: the engine falls back to the last good position.
+    s.engine.seek(8000)
+    await s.advance(10)
+    s.els[0].currentTime = 9999 // glitch state before the error surfaces
+    s.els[0].fireError()
+    expect(s.els[0].currentTime).toBe(3600)
+    expect(s.els[0].paused).toBe(false)
+    // The server still names the poisoned target — drift must NOT jump
+    // back into it (that loop exhausts the budget and freezes the bar
+    // with a dead toggle). Parked at the ceiling: no correction churn.
+    expect(s.engine.driftTarget(8002, 10800)).toBeNull()
+    // Stranded between the ceiling and the poison (an earlier system
+    // correction): rescued to the ceiling, never re-poisoned.
+    s.engine.seek(5000, false)
+    expect(s.engine.driftTarget(8000, 10800)).toBe(3600)
+  })
+
+  it('lets a fresh user seek retry the spot (intent wins)', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.engine.seek(8000)
+    await s.advance(10)
+    s.els[0].currentTime = 9999
+    s.els[0].fireError()
+    expect(s.els[0].currentTime).toBe(3600)
+    // The user deliberately retries the same region: the ceiling lifts for
+    // the new attempt. If it is truly unplayable it will stall, recover,
+    // and the ceiling re-engages on its own.
+    await s.advance(10)
+    s.engine.seek(8000)
+    expect(s.engine.driftTarget(8000, 10800)).toBeNull() // element holds the spot: nothing to do
+    s.engine.seek(5000, false)
+    await s.advance(10)
+    s.engine.seek(8000)
+    expect(s.engine.driftTarget(8100, 10800)).toBe(8100) // server further ahead: normal correction
+  })
+
+  it('tracks the grown high-water mark for later failures', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250) // lastGoodTime = 3600
+    s.els[0].currentTime = 3700
+    await s.advance(250) // lastGoodTime = 3700
+    s.engine.seek(9000)
+    await s.advance(10)
+    s.els[0].currentTime = 9999
+    s.els[0].fireError() // falls back to 3700, not the stale 3600
+    expect(s.els[0].currentTime).toBe(3700)
+    expect(s.engine.driftTarget(9000, 10800)).toBeNull() // parked at the grown ceiling
+    s.engine.seek(4000, false) // stranded mid-way by a system correction
+    expect(s.engine.driftTarget(9000, 10800)).toBe(3700) // rescued to the ceiling, never 9000
+  })
+
+  it('survives repeated drift attempts without exhausting the budget', async () => {
+    // The freeze loop: poisoned server position plus a drift correction on
+    // every server round trip while the element plays on healthily from
+    // the ceiling. Corrections must stay pinned (null) instead of jumping
+    // into the poison and burning the recovery budget.
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.engine.seek(8000)
+    await s.advance(10)
+    s.els[0].currentTime = 9999
+    s.els[0].fireError() // recovery #1 -> back at 3600, still playing
+    expect(s.els[0].paused).toBe(false)
+    for (let i = 1; i <= 10; i += 1) {
+      s.els[0].currentTime = 3600 + i // healthy advance from the ceiling
+      await s.advance(250)
+      expect(s.engine.driftTarget(8000, 10800)).toBeNull()
+      expect(s.els[0].paused).toBe(false)
+    }
+    // Budget intact: a later genuine failure still recovers instead of
+    // finding an exhausted counter and pausing mid-episode.
+    s.els[0].fireError()
+    expect(s.els[0].paused).toBe(false)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('resets the ceiling on track change', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.engine.seek(8000)
+    s.els[0].fireError()
+    // Parked at the ceiling: suppressed to a no-op, never 8000.
+    expect(s.engine.driftTarget(8000, 10800)).toBeNull()
+    s.engine.load(track('next.mp3', true), true)
+    s.els[0].duration = 200
+    s.els[0].currentTime = 5
+    await s.advance(250)
+    // Fresh file, no failures: forward corrections behave normally again.
+    expect(s.engine.driftTarget(100, 200)).toBe(100)
+  })
+})
+
+describe('AudioEngine tail-stuck advance (unfinishable final bytes)', () => {
+  function playingNearEnd() {
+    const s = setup()
+    s.engine.load(track('s.mp3'), true)
+    s.els[0].duration = 200
+    s.els[0].currentTime = 197
+    return s
+  }
+
+  it('advances instead of pausing when the budget exhausts at the tail', async () => {
+    const s = playingNearEnd()
+    const advanced: string[] = []
+    s.engine.onTailStuck(() => advanced.push('tail'))
+    await s.advance(250) // tick records lastGoodTime = 197
+    s.els[0].fireError() // recoveries #1-#3, still playing at the tail
+    s.els[0].fireError()
+    s.els[0].fireError()
+    expect(s.els[0].paused).toBe(false)
+    s.els[0].fireError() // exhausted at 197/200: finished, not broken
+    expect(advanced).toEqual(['tail'])
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('still pauses on mid-track exhaustion (real content at stake)', async () => {
+    const s = setup()
+    const advanced: string[] = []
+    s.engine.onTailStuck(() => advanced.push('tail'))
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 3600
+    await s.advance(250)
+    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    expect(advanced).toEqual([])
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('never advances a deliberately paused strand', async () => {
+    const s = playingNearEnd()
+    const advanced: string[] = []
+    s.engine.onTailStuck(() => advanced.push('tail'))
+    await s.advance(250)
+    s.engine.pause()
+    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    expect(advanced).toEqual([])
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('fires only once per cooldown (a failed advance must not double-skip)', async () => {
+    const s = playingNearEnd()
+    const advanced: string[] = []
+    s.engine.onTailStuck(() => advanced.push('tail'))
+    await s.advance(250)
+    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    expect(advanced).toEqual(['tail'])
+    // Toggle-play retry inside the cooldown: pauses, does not advance again.
+    s.engine.play()
+    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    expect(advanced).toEqual(['tail'])
+    // Past the cooldown a renewed strand advances again.
+    await s.advance(31000)
+    s.engine.play()
+    s.els[0].fireError()
+    expect(advanced).toEqual(['tail', 'tail'])
+  })
+
+  it('pauses (no advance) with unknown or tiny durations', async () => {
+    const unknown = setup()
+    const advancedUnknown: string[] = []
+    unknown.engine.onTailStuck(() => advancedUnknown.push('tail'))
+    unknown.engine.load(track('s.mp3'), true)
+    unknown.els[0].duration = Number.NaN
+    await unknown.advance(250)
+    for (let i = 0; i < 4; i += 1) unknown.els[0].fireError()
+    expect(advancedUnknown).toEqual([])
+
+    const tiny = setup()
+    const advancedTiny: string[] = []
+    tiny.engine.onTailStuck(() => advancedTiny.push('tail'))
+    tiny.engine.load(track('jingle.mp3'), true)
+    tiny.els[0].duration = 4
+    tiny.els[0].currentTime = 3
+    await tiny.advance(250)
+    for (let i = 0; i < 4; i += 1) tiny.els[0].fireError()
+    expect(advancedTiny).toEqual([])
+    expect(tiny.els[0].paused).toBe(true)
+  })
+
+  it('advances on cut-short exhaustion at the tail too', async () => {
+    const s = playingNearEnd()
+    const advanced: string[] = []
+    s.engine.onTailStuck(() => advanced.push('tail'))
+    await s.advance(250) // lastGoodTime = 197
+    // Stream keeps cutting out just short of the end.
+    for (let i = 0; i < 3; i += 1) {
+      s.els[0].currentTime = 150
+      s.els[0].fireEnded()
+      expect(s.els[0].paused).toBe(false)
+    }
+    s.els[0].currentTime = 150
+    s.els[0].fireEnded()
+    expect(advanced).toEqual(['tail'])
+  })
+
+  it('exposes the observed media time for the instant-death breaker', async () => {
+    const s = playingNearEnd()
+    expect(s.engine.lastGoodPosition()).toBe(0)
+    await s.advance(250)
+    expect(s.engine.lastGoodPosition()).toBe(197)
+  })
+})
+
+describe('AudioEngine fade era tracking', () => {
+  function fadingPair() {
+    const s = setup()
+    s.engine.setCrossfade(true, 5)
+    s.engine.load(track('a.mp3'), true)
+    s.els[0].duration = 200
+    s.els[0].currentTime = 196 // 4s left: inside the 5s fade window
+    s.engine.setNextProvider(() => track('b.mp3'), async () => null)
+    return s
+  }
+
+  it('does not catapult the new song to the old song’s position after a fade', async () => {
+    // The reported glitch: a few seconds after every crossfade transition,
+    // the new song jumped to nearly the end. The watchdog still described
+    // the OUTGOING track (lastGoodTime 196, aging lastAdvanceAt), so it
+    // "recovered" the incoming onto the old position.
+    const s = fadingPair()
+    await s.advance(250) // fade A->B starts
+    expect(s.engine.isFading()).toBe(true)
+    await s.advance(4000) // fade completes; B renders from ~0
+    expect(s.engine.isFading()).toBe(false)
+    expect(s.engine.currentFile()).toBe('b.mp3')
+    s.els[1].duration = 200
+    s.els[1].currentTime = 5 // B plays a few seconds…
+    await s.advance(250)
+    await s.advance(11000) // …then its clock freezes: watchdog must use B's era
+    expect(s.els[1].currentTime).toBe(5)
+    expect(s.els[1].paused).toBe(false)
+  })
+
+  it('adopts the incoming era when a seek cuts over mid-fade', async () => {
+    const s = fadingPair()
+    await s.advance(250) // fade A->B starts
+    expect(s.engine.isFading()).toBe(true)
+    s.engine.seek(42) // keep the displayed (incoming) track at 42
+    expect(s.engine.isFading()).toBe(false)
+    expect(s.engine.currentFile()).toBe('b.mp3')
+    s.els[1].currentTime = 43
+    await s.advance(250)
+    await s.advance(11000) // frozen clock: recover to 43, never to A's 196
+    expect(s.els[1].currentTime).toBe(43)
+    expect(s.els[1].paused).toBe(false)
+  })
+
+  it('grants a fresh budget to a reused incoming slot', async () => {
+    const s = setup()
+    s.engine.setCrossfade(true, 5)
+    s.engine.load(track('a.mp3'), true)
+    s.els[0].duration = 200
+    s.els[0].currentTime = 196
+    const upcoming = ['b.mp3']
+    s.engine.setNextProvider(() => track(upcoming[0]), async () => null)
+    await s.advance(250) // fade A->B starts; B renders on els[1]
+    // B's stream errors repeatedly mid-fade, dirtying that slot's budget.
+    s.els[1].fireError()
+    s.els[1].fireError()
+    s.els[1].fireError()
+    // Manual switch to C mid-fade parks the dirty slot as idle.
+    s.engine.load(track('c.mp3'), true)
+    s.els[0].duration = 200
+    s.els[0].currentTime = 196
+    upcoming[0] = 'd.mp3'
+    await s.advance(250) // fade C->D reuses the dirty slot for D
+    expect(s.engine.isFading()).toBe(true)
+    // A transient error on the fresh incoming must recover, not give up
+    // with zero retries on arrival.
+    s.els[1].fireError()
+    expect(s.els[1].paused).toBe(false)
+  })
+})
+
+describe('AudioEngine seek budget + unload re-attach', () => {
+  function playingThreeHourTrack() {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 3600
+    return s
+  }
+
+  it('grants a fresh budget on explicit user seeks', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.els[0].fireError() // recovery #1
+    s.els[0].fireError() // recovery #2
+    // Dragging the slider back is deliberate intent: failures at the old
+    // spot must not instantly pause the new one.
+    s.engine.seek(100)
+    await s.advance(250)
+    s.els[0].fireError() // would be #3 on the old budget — must still play
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('does not mint fresh budget on system (drift) seeks', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.els[0].fireError() // recovery #1
+    s.engine.seek(3600, false) // drift-style correction
+    s.els[0].fireError() // recovery #2, not #1 again
+    s.els[0].fireError() // recovery #3
+    s.els[0].fireError() // exhausted -> pauses (bounded, no spin)
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('re-attaches an unloaded stream on element error', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250) // lastGoodTime = 3600
+    // Pipeline dropped the stream AND errored (no unload-tick rescue yet).
+    s.els[0].networkState = 3
+    s.els[0].src = ''
+    s.els[0].fireError()
+    expect(s.els[0].src).toBe('http://x/ep.mp3')
+    expect(s.els[0].currentTime).toBe(3600)
+    expect(s.els[0].paused).toBe(false)
+  })
+})

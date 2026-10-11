@@ -150,6 +150,16 @@ const MAX_RECOVERIES = 3
 // Grace after (re)load and seeks: EMPTY is the normal transient while the
 // element fetches — only an old, settled emptiness means unload.
 const UNLOAD_GRACE_MS = 5000
+// A strand this close to a known end counts as "finished" rather than
+// "broken mid-track": the final bytes are unplayable, `ended` will never
+// fire, and pausing there freezes the bar ~a second short forever (every
+// pause/unpause just re-parks the same spot, never advancing). Kept small
+// so a flaky network can never skip real content — mid-track failures keep
+// the legacy pause behavior.
+const TAIL_STUCK_WINDOW_SEC = 5
+// Minimum gap between tail-advance attempts: a failed advance (lost
+// response) must not double-advance the queue on every toggle.
+const TAIL_STUCK_COOLDOWN_MS = 30000
 
 // Clamp a seek target into playable range. Duration-unknown (NaN, metadata
 // not loaded yet) keeps the old behavior — nothing better is knowable.
@@ -184,6 +194,7 @@ export class AudioEngine {
   private beginNext: (expected: EngineTrack, outFile: string | null) => Promise<EngineTrack | null> =
     async () => null
   private endedCb: () => void = () => {}
+  private tailStuckCb: () => void = () => {}
   private timer: ReturnType<typeof setInterval> | null = null
   // Debug sink: the store wires this to the server log bridge (throttled).
   // Seeks/ends/errors/recoveries report here — the element swallows them
@@ -224,11 +235,31 @@ export class AudioEngine {
       `paused=${slot.el.paused} seeking=${slot.el.seeking} readyState=${ready} net=${net} error=${err}`
   }
 
-  private tryPlay(el: AudioElementLike, why: string) {
+  private tryPlay(el: AudioElementLike, why: string, retry = true) {
     try {
       const p = el.play() as Promise<void> | undefined
       if (p && typeof p.catch === 'function') {
         p.catch((e: unknown) => {
+          const name = e instanceof Error ? e.name : ''
+          // Suspended AudioContext after minutes backgrounded: the resume()
+          // in ensureContext is async, so the first play() can lose the race
+          // (NotAllowedError) and leave UI-playing/element-paused with a
+          // frozen bar. One delayed retry — skipped if the user paused in
+          // the meantime, so a pause can never resurrect audio.
+          if (retry && (name === 'NotAllowedError' || name === 'AbortError')) {
+            try {
+              void this.ctx?.resume()
+            } catch {
+              /* ignore */
+            }
+            globalThis.setTimeout?.(() => {
+              try {
+                if (el.paused) this.tryPlay(el, `${why}-retry`, false)
+              } catch {
+                /* retry must never throw */
+              }
+            }, 300)
+          }
           this.report(`play() rejected (${why}): ${e instanceof Error ? e.message : String(e)}`)
         })
       }
@@ -239,6 +270,18 @@ export class AudioEngine {
   // Last position known to actually play (recovery target) + last seek
   // (spurious-end guard). Wall clock via deps.now() for testability.
   private lastGoodTime = 0
+  // Last recovery moment: after any recovery ran for the loaded file, drift
+  // corrections must not yank playback forward past lastGoodTime (the
+  // observed-playable high-water mark) — that re-enters the region that
+  // already stalled and loops until the budget is exhausted (the
+  // slider-seek freeze: frozen bar, dead toggle). Reset on file change.
+  // A fresh user seek after the failure lifts the ceiling (explicit intent
+  // retries the spot); system seeks never do.
+  private lastRecoveryAt = -Infinity
+  private lastUserSeekAt = -Infinity
+  // Last tail-advance fire: cooldown-guarded so a failed advance (lost
+  // response) cannot double-advance the queue on every toggle.
+  private lastTailAdvanceAt = -Infinity
   private lastAdvanceAt = 0
   private lastSeekAt = -Infinity
   private lastSeekTarget = 0
@@ -352,6 +395,21 @@ export class AudioEngine {
     this.endedCb = cb
   }
 
+  // Fired when the track strands at its tail: the final bytes are
+  // unplayable, `ended` will never fire, and the recovery budget is spent.
+  // The store treats it as finished (advance, or replay when repeat is on)
+  // instead of freezing the bar a second short forever.
+  onTailStuck(cb: () => void) {
+    this.tailStuckCb = cb
+  }
+
+  // Media time actually observed playing (recovery high-water mark). Used
+  // by the store's instant-death breaker to tell a genuine finish from a
+  // file that died moments after loading.
+  lastGoodPosition(): number {
+    return this.lastGoodTime
+  }
+
   // ---- transport -----------------------------------------------------
 
   private get idle(): Slot {
@@ -400,6 +458,9 @@ export class AudioEngine {
       this.active.file = null
       this.active.url = null
       this.lastGoodTime = 0
+      this.lastRecoveryAt = -Infinity
+      this.lastUserSeekAt = -Infinity
+      this.lastTailAdvanceAt = -Infinity
       this.lastSeekAt = -Infinity
       this.stopTimer()
       return
@@ -418,6 +479,9 @@ export class AudioEngine {
       this.active.baseGain = gainForDb(track.gainDb)
       this.active.recoveries = 0
       this.lastGoodTime = 0
+      this.lastRecoveryAt = -Infinity
+      this.lastUserSeekAt = -Infinity
+      this.lastTailAdvanceAt = -Infinity
       this.lastSeekAt = -Infinity
       this.lastLoadAt = this.deps.now()
     }
@@ -446,8 +510,17 @@ export class AudioEngine {
     if (this.fading) this.fading.incoming.el.pause()
   }
 
-  seek(sec: number) {
+  seek(sec: number, isUserSeek = true) {
     if (this.fading) this.cancelToIncoming()
+    // Explicit user seeks (slider, chapters, arrows, resume) grant a fresh
+    // recovery budget: the user deliberately picked a new spot, so past
+    // failures elsewhere must not instantly pause them. System seeks (drift
+    // correction) pass false — they must never mint fresh budget, or the
+    // recovery/drift loop would spin forever instead of pausing bounded.
+    if (isUserSeek) {
+      this.active.recoveries = 0
+      this.lastUserSeekAt = this.deps.now()
+    }
     // Clamp into playable range (element duration is the ground truth —
     // metadata estimates can overshoot it on huge VBR files, and landing
     // on/past duration fires `ended` and skips away from the episode).
@@ -497,6 +570,48 @@ export class AudioEngine {
 
   currentFile(): string | null {
     return this.active.file
+  }
+
+  // Drift-correction target for a server position, or null when no
+  // correction is needed. Owns both caps so callers cannot re-poison the
+  // element by hand:
+  // - duration-edge cap: landing on the edge fires `ended` and advances
+  //   away mid-track (server wall-clock estimates outrun stalled elements).
+  // - recovery ceiling: after any recovery ran for the loaded file, a
+  //   forward jump past lastGoodTime (the observed-playable high-water
+  //   mark) re-enters the region that already stalled — the slider-seek
+  //   freeze (frozen bar, dead toggle). Capped back to the ceiling; null
+  //   when already there. Fresh files (no recovery yet) are unaffected, so
+  //   refresh-resume still jumps forward normally. User seeks never consult
+  //   this (they call seek() directly), so retrying a spot stays possible.
+  driftTarget(serverPos: number, catalogDuration: number): number | null {
+    if (this.fading) return null
+    if (!Number.isFinite(serverPos) || serverPos < 0) return null
+    let t: number
+    try {
+      t = this.active.el.currentTime
+    } catch {
+      return null
+    }
+    if (!Number.isFinite(t) || t < 0 || Math.abs(t - serverPos) <= 2) return null
+    const elDur = this.duration()
+    const known = elDur > 0 ? elDur : catalogDuration
+    const cap = known > DRIFT_EDGE_MARGIN_SEC + 1 ? known - DRIFT_EDGE_MARGIN_SEC : known
+    const target = known > 0 ? Math.min(serverPos, cap) : serverPos
+    if (
+      target > t &&
+      this.lastRecoveryAt > this.lastLoadAt &&
+      this.lastUserSeekAt <= this.lastRecoveryAt &&
+      target > this.lastGoodTime + 2
+    ) {
+      const ceiling = Math.max(0, this.lastGoodTime)
+      this.report(
+        `drift forward suppressed (server=${serverPos} ceiling=${ceiling} dur=${elDur}) ${this.describeSlot(this.active)}`,
+      )
+      if (Math.abs(t - ceiling) <= 2) return null
+      return ceiling
+    }
+    return target
   }
 
   // File the in-progress fade is rendering (null when not fading).
@@ -593,17 +708,13 @@ export class AudioEngine {
 
   private recoverCutShortEnd(slot: Slot) {
     if (slot.recoveries >= MAX_RECOVERIES) {
-      this.report(`cut-short recovery exhausted, pausing ${this.describeSlot(slot)}`)
-      try {
-        slot.el.pause()
-      } catch {
-        /* ignore */
-      }
+      this.handleExhausted(slot, 'cut-short')
       return
     }
     slot.recoveries += 1
     try {
       slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastRecoveryAt = this.deps.now()
       this.lastAdvanceAt = this.deps.now()
       // `ended` fires out of playing state (see the spurious branch), so
       // resuming here is always correct. lastSeekAt is deliberately left
@@ -635,7 +746,7 @@ export class AudioEngine {
     } catch {
       ok = false
     }
-    if (ok) this.seek(pos)
+    if (ok) this.seek(pos, false)
   }
 
   // True when `ended` fired suspiciously soon after a seek whose target was
@@ -652,12 +763,7 @@ export class AudioEngine {
   private handleSlotError(slot: Slot) {
     const wasPlaying = !slot.el.paused
     if (slot.recoveries >= MAX_RECOVERIES) {
-      this.report(`error recovery exhausted, pausing ${this.describeSlot(slot)}`)
-      try {
-        slot.el.pause()
-      } catch {
-        /* ignore */
-      }
+      this.handleExhausted(slot, 'error')
       return
     }
     slot.recoveries += 1
@@ -665,7 +771,11 @@ export class AudioEngine {
       `element error #${slot.recoveries}, recovering at lastGood=${this.lastGoodTime} ${this.describeSlot(slot)}`,
     )
     try {
+      // An unloaded pipeline (EMPTY/NO_SOURCE) ignores currentTime writes —
+      // re-attach first like the unload path, or the recovery seeks nowhere.
+      if (slot.url && this.isUnloaded(slot)) slot.el.src = slot.url
       slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastRecoveryAt = this.deps.now()
       this.lastSeekAt = this.deps.now()
       this.lastSeekTarget = Math.max(0, this.lastGoodTime)
       this.lastAdvanceAt = this.deps.now()
@@ -674,6 +784,47 @@ export class AudioEngine {
       this.report(
         `error recovery threw: ${e instanceof Error ? e.message : String(e)} ${this.describeSlot(slot)}`,
       )
+    }
+  }
+
+  // True when the strand sits at the track's tail: played up to within a
+  // few seconds of a known duration, so the final bytes (not the middle)
+  // are unplayable. Only observed media time counts — a glitched clock
+  // reading must never pass a mid-track stall off as finished.
+  private strandIsTail(): boolean {
+    const d = this.duration()
+    if (!(d > CUT_SHORT_MIN_DURATION_SEC)) return false
+    return this.lastGoodTime >= d - TAIL_STUCK_WINDOW_SEC
+  }
+
+  // Shared give-up path for all bounded recoveries. A strand at the tail
+  // while trying to play means the track is over as far as the bytes are
+  // concerned (`ended` will never fire): fire the tail callback once
+  // (cooldown-guarded) so the queue advances instead of freezing the bar a
+  // second short forever. Anything else — mid-track, unknown length, or
+  // deliberately paused — pauses exactly like before.
+  private handleExhausted(slot: Slot, kind: 'cut-short' | 'error' | 'unload') {
+    if (
+      !this.readPaused(slot.el) &&
+      this.strandIsTail() &&
+      this.deps.now() - this.lastTailAdvanceAt > TAIL_STUCK_COOLDOWN_MS
+    ) {
+      this.lastTailAdvanceAt = this.deps.now()
+      slot.recoveries = 0
+      this.report(`tail stuck, advancing (${kind}) ${this.describeSlot(slot)}`)
+      try {
+        slot.el.pause()
+      } catch {
+        /* ignore */
+      }
+      this.tailStuckCb()
+      return
+    }
+    this.report(`${kind} recovery exhausted, pausing ${this.describeSlot(slot)}`)
+    try {
+      slot.el.pause()
+    } catch {
+      /* ignore */
     }
   }
 
@@ -695,6 +846,7 @@ export class AudioEngine {
     this.setSlotGain(incoming, 1)
     this.active = incoming
     this.fading = null
+    this.adoptIncoming()
   }
 
   private finishFade() {
@@ -710,6 +862,27 @@ export class AudioEngine {
     this.setSlotGain(incoming, 1)
     this.active = incoming
     this.fading = null
+    this.adoptIncoming()
+  }
+
+  // The rendered track just changed slots (fade completed or seek cut over
+  // mid-fade): restart stall tracking from the incoming stream's own clock.
+  // Without this, lastGoodTime/lastAdvanceAt still describe the OUTGOING
+  // track, so the first watchdog window after the fade "recovers" the new
+  // song to the old song's position — a deterministic jump to nearly the
+  // end a few seconds after every transition.
+  private adoptIncoming() {
+    let t = 0
+    try {
+      const cur = this.active.el.currentTime
+      if (Number.isFinite(cur) && cur >= 0) t = cur
+    } catch {
+      /* unreadable clock: era starts at 0 */
+    }
+    this.lastGoodTime = t
+    this.lastAdvanceAt = this.deps.now()
+    this.lastLoadAt = this.deps.now()
+    this.lastRecoveryAt = -Infinity
   }
 
   // Stream unloaded underneath us (EMPTY/NO_SOURCE with a file assigned).
@@ -728,12 +901,7 @@ export class AudioEngine {
   private recoverUnload(slot: Slot) {
     const wasPlaying = !slot.el.paused
     if (slot.recoveries >= MAX_RECOVERIES) {
-      this.report(`unload recovery exhausted, pausing ${this.describeSlot(slot)}`)
-      try {
-        slot.el.pause()
-      } catch {
-        /* ignore */
-      }
+      this.handleExhausted(slot, 'unload')
       return
     }
     slot.recoveries += 1
@@ -743,6 +911,7 @@ export class AudioEngine {
       // the element sits EMPTY forever even though the URL is fine.
       if (slot.url) slot.el.src = slot.url
       slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastRecoveryAt = this.deps.now()
       this.lastAdvanceAt = this.deps.now()
       if (wasPlaying) this.tryPlay(slot.el, 'unload-recovery')
     } catch (e: unknown) {
@@ -849,6 +1018,9 @@ export class AudioEngine {
         idle.file = next.file
         idle.isPodcast = next.isPodcast
         idle.baseGain = gainForDb(next.gainDb)
+        // Fresh stream, fresh budget: errors from whatever this slot held
+        // two tracks ago must not exhaust the incoming on arrival.
+        idle.recoveries = 0
       }
       if (remaining > this.fadeSec) return
     }
@@ -860,6 +1032,9 @@ export class AudioEngine {
     // window must stay silent instead of waking queue[0].
     if (this.readPaused(this.active.el)) return
     const idle = this.idle
+    // A reused slot may carry an exhausted budget from a previous life
+    // (cancelled/aborted fade); the staged stream always starts fresh.
+    idle.recoveries = 0
     const dur = this.active.el.duration
     const effective = Math.min(this.fadeSec, Math.max(1, dur - this.active.el.currentTime))
     try {
@@ -932,6 +1107,11 @@ export class AudioEngine {
       this.active.isPodcast = actual.isPodcast
       this.active.baseGain = gainForDb(actual.gainDb)
       this.active.recoveries = 0
+      this.lastGoodTime = 0
+      this.lastRecoveryAt = -Infinity
+      this.lastUserSeekAt = -Infinity
+      this.lastTailAdvanceAt = -Infinity
+      this.lastSeekAt = -Infinity
       this.lastLoadAt = this.deps.now()
       this.setSlotGain(this.active, 1)
       if (wasPlaying) this.tryPlay(this.active.el, 'abortTo')

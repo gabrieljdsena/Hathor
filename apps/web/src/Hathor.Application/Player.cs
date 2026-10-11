@@ -154,6 +154,12 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
                 state.IsPlaying = false;
                 state.PausePositionSec = 0;
                 state.PositionOffsetSec = 0;
+                // Stopping on the same file (queue exhausted): the finished
+                // stream is done with the old bytes, so a stashed edit for
+                // it finally applies — otherwise it would sit queued forever
+                // with no track change to trigger it. (Pause keeps the
+                // stash: resuming would keep streaming pre-edit offsets.)
+                await PendingEditHooks.ApplyForStoppedFileAsync(pendingEdits, cmd.UserId, oldFile, ct);
             }
             else
             {
@@ -382,6 +388,16 @@ internal static class PendingEditHooks
         string.Equals(oldFile, newFile, StringComparison.OrdinalIgnoreCase)
             ? Task.CompletedTask
             : applier.ApplyForFileAsync(userId, oldFile, newFile, ct);
+
+    // Queue-exhausted stop: the finished file stays current but nothing will
+    // stream its old bytes again (the element parks at 0; any replay starts
+    // fresh ranges against the edited file), so the stash flushes with a
+    // null current file instead of waiting for a track change that never
+    // comes. Never used for pauses — resuming mid-file must keep old offsets.
+    internal static Task ApplyForStoppedFileAsync(
+        PendingMetadataApplier applier, Guid userId, string? oldFile,
+        CancellationToken ct) =>
+        applier.ApplyForFileAsync(userId, oldFile, null, ct);
 }
 
 public sealed class QueueHandler(

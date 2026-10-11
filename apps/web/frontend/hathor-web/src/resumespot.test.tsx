@@ -44,8 +44,9 @@ vi.mock('./audio/engine', () => ({
     time: () => 0,
     seek: (...args: unknown[]) => mockEngineSeek(...args),
     // store/player wires these at module scope; no-op here.
-    setNextProvider: vi.fn(),
-    onEnded: vi.fn(),
+      setNextProvider: vi.fn(),
+      onEnded: vi.fn(),
+      onTailStuck: vi.fn(),
     onReport: undefined,
     currentFile: () => null,
     isFading: () => false,

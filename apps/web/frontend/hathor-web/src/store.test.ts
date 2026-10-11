@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { engine } from './audio/engine'
-import { usePlayer } from './store/player'
+import { autoAdvance, noteAutoAdvance, resetAutoAdvanceStreak, usePlayer } from './store/player'
 import type { PlayerState } from './api/client'
 
-const { mockUpdateSettings, mockPlayerState, mockPause, mockSettings, mockSetQueue, mockPlay } = vi.hoisted(() => ({
+const { mockUpdateSettings, mockPlayerState, mockPause, mockSettings, mockSetQueue, mockPlay, mockNext } = vi.hoisted(() => ({
   mockUpdateSettings: vi.fn(),
   mockPlayerState: vi.fn(),
   mockPause: vi.fn(),
   mockSettings: vi.fn(),
   mockSetQueue: vi.fn(),
   mockPlay: vi.fn(),
+  mockNext: vi.fn(),
 }))
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -24,6 +25,7 @@ vi.mock('./api/client', async (importOriginal) => {
       settings: (...args: unknown[]) => mockSettings(...args),
       setQueue: (...args: unknown[]) => mockSetQueue(...args),
       play: (...args: unknown[]) => mockPlay(...args),
+      next: (...args: unknown[]) => mockNext(...args),
     },
   }
 })
@@ -212,8 +214,7 @@ describe('playSong failure', () => {
     expect(usePlayer.getState().currentSong?.file).toBe('s.mp3')
   })
 
-  it('ignores stale responses when clicks overlap (latest wins)', async () => {
-    // Rapid clicks interleave round trips (a cover burst can stall fetches
+  it('ignores stale responses when clicks overlap (latest wins)', async () => {    // Rapid clicks interleave round trips (a cover burst can stall fetches
     // for seconds): click A, click B, B resolves first, then A's late
     // responses arrive. They must dissolve — not reload A over B or flip
     // paused back to playing.
@@ -256,5 +257,89 @@ describe('playSong failure', () => {
     expect(usePlayer.getState().currentSong?.file).toBe('b.mp3')
     expect(usePlayer.getState().isPlaying).toBe(true)
     expect(engine.currentFile()).toBe('b.mp3')
+  })
+})
+
+describe('autoAdvance instant-death breaker', () => {
+  const mkSong = (file: string) => ({
+    file,
+    artist: 'Artist',
+    title: file,
+    album: '',
+    year: '',
+    duration: 200,
+    coverArt: null,
+    dateDownload: null,
+  })
+
+  function playerState(over: Partial<PlayerState>): PlayerState {
+    return {
+      currentSong: null,
+      isPlaying: false,
+      positionSec: 0,
+      volume: 0.7,
+      shuffle: false,
+      repeat: false,
+      queue: [],
+      source: null,
+      isCustomQueue: false,
+      firstPlay: true,
+      queueTotal: 0,
+      ...over,
+    }
+  }
+
+  const flush = () => new Promise<void>((r) => setTimeout(r, 0))
+
+  it('counts consecutive instant deaths and breaks on the third', () => {
+    resetAutoAdvanceStreak()
+    expect(noteAutoAdvance(false)).toBe(false)
+    expect(noteAutoAdvance(true)).toBe(false)
+    expect(noteAutoAdvance(true)).toBe(false)
+    expect(noteAutoAdvance(true)).toBe(true)
+  })
+
+  it('resets the run on a genuine finish', () => {
+    resetAutoAdvanceStreak()
+    expect(noteAutoAdvance(true)).toBe(false)
+    expect(noteAutoAdvance(true)).toBe(false)
+    expect(noteAutoAdvance(false)).toBe(false)
+    // Streak restarted: two more instant deaths still don't break.
+    expect(noteAutoAdvance(true)).toBe(false)
+    expect(noteAutoAdvance(true)).toBe(false)
+  })
+
+  it('pauses instead of advancing past a corrupt batch', async () => {
+    // A finished song followed by corrupt files dying instantly: allow two
+    // skips, then stop on the third instead of sailing through the library.
+    resetAutoAdvanceStreak()
+    mockNext.mockReset()
+    mockPause.mockReset()
+    const songA = mkSong('a.mp3')
+    const songB = mkSong('b.mp3')
+    const songC = mkSong('c.mp3')
+    mockNext
+      .mockResolvedValueOnce(playerState({ currentSong: songB as PlayerState['currentSong'], isPlaying: true }))
+      .mockResolvedValueOnce(playerState({ currentSong: songC as PlayerState['currentSong'], isPlaying: true }))
+    mockPause.mockResolvedValue(
+      playerState({ currentSong: songC as PlayerState['currentSong'], isPlaying: false }),
+    )
+    usePlayer.setState({ currentSong: songA as PlayerState['currentSong'], isPlaying: true })
+
+    autoAdvance(true) // corrupt A dies instantly -> skip to B
+    await flush()
+    await flush()
+    expect(usePlayer.getState().currentSong?.file).toBe('b.mp3')
+    autoAdvance(true) // corrupt B dies instantly -> skip to C
+    await flush()
+    await flush()
+    expect(usePlayer.getState().currentSong?.file).toBe('c.mp3')
+    autoAdvance(true) // corrupt C dies instantly -> break: pause, no 3rd next
+    await flush()
+    await flush()
+    expect(mockNext).toHaveBeenCalledTimes(2)
+    expect(mockPause).toHaveBeenCalledTimes(1)
+    expect(usePlayer.getState().currentSong?.file).toBe('c.mp3')
+    expect(usePlayer.getState().isPlaying).toBe(false)
   })
 })

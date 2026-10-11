@@ -46,6 +46,7 @@ vi.mock('./audio/engine', async (importOriginal) => {
       // store/player wires these at module scope; no-op here.
       setNextProvider: vi.fn(),
       onEnded: vi.fn(),
+      onTailStuck: vi.fn(),
       isFading: () => false,
       isPlaying: () => false,
       play: vi.fn(),

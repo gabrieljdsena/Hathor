@@ -2,8 +2,10 @@ using FluentAssertions;
 using Hathor.Application.Metadata;
 using Hathor.Application.Player;
 using Hathor.Application.Ports;
+using Hathor.Domain.Entities;
 using Hathor.Domain.Playback;
 using Hathor.Domain.Repositories;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 
 namespace Hathor.Application.Tests;
@@ -195,6 +197,62 @@ public sealed class PlayHandlerTests
         state.NextFiles.Should().BeEmpty();
         dto.IsPlaying.Should().BeFalse();
         dto.PositionSec.Should().BeLessThan(1);
+    }
+    [Fact]
+    public async Task Next_WithEmptyQueue_StoppingOnSameFile_AppliesStashedEdit()
+    {
+        // Deferred edit for the playing file (PATCH stashes while current):
+        // stopping on the same file must flush it — no track change will
+        // ever come to trigger the normal hook, and the finished stream is
+        // done with the old bytes. The stop response already carries the
+        // updated metadata.
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var userId = Guid.NewGuid();
+        var state = new PlaybackState
+        {
+            UserId = userId,
+            CurrentFile = "s.mp3",
+            FirstPlay = false,
+            IsPlaying = true,
+            NextFiles = new List<string>(),
+        };
+        playback.GetOrCreateAsync(userId, Arg.Any<CancellationToken>()).Returns(state);
+
+        var pending = Substitute.For<IPendingEditRepository>();
+        pending.GetAsync(userId, "s.mp3", Arg.Any<CancellationToken>())
+            .Returns(new PendingMetadataEdit
+            {
+                UserId = userId, File = "s.mp3", Title = "New Title",
+                CreatedUtc = DateTime.UtcNow,
+            });
+        var writer = Substitute.For<IMetadataWriter>();
+        var storage = Substitute.For<ILibraryStorage>();
+        storage.SongExists(userId, "s.mp3").Returns(true);
+        songs.GetByFileAsync(Arg.Any<Guid>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new Dtos.SongDto("s.mp3", "Artist", "New Title", "Album", "2026", 200, null, null));
+        songs.GetManyAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.SongDto>());
+        var applier = new PendingMetadataApplier(
+            pending, writer, storage,
+            Substitute.For<ISongRecordRepository>(), songs,
+            Substitute.For<IPodcastRecordRepository>(), Substitute.For<IPodcastReadModel>(),
+            Substitute.For<ILogger<PendingMetadataApplier>>());
+
+        var dto = await new NextHandler(playback, songs, applier, hub)
+            .Handle(new NextCommand(userId), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.CurrentSong.Should().NotBeNull();
+        dto.CurrentSong!.File.Should().Be("s.mp3");
+        dto.CurrentSong!.Title.Should().Be("New Title");
+        await writer.Received(1).WriteSongAsync(
+            userId, "s.mp3", "New Title", null, null, null, null, null,
+            Arg.Any<CancellationToken>());
+        await pending.Received(1).DeleteAsync(userId, "s.mp3", Arg.Any<CancellationToken>());
     }
 
     [Fact]

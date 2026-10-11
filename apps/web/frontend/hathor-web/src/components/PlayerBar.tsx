@@ -19,6 +19,12 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   const sliderRef = useRef<HTMLInputElement>(null)
   const curRef = useRef<HTMLSpanElement>(null)
   const totRef = useRef<HTMLSpanElement>(null)
+  // True between press and release of a scrub (pointer or arrow keys). The
+  // ticker holds off the thumb while set so it never fights the user's own
+  // drag; a focus check can't do this job — the slider keeps focus after
+  // release, which used to freeze the thumb (but not the counter) until the
+  // next click elsewhere blurred it.
+  const scrubbingRef = useRef(false)
 
   // Effective duration: the element's own once metadata loads (ground
   // truth for what can play), the song's stored duration before that so a
@@ -40,7 +46,7 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
         const dur = effDuration()
         const pos = engine.time()
         if (dur > 0) slider.max = String(dur)
-        if (document.activeElement !== slider) slider.value = String(pos)
+        if (!scrubbingRef.current) slider.value = String(pos)
         if (curRef.current) curRef.current.textContent = formatTime(pos)
         if (totRef.current) totRef.current.textContent = formatTime(dur)
         const max = Number.parseFloat(slider.max) || 100
@@ -53,6 +59,7 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   }, [])
 
   const commitSeek = () => {
+    scrubbingRef.current = false
     const slider = sliderRef.current
     if (!slider) return
     // Same clamp as the engine's live scrub: server and element agree, so
@@ -82,8 +89,20 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
           // follows once on release so a drag doesn't fan out seeks.
           engine.seek(Number.parseFloat(e.target.value))
         }}
+        onPointerDown={() => {
+          scrubbingRef.current = true
+        }}
         onPointerUp={commitSeek}
+        onPointerCancel={() => {
+          scrubbingRef.current = false
+        }}
+        onKeyDown={(e) => {
+          if (e.key.startsWith('Arrow')) scrubbingRef.current = true
+        }}
         onKeyUp={commitSeek}
+        onBlur={() => {
+          scrubbingRef.current = false
+        }}
         className="w-full cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
       />
       <span ref={totRef} className="text-xs text-zinc-500 font-medium font-mono">
@@ -137,6 +156,20 @@ export function VolumeSlider({ volume, className, id }: { volume: number; classN
 // select their file out of it — never one fetch per chip.
 export function PendingEditChip({ file }: { file: string }) {
   const queryClient = useQueryClient()
+  // The stash flushes server-side on track change AND on queue-exhausted
+  // stop (same file, playing -> paused): refetch then so the chip clears
+  // promptly instead of lingering on the 30s stale window. Pauses refetch
+  // too (harmless — the row is still there, so the chip stays).
+  const currentFile = usePlayer((s) => s.currentSong?.file)
+  const isPlaying = usePlayer((s) => s.isPlaying)
+  const prev = useRef({ file: currentFile, playing: isPlaying })
+  useEffect(() => {
+    const p = prev.current
+    prev.current = { file: currentFile, playing: isPlaying }
+    if (p.file !== currentFile || (p.playing && !isPlaying)) {
+      void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
+    }
+  }, [currentFile, isPlaying, queryClient])
   const { data: hasPending } = useQuery({
     queryKey: ['pending-edits'],
     queryFn: api.pendingEdits,
@@ -155,7 +188,7 @@ export function PendingEditChip({ file }: { file: string }) {
     <button
       onClick={discard}
       title="Edit queued — applies when this track changes. Click to discard."
-      className="text-[10px] font-semibold uppercase tracking-[0.15em] text-orange-300/90 hover:text-orange-200 transition-colors cursor-pointer"
+      className="ml-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-orange-300/90 hover:text-orange-200 transition-colors cursor-pointer"
     >
       Edit queued
     </button>
