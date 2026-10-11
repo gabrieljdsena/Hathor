@@ -29,7 +29,7 @@ Tailwind/Alpine web UI rendered through pywebview (WebView2).
 - Podcasts as a separate library, playlists with covers, history views
 - YouTube search + 320kbps MP3 downloads (`yt-dlp` + FFmpeg), iTunes tags/artwork
 - Synced + plain lyrics (lrclib, offline cache, romaji toggle)
-- Optional manual push/pull sync to MySQL/TiDB with tombstone deletions
+- Optional manual push/pull sync with the Hathor server (delta + file bytes, tombstone deletions)
 
 Stack: Python + pywebview + `pygame.mixer`, HTML/CSS/JS + Tailwind, `yt-dlp`,
 `mutagen`, SQLite (`music_player.db`), PyInstaller (`dist/Hathor/`).
@@ -60,7 +60,7 @@ through the REST + SignalR API — the React UI is just one client.
 
 ```powershell
 cd apps/web
-docker compose up        # API + Worker + Postgres + MySQL-compat + web
+docker compose up        # API + Worker + Postgres + web
 # frontend dev:
 cd frontend/hathor-web; npm install; npm run dev
 ```
@@ -72,7 +72,7 @@ Parity spec: `apps/web/IMPLEMENTATION_PLAN.md`.
 Native Kotlin Android client (Compose + Media3, app name Hathor) with the
 same library, downloads, playlists and sync as desktop: on-device
 YouTube→MP3 via real yt-dlp, foreground playback service, separate podcast
-library, and pull-sync from the shared MySQL/TiDB remote.
+library, and delta/file sync with the Hathor server.
 
 - `engine/DownloadEngine.kt` — YouTube → MP3 downloads on-device
 - `playback/` — `PlayerService`, `PlayerManager`, previews
@@ -80,7 +80,7 @@ library, and pull-sync from the shared MySQL/TiDB remote.
 - Sync follows `packages/contracts` (same tables as desktop, Room cache offline)
 
 ```powershell
-# open apps/mobile in Android Studio, add local.properties (sdk.dir + DB_*), Run
+# open apps/mobile in Android Studio, add local.properties (sdk.dir + API_BASE_URL + API_TOKEN), Run
 ```
 
 Full docs: `apps/mobile/README.md`. `PLAN.md` / `FEATURE_PLAN.md` are the

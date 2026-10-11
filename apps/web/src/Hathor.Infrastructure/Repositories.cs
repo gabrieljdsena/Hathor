@@ -22,23 +22,40 @@ public sealed class EfUserRepository(HathorDbContext db) : IUserRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }
 
-public sealed class EfRefreshTokenRepository(HathorDbContext db) : IRefreshTokenRepository
+public sealed class EfPendingEditRepository(HathorDbContext db) : IPendingEditRepository
 {
-    public async Task AddAsync(RefreshToken token, CancellationToken ct = default) =>
-        await db.RefreshTokens.AddAsync(token, ct);
+    public Task<PendingMetadataEdit?> GetAsync(Guid userId, string file, CancellationToken ct = default) =>
+        db.PendingMetadataEdits.FirstOrDefaultAsync(
+            p => p.UserId == userId && p.File == file, ct);
 
-    public Task<RefreshToken?> GetValidAsync(string tokenHash, CancellationToken ct = default) =>
-        db.RefreshTokens.FirstOrDefaultAsync(t =>
-            t.TokenHash == tokenHash && !t.Revoked && t.ExpiresAtUtc > DateTime.UtcNow, ct);
+    public Task<List<PendingMetadataEdit>> ListAsync(Guid userId, CancellationToken ct = default) =>
+        db.PendingMetadataEdits.Where(p => p.UserId == userId)
+            .OrderByDescending(p => p.CreatedUtc).ToListAsync(ct);
 
-    public async Task RevokeAsync(Guid id, CancellationToken ct = default)
+    public async Task UpsertAsync(PendingMetadataEdit edit, CancellationToken ct = default)
     {
-        var token = await db.RefreshTokens.FindAsync([id], ct);
-        if (token is not null)
+        var existing = await GetAsync(edit.UserId, edit.File, ct);
+        if (existing is null)
         {
-            token.Revoked = true;
-            await db.SaveChangesAsync(ct);
+            await db.PendingMetadataEdits.AddAsync(edit, ct);
+            return;
         }
+        existing.IsPodcast = edit.IsPodcast;
+        existing.Title = edit.Title;
+        existing.Artist = edit.Artist;
+        existing.Album = edit.Album;
+        existing.Year = edit.Year;
+        existing.Genre = edit.Genre;
+        existing.CoverArt = edit.CoverArt;
+        existing.CreatedUtc = edit.CreatedUtc;
+    }
+
+    public async Task<bool> DeleteAsync(Guid userId, string file, CancellationToken ct = default)
+    {
+        var existing = await GetAsync(userId, file, ct);
+        if (existing is null) return false;
+        db.PendingMetadataEdits.Remove(existing);
+        return true;
     }
 
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
@@ -333,7 +350,12 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
     {
         var existed = await db.Songs.AnyAsync(s => s.UserId == userId && s.File == file, ct);
         await db.SongPlaylists.Where(l => l.UserId == userId && l.SongFile == file).ExecuteDeleteAsync(ct);
-        await db.Lyrics.Where(l => l.UserId == userId && l.SongFile == file).ExecuteDeleteAsync(ct);
+        // Base row plus per-chapter cache rows ("{file}::chapter:{id}").
+        // Filenames may hold LIKE wildcards: escape before prefix use.
+        var chapterPrefix = EfLyricsRepository.LikeEscape(file) + "::chapter:";
+        await db.Lyrics.Where(l => l.UserId == userId
+            && (l.SongFile == file || EF.Functions.Like(l.SongFile, chapterPrefix + "%")))
+            .ExecuteDeleteAsync(ct);
         await db.MusicHistory.Where(h => h.UserId == userId && h.SongFile == file).ExecuteDeleteAsync(ct);
         await db.Songs.Where(s => s.UserId == userId && s.File == file).ExecuteDeleteAsync(ct);
         return existed;

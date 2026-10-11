@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type PodcastTimestamp } from '../../api/client'
-import { engine } from '../../audio/engine'
-import { formatTime, usePlayer } from '../../store/player'
+import { clampSeekTarget, engine } from '../../audio/engine'
+import { subscribeAudioClock, useAudioClock } from '../../audio/clock'
+import { formatTime, pushResumeSpot, usePlayer } from '../../store/player'
 import Icon from './icons'
 import Modal from './Modal'
 import ToggleSwitch from './ToggleSwitch'
@@ -33,29 +34,53 @@ export function usePodcastChapters(file: string | null | undefined) {
 }
 
 function seekTo(secs: number) {
-  engine.seek(secs)
-  void api.seek(secs).catch(() => {})
+  // Clamp chapter seeks into playable range (same rule as the progress
+  // slider): a user-entered chapter past EOF must park near the end, never
+  // poison the server position past the track (which would yank a later
+  // drift correction onto the duration edge and auto-advance away).
+  const elDur = engine.duration()
+  const meta = usePlayer.getState().currentSong?.duration ?? 0
+  const known = elDur > 0 ? elDur : meta
+  const target = known > 0 ? clampSeekTarget(secs, known) : Math.max(0, secs)
+  engine.seek(target)
+  // Paused chapter seeks move this browser's resume spot for other devices.
+  void api
+    .seek(target)
+    .then(() => pushResumeSpot())
+    .catch(() => {})
 }
 
 // Chapter-boundary transport for the current podcast episode. Returns true
 // when a chapter seek happened (caller falls back to prev/next track).
 // Works whether or not auto-skip is enabled.
-export function useChapterJump() {
-  const file = usePlayer((s) => s.currentSong?.file)
+export function useChapterJump() {  const file = usePlayer((s) => s.currentSong?.file)
   const isPodcast = usePlayer((s) => s.currentSong?.isPodcast)
   const { data } = usePodcastChapters(isPodcast ? file : null)
   const chapters = useMemo(() => sortChapters(data ?? []), [data])
 
   return useMemo(() => {
     if (!isPodcast || chapters.length === 0) return { prev: () => false, next: () => false }
+    // Same load-bearing guard as the auto-skip pump, evaluated at press
+    // time (not memo time): the store can still name the previous podcast
+    // while the element already plays the next song (slow or failed play
+    // call). Without this, the old episode's chapters seek the new song
+    // instead of changing track, and the queue looks frozen or wrong.
+    const guarded = () => {
+      const current = usePlayer.getState().currentSong
+      if (!current?.isPodcast) return false
+      if (!current.file || engine.currentFile() !== current.file) return false
+      return true
+    }
     return {
       prev: () => {
+        if (!guarded()) return false
         const target = prevChapterStart(chapters, engine.time())
         if (target === null) return false
         seekTo(target)
         return true
       },
       next: () => {
+        if (!guarded()) return false
         const target = nextChapterStart(chapters, engine.time())
         if (target === null) return false
         seekTo(target)
@@ -65,9 +90,34 @@ export function useChapterJump() {
   }, [isPodcast, chapters])
 }
 
+// Active chapter for lyrics + highlight: last chapter at or before the
+// engine clock, polled like the auto-skip pump. Null when not a podcast
+// or when the episode has no named chapters (callers fall back to the
+// file flow). Name is guaranteed non-blank by backend validation.
+export function useActiveChapter(file: string | null | undefined, isPodcast: boolean | undefined) {
+  const { data } = usePodcastChapters(isPodcast ? file : null)
+  const chapters = useMemo(() => sortChapters(data ?? []), [data])
+  // Shared 500ms clock (was a private interval per mount).
+  const now = useAudioClock(500)
+  return useMemo(() => {
+    if (!isPodcast || !file) return null
+    let active: (typeof chapters)[number] | null = null
+    for (const c of chapters) {
+      if (now >= c.startSecs && c.name.trim().length > 0) active = c
+      else if (now < c.startSecs) break
+    }
+    return active
+  }, [isPodcast, file, chapters, now])
+}
+
 // Auto-skip pump: while enabled and a podcast episode plays, jump into the
 // next chapter once a chapter plays to its end time (markers without an
 // end never skip). Mount once in the always-rendered player bar.
+// The engine-file guard is load-bearing: the store and the element can
+// disagree mid-switch (playSong loads audio before the server confirms,
+// or the play call fails and the store stays stale) — without it, chapter
+// timestamps from a previous episode would seek whatever song actually
+// plays. Songs never have chapters; never seek them.
 export function useChapterAutoSkip() {
   const enabled = usePlayer((s) => s.chapterSkip)
   const file = usePlayer((s) => s.currentSong?.file)
@@ -78,14 +128,19 @@ export function useChapterAutoSkip() {
   stateRef.current = { enabled, isPodcast, isPlaying, chapters: data ?? [] }
 
   useEffect(() => {
-    const id = window.setInterval(() => {
+    // Ref-only pump (no re-render): subscribes to the shared 500ms clock
+    // instead of running a private interval.
+    return subscribeAudioClock(500, () => {
       const s = stateRef.current
       if (!s.enabled || !s.isPodcast || !s.isPlaying || s.chapters.length === 0) return
+      // The element must be rendering the store's episode: after a switch
+      // to a song (or a failed play call) the store can still name the old
+      // podcast while the element already plays the song.
+      if (!file || engine.currentFile() !== file) return
       const target = autoSkipTarget(sortChapters(s.chapters), engine.time())
       if (target !== null) seekTo(target)
-    }, 500)
-    return () => window.clearInterval(id)
-  }, [])
+    })
+  }, [file])
 }
 
 // "Use current position" helper: fills a time field with the engine clock.
@@ -317,15 +372,11 @@ export function TimestampManagerModal({
 export function ChapterSkip({ file }: { file: string }) {
   const { data } = usePodcastChapters(file)
   const chapters = useMemo(() => sortChapters(data ?? []), [data])
-  const [position, setPosition] = useState(() => engine.time())
+  // Shared 500ms clock (was a private interval per mount).
+  const position = useAudioClock(500)
   const chapterSkip = usePlayer((s) => s.chapterSkip)
   const setChapterSkip = usePlayer((s) => s.setChapterSkip)
   const activeRef = useRef<HTMLButtonElement | null>(null)
-
-  useEffect(() => {
-    const id = window.setInterval(() => setPosition(engine.time()), 500)
-    return () => window.clearInterval(id)
-  }, [])
 
   const active = useMemo(() => activeChapterAt(chapters, position), [chapters, position])
 

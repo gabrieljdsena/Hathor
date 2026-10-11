@@ -85,10 +85,12 @@ public sealed class TagLibMetadataWriter(
             {
                 tag.Save();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not IOException)
             {
                 throw new InvalidOperationException($"Could not save audio tags: {ex.Message}");
             }
+            // IOException (locked file, vanishing path) propagates raw so
+            // callers can tell "busy, try later" apart from corrupt data.
             // Evict the read cache: the file stat can be unchanged after a
             // save, so without this every later read serves the old tags.
             cache.Remove(path);

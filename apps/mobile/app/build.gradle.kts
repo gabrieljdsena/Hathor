@@ -7,15 +7,16 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-// Remote DB credentials live ONLY in local.properties (never hardcoded, never
-// committed). Same names as the desktop .env: DB_HOST, DB_PORT, DB_USER,
-// DB_PASSWORD, DB_NAME. Empty DB_HOST = sync disabled, like desktop.
+// Sync server config lives ONLY in local.properties (never hardcoded,
+// never committed): API_BASE_URL (e.g. http://192.168.1.10:5051) +
+// API_TOKEN (a per-device hth_ key with library:read + library:write).
+// Empty values = sync disabled, like desktop.
 val localProps = Properties()
 val localPropsFile = rootProject.file("local.properties")
 if (localPropsFile.exists()) {
     localPropsFile.inputStream().use { stream -> localProps.load(stream) }
 }
-fun dbProp(name: String, default: String = ""): String {
+fun apiProp(name: String, default: String = ""): String {
     val v = localProps.getProperty(name, default)
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
@@ -37,11 +38,8 @@ android {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
 
-        buildConfigField("String", "DB_HOST", dbProp("DB_HOST"))
-        buildConfigField("String", "DB_PORT", dbProp("DB_PORT", "4000"))
-        buildConfigField("String", "DB_USER", dbProp("DB_USER"))
-        buildConfigField("String", "DB_PASSWORD", dbProp("DB_PASSWORD"))
-        buildConfigField("String", "DB_NAME", dbProp("DB_NAME"))
+        buildConfigField("String", "API_BASE_URL", apiProp("API_BASE_URL"))
+        buildConfigField("String", "API_TOKEN", apiProp("API_TOKEN"))
     }
 
     buildTypes {
@@ -79,11 +77,10 @@ dependencies {
     implementation(libs.youtubedl.ffmpeg)
 
     // Phase 2: local DB (same table/column names as desktop database.sql) +
-    // direct MySQL/TiDB access mirroring desktop sync.py (pymysql -> Connector/J).
+    // sync over the Hathor Web API (data/api/SyncApi.kt, stdlib HTTP+JSON).
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
-    implementation(libs.mysql.connector)
     implementation(libs.work.runtime)
     // Stream previews (any audio codec incl. opus/webm, which MediaPlayer can't do).
     implementation(libs.media3.exoplayer)

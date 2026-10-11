@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import Discover from './views/Discover'
 import type { Discover as DiscoverPayload } from './api/client'
@@ -120,17 +120,27 @@ describe('Discover view', () => {
   })
 
   it('opens a YouTube preview for a suggestion', async () => {
-    stubFetch((input) =>
-      String(input).includes('/youtube/search')
-        ? [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
-        : payload,
-    )
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: null }
+      }
+      return payload
+    })
     renderDiscover()
     await screen.findByText('Midnight City')
 
     fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
-    const frame = await screen.findByTitle('YouTube video player')
-    expect(frame.getAttribute('src')).toBe('https://www.youtube.com/embed/vid123?autoplay=1')
+    let frame: HTMLIFrameElement | null = null
+    await waitFor(() => {
+      frame = document.querySelector('iframe')
+      expect(frame).not.toBeNull()
+    })
+    expect(frame!.getAttribute('src')).toContain('https://www.youtube.com/embed/vid123?autoplay=0')
+    expect(frame!.getAttribute('src')).toContain('enablejsapi=1')
   })
 
   it('shows a notice when no preview exists', async () => {
@@ -140,6 +150,90 @@ describe('Discover view', () => {
 
     fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
     expect(await screen.findByText('No YouTube preview found for Midnight City.')).toBeInTheDocument()
+  })
+
+  it('morphs the download button into a progress bar while downloading', async () => {
+    let jobsNow: unknown[] = []
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/downloads/check')) return { owned: false, file: null }
+      if (url.endsWith('/downloads')) return { qid: 'q1' }
+      if (url.includes('/downloads?')) return jobsNow
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    // Seed BEFORE awaiting: the submit's jobs refetch must see the job,
+    // mirroring prod where the row exists before POST returns.
+    jobsNow = [
+      {
+        qid: 'q1', url: null, title: 'Midnight City', artist: 'M83',
+        status: 'downloading', progress: 0.5, error: null, filename: null, isPodcast: false,
+      },
+    ]
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+    // The submit invalidates download-jobs; the refetch picks up the stubbed job.
+    await waitFor(() => {
+      expect(document.querySelectorAll('[role="progressbar"]').length).toBe(1)
+    })
+    const bar = document.querySelector('[role="progressbar"]')!
+    expect(bar.getAttribute('aria-valuenow')).toBe('50')
+    expect(bar.textContent).toContain('50%')
+    expect(screen.queryByLabelText('Download Midnight City by M83')).toBeNull()
+  })
+
+  it('announces completion and restores the button when the job finishes', async () => {
+    let jobsNow: unknown[] = []
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/downloads/check')) return { owned: false, file: null }
+      if (url.endsWith('/downloads')) return { qid: 'q1' }
+      if (url.includes('/downloads?')) return jobsNow
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+
+    jobsNow = [
+      {
+        qid: 'q1', url: null, title: 'Midnight City', artist: 'M83',
+        status: 'done', progress: 1, error: null, filename: 'Midnight City.mp3', isPodcast: false,
+      },
+    ]
+    // A second submit round-trips the jobs query, which now reports done.
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Downloaded: Midnight City')).toBeInTheDocument()
+    expect(screen.getByLabelText('Download Midnight City by M83')).toBeInTheDocument()
+  })
+
+  it('announces failure when the job fails', async () => {
+    let jobsNow: unknown[] = []
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/downloads/check')) return { owned: false, file: null }
+      if (url.endsWith('/downloads')) return { qid: 'q1' }
+      if (url.includes('/downloads?')) return jobsNow
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Download queued: Midnight City')).toBeInTheDocument()
+
+    jobsNow = [
+      {
+        qid: 'q1', url: null, title: 'Midnight City', artist: 'M83',
+        status: 'failed', progress: 0.4, error: 'Download failed: boom', filename: null, isPodcast: false,
+      },
+    ]
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    expect(await screen.findByText('Download failed: boom')).toBeInTheDocument()
   })
 
   it('asks before downloading an owned song, submits on confirm', async () => {

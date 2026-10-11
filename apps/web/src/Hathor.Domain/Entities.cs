@@ -11,16 +11,6 @@ public sealed class User
     public DateTime CreatedAtUtc { get; set; }
 }
 
-public sealed class RefreshToken
-{
-    public Guid Id { get; set; }
-    public Guid UserId { get; set; }
-    public string TokenHash { get; set; } = "";
-    public DateTime ExpiresAtUtc { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-    public bool Revoked { get; set; }
-}
-
 // Server-side login session (multi-login: one row per device). Rotation
 // chains via ReplacedById so presenting an already-rotated token (theft
 // replay) is detectable — the whole family is revoked on reuse.
@@ -52,13 +42,22 @@ public sealed class ApiKey
     public bool Revoked { get; set; }
 }
 
-public sealed class Song
+// Change-feed marker for delta sync (GET /api/v1/sync/delta): the
+// DbContext stamps this on every insert/update, so no write path needs
+// to remember it. Server clock only — client clocks never matter.
+public interface ITrackUpdatedAt
+{
+    DateTime UpdatedAtUtc { get; set; }
+}
+
+public sealed class Song : ITrackUpdatedAt
 {
     public Guid UserId { get; set; }
     public string File { get; set; } = ""; // PK with UserId; filename in songs folder
     public string? DownloadedLink { get; set; }
     public string Title { get; set; } = "";
     public DateTime DateDownloadUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
     public string? Artist { get; set; }
     // Materialized file tags (indexed search/sort without opening MP3s).
     // File tags stay the source of truth; these mirror them (see Scan).
@@ -72,53 +71,58 @@ public sealed class Song
     public double? LoudnessDb { get; set; }
 }
 
-public sealed class Podcast
+public sealed class Podcast : ITrackUpdatedAt
 {
     public Guid UserId { get; set; }
     public string File { get; set; } = "";
     public string? DownloadedLink { get; set; }
     public string Title { get; set; } = "";
     public DateTime DateDownloadUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
     public string? Artist { get; set; }
 }
 
-public sealed class Playlist
+public sealed class Playlist : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string Title { get; set; } = "";
     public string? Description { get; set; }
     public string? Thumbnail { get; set; } // TEXT base64 (sync.py normalizes BLOB→text)
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class SongPlaylist
+public sealed class SongPlaylist : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string SongFile { get; set; } = "";
     public long PlaylistId { get; set; }
     public DateTime DateAddedUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class PodcastTag
+public sealed class PodcastTag : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string Name { get; set; } = "";
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class PodcastTagLink
+public sealed class PodcastTagLink : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
     public string PodcastFile { get; set; } = "";
     public long TagId { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 // Chapter marks inside a podcast episode (podcast "timestamps"):
 // start offset in seconds, display name, optional end offset. Times are
 // media offsets (not wall-clock); EndSecs null means "runs open-ended".
-public sealed class PodcastTimestamp
+public sealed class PodcastTimestamp : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
@@ -126,6 +130,7 @@ public sealed class PodcastTimestamp
     public string Name { get; set; } = "";
     public double StartSecs { get; set; }
     public double? EndSecs { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 public sealed class DownloadJob
@@ -148,7 +153,7 @@ public sealed class DownloadJob
     public DateTime UpdatedAtUtc { get; set; }
 }
 
-public sealed class Lyric
+public sealed class Lyric : ITrackUpdatedAt
 {
     public long Id { get; set; }
     public Guid UserId { get; set; }
@@ -157,6 +162,28 @@ public sealed class Lyric
     // Per-song highlight timing correction, milliseconds (-20000..20000).
     // Zero = none (no row needed, but harmless when present).
     public int OffsetMs { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+// Deferred metadata edit: PATCH on the currently-playing file stores the
+// payload here instead of rewriting tags mid-stream (playback stays
+// gapless — the streamer holds the file open and tag-size changes would
+// shift audio offsets under the playing element). Applied when the track
+// changes (PendingMetadataApplier); last write wins per file.
+public sealed class PendingMetadataEdit
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public string File { get; set; } = "";
+    public bool IsPodcast { get; set; }
+    public string? Title { get; set; }
+    public string? Artist { get; set; }
+    public string? Album { get; set; }
+    public string? Year { get; set; }
+    public string? Genre { get; set; }
+    // data: URL | http(s) URL | REMOVE sentinel | null (keep).
+    public string? CoverArt { get; set; }
+    public DateTime CreatedUtc { get; set; }
 }
 
 public sealed class MusicHistoryEntry
@@ -184,12 +211,13 @@ public sealed class SyncDeletion
     public DateTime DeletedAtUtc { get; set; }
 }
 
-public sealed class DailyMix
+public sealed class DailyMix : ITrackUpdatedAt
 {
     public Guid UserId { get; set; }
     public string MixDate { get; set; } = ""; // YYYY-MM-DD, PK with UserId
     public string SongFilesJson { get; set; } = "[]";
     public DateTime CreatedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 // Discover cache (packages/contracts/discover.md): one row per user per day,
@@ -200,6 +228,20 @@ public sealed class DiscoverCache
     public string Date { get; set; } = ""; // YYYY-MM-DD, PK with UserId
     public string ItemsJson { get; set; } = "[]";
     public DateTime CreatedAtUtc { get; set; }
+}
+
+// Cross-device resume spot: one row per (user, device), last write wins.
+// Readers exclude their own device id, so a browser never echoes its own
+// paused track back as a "resume" pill (the single-user echo bug).
+public sealed class PlaybackSpot
+{
+    public Guid UserId { get; set; }
+    public string DeviceId { get; set; } = ""; // PK with UserId; client UUID (hathor:device-id)
+    public string File { get; set; } = "";
+    public double PositionSec { get; set; }
+    public bool IsPodcast { get; set; }
+    public string? DeviceLabel { get; set; } // human label, e.g. UA substring
+    public DateTime UpdatedUtc { get; set; }
 }
 
 // Persisted prefs (desktop Settings row id=1 → per-user).

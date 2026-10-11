@@ -8,7 +8,18 @@ import { api } from './api/client'
 import './styles/hathor.css'
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 15_000 } },
+  defaultOptions: {
+    queries: {
+      // Never auto-retry rate-limiting (429, e.g. login throttle or an
+      // upstream proxy): a retry doubles burst load. Library endpoints
+      // are unthrottled (LAN app), so this is defensive only.
+      retry: (count, err) => {
+        if (err instanceof Error && /429|Rate limited/i.test(err.message)) return false
+        return count < 1
+      },
+      staleTime: 15_000,
+    },
+  },
 })
 
 // Error bridge (desktop js_log + onerror/unhandledrejection forwarders):

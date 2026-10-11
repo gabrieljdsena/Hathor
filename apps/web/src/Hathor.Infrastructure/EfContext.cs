@@ -10,7 +10,6 @@ namespace Hathor.Infrastructure.Ef;
 public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
-    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<Song> Songs => Set<Song>();
@@ -22,6 +21,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<PodcastTimestamp> PodcastTimestamps => Set<PodcastTimestamp>();
     public DbSet<DownloadJob> DownloadJobs => Set<DownloadJob>();
     public DbSet<Lyric> Lyrics => Set<Lyric>();
+    public DbSet<PendingMetadataEdit> PendingMetadataEdits => Set<PendingMetadataEdit>();
     public DbSet<MusicHistoryEntry> MusicHistory => Set<MusicHistoryEntry>();
     public DbSet<PlaylistHistoryEntry> PlaylistHistory => Set<PlaylistHistoryEntry>();
     public DbSet<SyncDeletion> SyncDeletions => Set<SyncDeletion>();
@@ -29,6 +29,29 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<DiscoverCache> DiscoverCaches => Set<DiscoverCache>();
     public DbSet<UserSettings> Settings => Set<UserSettings>();
     public DbSet<PlaybackStateRow> PlaybackStates => Set<PlaybackStateRow>();
+    public DbSet<PlaybackSpotRow> PlaybackSpots => Set<PlaybackSpotRow>();
+
+    // Delta-sync change feed: every insert/update stamps UpdatedAtUtc, so
+    // GET /sync/delta needs no per-write-path bookkeeping. Server clock only.
+    public override int SaveChanges()
+    {
+        StampUpdatedAt();
+        return base.SaveChanges();
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    {
+        StampUpdatedAt();
+        return base.SaveChangesAsync(ct);
+    }
+
+    private void StampUpdatedAt()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var e in ChangeTracker.Entries<ITrackUpdatedAt>())
+            if (e.State is EntityState.Added or EntityState.Modified)
+                e.Entity.UpdatedAtUtc = now;
+    }
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -38,12 +61,6 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.Username).IsUnique();
             e.Property(x => x.Username).HasMaxLength(64);
-        });
-        b.Entity<RefreshToken>(e =>
-        {
-            e.ToTable("Refresh_Tokens");
-            e.HasKey(x => x.Id);
-            e.HasIndex(x => x.TokenHash).IsUnique();
         });
         b.Entity<Session>(e =>
         {
@@ -66,24 +83,28 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.HasKey(x => new { x.UserId, x.File });
             e.Property(x => x.File).HasMaxLength(255);
             e.Property(x => x.Title).HasMaxLength(255);
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<Podcast>(e =>
         {
             e.ToTable("Podcasts");
             e.HasKey(x => new { x.UserId, x.File });
             e.Property(x => x.File).HasMaxLength(255);
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<Playlist>(e =>
         {
             e.ToTable("Playlists");
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<SongPlaylist>(e =>
         {
             e.ToTable("Song_Playlist");
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<PodcastTag>(e =>
         {
@@ -91,6 +112,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
             e.HasIndex(x => new { x.UserId, x.Name }).IsUnique();
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<PodcastTagLink>(e =>
         {
@@ -98,6 +120,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
             e.HasIndex(x => new { x.UserId, x.PodcastFile, x.TagId }).IsUnique();
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<PodcastTimestamp>(e =>
         {
@@ -107,6 +130,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.Property(x => x.PodcastFile).HasMaxLength(255);
             e.Property(x => x.Name).HasMaxLength(255);
             e.HasIndex(x => new { x.UserId, x.PodcastFile });
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<DownloadJob>(e =>
         {
@@ -120,6 +144,21 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.ToTable("Lyrics");
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
+        });
+        b.Entity<PendingMetadataEdit>(e =>
+        {
+            e.ToTable("Pending_Metadata_Edits");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.File).HasMaxLength(255);
+            e.Property(x => x.Title).HasMaxLength(255);
+            e.Property(x => x.Artist).HasMaxLength(255);
+            e.Property(x => x.Album).HasMaxLength(255);
+            e.Property(x => x.Year).HasMaxLength(16);
+            e.Property(x => x.Genre).HasMaxLength(64);
+            // CoverArt holds data: URLs (often 100KB+) — unlimited text.
+            e.HasIndex(x => new { x.UserId, x.File }).IsUnique();
         });
         b.Entity<MusicHistoryEntry>(e =>
         {
@@ -138,11 +177,13 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.ToTable("Sync_Deletions");
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.HasIndex(x => new { x.UserId, x.DeletedAtUtc });
         });
         b.Entity<DailyMix>(e =>
         {
             e.ToTable("Daily_Mix");
             e.HasKey(x => new { x.UserId, x.MixDate });
+            e.HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
         });
         b.Entity<DiscoverCache>(e =>
         {
@@ -159,7 +200,29 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.ToTable("Playback_State");
             e.HasKey(x => x.UserId);
         });
+        b.Entity<PlaybackSpotRow>(e =>
+        {
+            e.ToTable("Playback_Spots");
+            e.HasKey(x => new { x.UserId, x.DeviceId });
+            e.Property(x => x.DeviceId).HasMaxLength(64);
+            e.Property(x => x.File).HasMaxLength(255);
+            e.Property(x => x.DeviceLabel).HasMaxLength(128);
+            e.HasIndex(x => new { x.UserId, x.UpdatedUtc });
+        });
     }
+}
+
+// EF persistence shape for one device's resume spot (last write wins per
+// (user, device); readers exclude their own device id).
+public sealed class PlaybackSpotRow
+{
+    public Guid UserId { get; set; }
+    public string DeviceId { get; set; } = "";
+    public string File { get; set; } = "";
+    public double PositionSec { get; set; }
+    public bool IsPodcast { get; set; }
+    public string? DeviceLabel { get; set; }
+    public DateTime UpdatedUtc { get; set; }
 }
 
 // EF persistence shape for the PlaybackState aggregate (lists as JSON).

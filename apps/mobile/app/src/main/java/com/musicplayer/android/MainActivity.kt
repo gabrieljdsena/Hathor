@@ -13,6 +13,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -106,11 +107,26 @@ class MainActivity : ComponentActivity() {
         settingsRepo.onCrossfadeChanged = { enabled, seconds ->
             player.setCrossfade(enabled, seconds)
         }
+        // Chapter auto-skip (desktop set_chapter_skip live-apply parity):
+        // the player caches marks per track, so it needs the pref + a
+        // resolver + a podcast classifier, all wired here (it owns both).
+        player.chapterProvider = { fileName -> podcastRepo.chaptersFor(fileName) }
+        player.isPodcastFile = { f ->
+            try {
+                f.canonicalPath.startsWith(PlayerApp.instance.podcastsDir.canonicalPath)
+            } catch (_: Exception) {
+                false
+            }
+        }
+        settingsRepo.onChapterSkipChanged = { player.setChapterSkip(it) }
         // Restore persisted prefs at startup (folders, volume, crossfade):
         // Settings might never be opened, but the player needs its prefs.
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 settingsRepo.load()
+                withContext(Dispatchers.Main) {
+                    player.setChapterSkip(settingsRepo.chapterSkip.value)
+                }
             } catch (e: Exception) {
                 android.util.Log.w("MainActivity", "settings load failed: ${e.message}")
             }
@@ -180,7 +196,7 @@ class MainActivity : ComponentActivity() {
                                 false
                             }
                             if (!prefs.getBoolean("remote_prompt_done", false) &&
-                                BuildConfig.DB_HOST.isNotBlank() && empty
+                                SyncConfig.isConfigured() && empty
                             ) {
                                 withContext(Dispatchers.Main) { showFirstRun = true }
                             }
@@ -343,10 +359,9 @@ class MainActivity : ComponentActivity() {
                                     // episodes; source carries the filename.
                                     playWithContext(
                                         ep.file, visible, null,
-                                        com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
+                                                                                com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
                                     )
-                                },
-                                onPlayAll = { visible ->
+                                },                                onPlayAll = { visible ->
                                     if (visible.isNotEmpty()) {
                                         playWithContext(
                                             visible.first().file, visible, null,
@@ -369,7 +384,14 @@ class MainActivity : ComponentActivity() {
                                 nowPlayingFile = currentFile?.name,
                                 isPlaying = isPlaying,
                                 isCurrentlyPlaying = { isPlaying },
-                                onTogglePause = { player.toggle() }
+                                onTogglePause = { player.toggle() },
+                                onSeekTo = { ep, secs ->
+                                    // Chapter time-chip: play the episode, then
+                                    // land on the chapter (pending-seek path).
+                                    previewPlayer.stop()
+                                    val f = resolveFile(ep)
+                                    if (f.exists()) player.playFileAtPosition(f, (secs * 1000).toInt())
+                                }
                             )
                             Dest.Playlists -> PlaylistsScreen(
                                 repo = playlistRepo,
@@ -435,10 +457,10 @@ class MainActivity : ComponentActivity() {
                     if (showFirstRun) {
                         AlertDialog(
                             onDismissRequest = {},
-                            title = { Text("Remote Library Found") },
+                            title = { Text("Sync Server Found") },
                             text = {
                                 Column {
-                                    Text("A remote database is configured. Would you like to load your music library from it?")
+                                    Text("A sync server is configured. Would you like to load your music library from it?")
                                     Text(
                                         "This syncs songs, playlists, lyrics, and history, then downloads missing songs in the background. You can keep using the app.",
                                         style = MaterialTheme.typography.bodySmall,
@@ -456,7 +478,7 @@ class MainActivity : ComponentActivity() {
                                         containerColor = HathorColors.Accent,
                                         contentColor = androidx.compose.ui.graphics.Color.White
                                     )
-                                ) { Text("Yes, load from remote") }
+                                ) { Text("Yes, load from server") }
                             },
                             dismissButton = {
                                 TextButton(onClick = { dismissFirstRun() }) { Text("No, start fresh") }

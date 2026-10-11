@@ -12,15 +12,72 @@ namespace Hathor.Application.Lyrics;
 
 public sealed record GetLyricsQuery(
     Guid UserId, string File, string Track, string Artist, string? Album, int? DurationSec,
-    bool Refresh = false)
+    bool Refresh = false, long? ChapterId = null)
     : IRequest<LyricsDto?>;
+
+// Chapter-keyed cache rows ("{file}::chapter:{id}"): exact file lookups
+// never match them, sync carries them as ordinary rows, and delete/move
+// drops + tombstones each key. Centralizes the ownership check so fetch,
+// save and remove cannot address another file's chapters.
+internal static class ChapterLyrics
+{
+    internal static string Key(string file, long chapterId) => $"{file}::chapter:{chapterId}";
+
+    // Returns (cache key, chapter name or null when falling back to file).
+    internal static async Task<(string Key, string? ChapterName)> ResolveAsync(
+        IPodcastTimestampRepository timestamps,
+        Guid userId, string file, long? chapterId, CancellationToken ct)
+    {
+        if (chapterId.HasValue)
+        {
+            var chapter = await timestamps.GetAsync(userId, file, chapterId.Value, ct);
+            var name = chapter?.Name?.Trim();
+            if (chapter is not null && !string.IsNullOrEmpty(name))
+                return (Key(file, chapter.Id), name);
+        }
+        return (file, null);
+    }
+}
 
 public sealed class GetLyricsHandler(
     ILyricsRepository cache,
-    ILrclibClient lrclib) : IRequestHandler<GetLyricsQuery, LyricsDto?>
+    ILrclibClient lrclib,
+    IPodcastTimestampRepository timestamps) : IRequestHandler<GetLyricsQuery, LyricsDto?>
 {
     public async Task<LyricsDto?> Handle(GetLyricsQuery q, CancellationToken ct)
     {
+        // Podcast chapter lyrics: track = chapter name, artist always empty
+        // (track-only search). Unknown ids fall back to the file flow.
+        var (key, chapterName) = await ChapterLyrics.ResolveAsync(
+            timestamps, q.UserId, q.File, q.ChapterId, ct);
+        if (chapterName is not null)
+        {
+            if (!q.Refresh)
+            {
+                var hit = await cache.GetByFileAsync(q.UserId, key, ct);
+                var parsedHit = hit?.LyricsJson is not null ? Parse(hit.LyricsJson) : null;
+                if (parsedHit is not null) return parsedHit;
+            }
+            // Chapters are "Title - Artist" (DJ-mix style): search WITH the
+            // artist — the provider ranks title+artist precisely, while a
+            // title-only fuzzy search buries the hit under near-misses
+            // ("Sway" under "Sway Sway Baby!") or rejects on punctuation
+            // ("Beggin" vs lrclib's "Beggin'"). Title must match
+            // (normalized); the artist must too when the chapter has one —
+            // wrong-song lyrics are worse than none.
+            var (chapterTitle, chapterArtist) = LyricsCleaning.SplitChapterName(chapterName);
+            if (string.IsNullOrEmpty(chapterTitle)) return null;
+            var candidates = await lrclib.SearchAsync(
+                chapterTitle, chapterArtist, null, null, ct);
+            var best = PickChapterCandidate(chapterTitle, chapterArtist, candidates);
+            if (best?.SyncedLyrics is null && best?.PlainLyrics is null) return null;
+            var chapterFetched = new LyricsDto(best.SyncedLyrics, best.PlainLyrics);
+            await cache.UpsertAsync(q.UserId, key,
+                System.Text.Json.JsonSerializer.Serialize(chapterFetched), ct);
+            await cache.SaveChangesAsync(ct);
+            return chapterFetched;
+        }
+
         if (!q.Refresh)
         {
             var cached = await cache.GetByFileAsync(q.UserId, q.File, ct);
@@ -54,6 +111,32 @@ public sealed class GetLyricsHandler(
             return null;
         }
     }
+
+    // Chapter candidate ranking over provider search hits (first best
+    // wins — the query already carries title+artist so the provider ranks
+    // well). Comparison is normalized on both sides (case, punctuation,
+    // brackets, diacritics); instrumentals and lyric-less rows are skipped.
+    // A known chapter artist must match (contains either way): without it,
+    // "Beggin" would accept Madcon's "Beggin'" over Frankie Valli's.
+    internal static LyricsHitDto? PickChapterCandidate(
+        string title, string artist, IReadOnlyList<LyricsHitDto> hits)
+    {
+        var wantTitle = LyricsCleaning.NormalizeLyricTitle(title);
+        if (string.IsNullOrEmpty(wantTitle)) return null;
+        var wantArtist = LyricsCleaning.NormalizeLyricTitle(artist);
+        foreach (var h in hits)
+        {
+            if (h.SyncedLyrics is null && h.PlainLyrics is null) continue;
+            if (LyricsCleaning.NormalizeLyricTitle(h.TrackName) != wantTitle) continue;
+            if (string.IsNullOrEmpty(wantArtist)) return h;
+            var haveArtist = LyricsCleaning.NormalizeLyricTitle(h.ArtistName);
+            if (string.IsNullOrEmpty(haveArtist)) continue;
+            if (haveArtist.Contains(wantArtist, StringComparison.Ordinal) ||
+                wantArtist.Contains(haveArtist, StringComparison.Ordinal))
+                return h;
+        }
+        return null;
+    }
 }
 
 public sealed record SearchLyricsQuery(
@@ -71,15 +154,21 @@ public sealed class SearchLyricsHandler(ILrclibClient lrclib)
     }
 }
 
-public sealed record SaveLyricsCommand(Guid UserId, string File, string? Synced, string? Plain)
+public sealed record SaveLyricsCommand(Guid UserId, string File, string? Synced, string? Plain, long? ChapterId = null)
     : IRequest<bool>;
-public sealed class SaveLyricsHandler(ILyricsRepository cache)
+public sealed class SaveLyricsHandler(
+    ILyricsRepository cache,
+    IPodcastTimestampRepository timestamps)
     : IRequestHandler<SaveLyricsCommand, bool>
 {
     public async Task<bool> Handle(SaveLyricsCommand cmd, CancellationToken ct)
     {
         if (cmd.Synced is null && cmd.Plain is null) return false;
-        await cache.UpsertAsync(cmd.UserId, cmd.File,
+        // Chapter context saves under the chapter key so the chapter view
+        // reads back exactly what was picked (it never looks at the file row).
+        var (key, _) = await ChapterLyrics.ResolveAsync(
+            timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+        await cache.UpsertAsync(cmd.UserId, key,
             System.Text.Json.JsonSerializer.Serialize(new LyricsDto(cmd.Synced, cmd.Plain)), ct);
         await cache.SaveChangesAsync(ct);
         return true;
@@ -87,7 +176,8 @@ public sealed class SaveLyricsHandler(ILyricsRepository cache)
 }
 
 // Per-song highlight timing correction, persisted server-side (sparse:
-// zero removes the row when it holds no lyrics). Clamped to ±10 seconds.
+// zero removes the row when it holds no lyrics). Clamped to ±20 seconds
+// (desktop/mobile parity).
 public sealed record GetLyricsOffsetQuery(Guid UserId, string File) : IRequest<int>;
 
 public sealed class GetLyricsOffsetHandler(ILyricsRepository cache)
@@ -112,17 +202,35 @@ public sealed class SetLyricsOffsetHandler(ILyricsRepository cache)
 }
 
 // Manual removal (wrong lyrics): drops the cached row so the next read
-// re-fetches from lrclib instead of serving the stale entry forever.
-public sealed record DeleteLyricsCommand(Guid UserId, string File) : IRequest<bool>;
-public sealed class DeleteLyricsHandler(ILyricsRepository cache)
+// re-fetches instead of serving the stale entry forever.
+public sealed record DeleteLyricsCommand(Guid UserId, string File, long? ChapterId = null) : IRequest<bool>;
+public sealed class DeleteLyricsHandler(
+    ILyricsRepository cache,
+    IPodcastTimestampRepository timestamps)
     : IRequestHandler<DeleteLyricsCommand, bool>
 {
     public async Task<bool> Handle(DeleteLyricsCommand cmd, CancellationToken ct)
     {
-        if (!await cache.DeleteAsync(cmd.UserId, cmd.File, ct)) return false;
+        var (key, _) = await ChapterLyrics.ResolveAsync(
+            timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+        if (!await cache.DeleteAsync(cmd.UserId, key, ct)) return false;
         await cache.SaveChangesAsync(ct);
         return true;
     }
+}
+
+// Sync guard: per-chapter lyric rows ("{file}::chapter:{id}") are a web-side
+// cache keyed by chapter — the desktop never reads them (its chapters sync
+// via podcast_chapters), so pushing/importing them only plants phantom rows
+// that round-trip forever. Both directions skip them. The marker is a const
+// (not a method call) so EF still translates Contains() in queries.
+public static class SyncedLyricsGuards
+{
+    public const string ChapterKeyMarker = "::chapter:";
+
+    public static bool IsChapterLyricsRow(string? songFile) =>
+        songFile is not null &&
+        songFile.Contains(ChapterKeyMarker, StringComparison.Ordinal);
 }
 
 // Raw lrclib passthrough (no cache) for the query-style GET /lyrics endpoint.

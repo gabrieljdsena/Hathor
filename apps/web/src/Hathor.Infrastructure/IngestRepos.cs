@@ -125,7 +125,20 @@ public sealed class EfLyricsRepository(HathorDbContext db) : ILyricsRepository
         }
     }
 
+    public async Task<IReadOnlyList<string>> ListChapterKeysAsync(
+        Guid userId, string file, CancellationToken ct = default) =>
+        await db.Lyrics
+            .Where(l => l.UserId == userId
+                && Microsoft.EntityFrameworkCore.EF.Functions.Like(
+                    l.SongFile, LikeEscape(file) + "::chapter:%"))
+            .Select(l => l.SongFile)
+            .ToListAsync(ct);
+
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
+
+    // Filenames may contain LIKE wildcards (% _ [) — escape before prefix use.
+    internal static string LikeEscape(string value) =>
+        value.Replace("[", "[[]").Replace("%", "[%]").Replace("_", "[_]");
 }
 
 public sealed class EfPodcastTimestampRepository(HathorDbContext db) : IPodcastTimestampRepository
@@ -193,6 +206,13 @@ public sealed class EfPodcastRecordRepository(HathorDbContext db) : IPodcastReco
         // understands the podcasts/podcast_tags tables).
         await db.PodcastTimestamps
             .Where(t => t.UserId == userId && t.PodcastFile == file)
+            .ExecuteDeleteAsync(ct);
+        // Episode lyrics were never cleaned here (leak): drop the base row
+        // plus per-chapter cache rows ("{file}::chapter:{id}").
+        var chapterPrefix = EfLyricsRepository.LikeEscape(file) + "::chapter:";
+        await db.Lyrics
+            .Where(l => l.UserId == userId
+                && (l.SongFile == file || EF.Functions.Like(l.SongFile, chapterPrefix + "%")))
             .ExecuteDeleteAsync(ct);
         await db.Podcasts
             .Where(p => p.UserId == userId && p.File == file)

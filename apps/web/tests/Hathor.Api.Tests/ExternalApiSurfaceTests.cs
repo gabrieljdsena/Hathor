@@ -25,6 +25,7 @@ public sealed class ExternalApiSurfaceTests : IAsyncLifetime
     [InlineData("/api/v1/downloads/check?title=x")]
     [InlineData("/api/v1/player/state")]
     [InlineData("/api/v1/player/now-playing")]
+    [InlineData("/api/v1/youtube/preview?id=dQw4w9WgXcQ")]
     public async Task ProtectedEndpoints_RequireAuth(string url)
     {
         var response = await _client.GetAsync(url);

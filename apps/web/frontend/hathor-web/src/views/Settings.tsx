@@ -62,6 +62,37 @@ function msgOf(e: unknown): string {
   return e.message
 }
 
+// Wallpaper pre-check (mirrors the server's 10 MB cap + image allow-list):
+// over-limit bodies get their connection reset mid-upload, which fetch
+// reports as an opaque NetworkError instead of the server's 400. Reject
+// here so the user gets the real reason. Null = looks fine, upload it.
+export const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024
+const BACKGROUND_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp']
+
+export function validateBackgroundFile(file: { type: string; size: number }): string | null {
+  if (file.type && !BACKGROUND_TYPES.includes(file.type))
+    return 'Only JPEG, PNG, GIF, WebP or BMP images are allowed.'
+  if (file.size > MAX_BACKGROUND_BYTES) return 'Image must be under 10 MB — pick a smaller file.'
+  return null
+}
+
+// Upload with upload-specific errors: validation rejects before any
+// bytes move, and a killed connection (over-limit body reset mid-stream
+// surfaces as a bare fetch TypeError) explains itself instead of printing
+// browser internals. Server JSON errors render via msgOf.
+export function uploadBackgroundFile(
+  file: File,
+  upload: (f: File) => Promise<string>,
+): Promise<string> {
+  const problem = validateBackgroundFile(file)
+  if (problem) return Promise.reject(new Error(problem))
+  return upload(file).catch((e: unknown) => {
+    if (e instanceof TypeError)
+      throw new Error('Upload failed — check your connection and try a smaller file.')
+    throw new Error(msgOf(e))
+  })
+}
+
 function formatDate(iso: string): string {  const d = new Date(iso)
   return Number.isNaN(d.getTime())
     ? iso
@@ -132,10 +163,16 @@ export default function Settings() {
     queryKey: ['ffmpeg'],
     queryFn: api.ffmpegStatus,
   })
+  const { data: ytdlp, refetch: refetchYtdlp } = useQuery({
+    queryKey: ['ytdlp'],
+    queryFn: api.ytdlpStatus,
+  })
   const { data: libBaseline } = useQuery({ queryKey: ['libraries'], queryFn: api.libraryStatus })
   const [libs, setLibs] = useState<LibraryInfo[] | null>(null)
   const [dl, setDl] = useState<FfmpegDownloadStatus | null>(null)
   const dlState = dl?.state
+  const [ytDl, setYtDl] = useState<FfmpegDownloadStatus | null>(null)
+  const ytDlState = ytDl?.state
 
   // Poll the FFmpeg self-install until it lands (ready/failed).
   useEffect(() => {
@@ -156,6 +193,26 @@ export default function Settings() {
     }, 2000)
     return () => clearInterval(t)
   }, [dlState])
+
+  // Poll the yt-dlp self-install until it lands (ready/failed).
+  useEffect(() => {
+    if (ytDlState !== 'downloading' && ytDlState !== 'extracting') return
+    const t = setInterval(() => {
+      void api
+        .ytdlpDownloadStatus()
+        .then((s) => {
+          setYtDl(s)
+          if (s.state === 'ready') {
+            say('yt-dlp installed — the YouTube fallback downloader is ready.')
+            void refetchYtdlp()
+          } else if (s.state === 'failed') {
+            say(`yt-dlp download failed: ${s.error ?? 'unknown error'}`)
+          }
+        })
+        .catch(() => {})
+    }, 2000)
+    return () => clearInterval(t)
+  }, [ytDlState])
 
   useEffect(() => {
     if (!settings) return
@@ -225,7 +282,7 @@ export default function Settings() {
             </svg>
           }
           title="Local Songs Folder"
-          hint="Scan the folder into the database, measure loudness for normalization, pull the desktop remote library, or push this library back to the remote."
+          hint="Scan the folder into the database or measure loudness for normalization."
         >
           <button className={btn} disabled={busy !== null} onClick={() => run('songs', api.scanSongs().then((r) => `Sync complete: ${r.added} added, ${r.updated} updated.`))}>
             {spin('songs')}Scan
@@ -243,25 +300,6 @@ export default function Settings() {
           >
             {spin('loudness')}Measure
           </button>
-          <button
-            className={btn}
-            disabled={busy !== null}
-            onClick={() =>
-              run('pull-songs', api.pullSongs().then((r) => {
-                void queryClient.invalidateQueries()
-                return r.message
-              }))
-            }
-          >
-            {spin('pull-songs')}Pull
-          </button>
-          <button
-            className={btn}
-            disabled={busy !== null}
-            onClick={() => run('push-songs', api.pushSongs().then((r) => r.message))}
-          >
-            {spin('push-songs')}Push
-          </button>
         </Row>
 
         <Row
@@ -271,29 +309,10 @@ export default function Settings() {
             </svg>
           }
           title="Local Podcasts Folder"
-          hint="Scan the folder into the database, pull remote episodes, or push this library back to the remote."
+          hint="Scan the folder into the database."
         >
           <button className={btn} disabled={busy !== null} onClick={() => run('podcasts', api.scanPodcasts().then((r) => `Sync complete: ${r.added} added, ${r.updated} updated.`))}>
             {spin('podcasts')}Scan
-          </button>
-          <button
-            className={btn}
-            disabled={busy !== null}
-            onClick={() =>
-              run('pull-podcasts', api.pullPodcasts().then((r) => {
-                void queryClient.invalidateQueries()
-                return r.message
-              }))
-            }
-          >
-            {spin('pull-podcasts')}Pull
-          </button>
-          <button
-            className={btn}
-            disabled={busy !== null}
-            onClick={() => run('push-podcasts', api.pushPodcasts().then((r) => r.message))}
-          >
-            {spin('push-podcasts')}Push
           </button>
         </Row>
 
@@ -328,7 +347,13 @@ export default function Settings() {
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0]
-              if (f) run('bg-upload', api.uploadBackground(f).then(() => 'Background updated.'))
+              if (f)
+                run(
+                  'bg-upload',
+                  uploadBackgroundFile(f, (file) =>
+                    api.uploadBackground(file).then(() => 'Background updated.'),
+                  ),
+                )
               e.target.value = ''
             }}
           />
@@ -590,6 +615,78 @@ export default function Settings() {
             }}
           >
             {spin('ffmpeg-dl')}Download
+          </button>
+        </Row>
+
+        <Row
+          icon={
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          }
+          title="yt-dlp (YouTube fallback)"
+          hint={
+            ytDlState === 'downloading'
+              ? `Downloading… ${ytDl && ytDl.progress >= 0 ? `${Math.round(ytDl.progress * 100)}%` : ''}`
+              : ytDlState === 'ready'
+                ? 'Installed and verified.'
+                : ytDlState === 'failed'
+                  ? `Download failed: ${ytDl?.error ?? 'unknown error'}`
+                  : ytdlp
+                    ? ytdlp.found
+                      ? `Ready (${ytdlp.exe})${ytdlp.error ? ` · v${ytdlp.error}` : ''}`
+                      : 'Not found — the YouTube fallback is off until it is installed.'
+                    : 'Checking…'
+          }
+          extra={
+            (ytDlState === 'downloading' || ytDlState === 'extracting') && ytDl && ytDl.progress >= 0 ? (
+              <div className="mt-2 h-1.5 w-48 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-orange-500 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.round(ytDl.progress * 100)}%` }}
+                />
+              </div>
+            ) : undefined
+          }
+        >
+          <button
+            className={btn}
+            disabled={busy !== null || ytDlState === 'downloading' || ytDlState === 'extracting'}
+            onClick={() => {
+              const key = 'ytdlp-dl'
+              setBusy(key)
+              void api
+                .startYtdlpDownload(false)
+                .then((s) => {
+                  setYtDl(s)
+                  if (s.state === 'ready') {
+                    say(s.exe ? 'yt-dlp is already installed.' : 'yt-dlp is ready.')
+                    void refetchYtdlp()
+                  }
+                })
+                .catch((e: unknown) => say(msgOf(e)))
+                .finally(() => setBusy(null))
+            }}
+          >
+            {spin('ytdlp-dl')}Download
+          </button>
+          <button
+            className={btn}
+            disabled={busy !== null || ytDlState === 'downloading' || ytDlState === 'extracting'}
+            title="Re-download the latest yt-dlp release (YouTube changes break old copies — update when downloads start failing)."
+            onClick={() => {
+              const key = 'ytdlp-update'
+              setBusy(key)
+              void api
+                .startYtdlpDownload(true)
+                .then((s) => {
+                  setYtDl(s)
+                })
+                .catch((e: unknown) => say(msgOf(e)))
+                .finally(() => setBusy(null))
+            }}
+          >
+            {spin('ytdlp-update')}Update
           </button>
         </Row>
 

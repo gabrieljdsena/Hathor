@@ -60,6 +60,7 @@ class Api:
                     'podcasts_path': 'TEXT',
                     'crossfade_enabled': 'INTEGER DEFAULT 0',
                     'crossfade_seconds': 'REAL DEFAULT 5',
+                    'chapter_skip': 'INTEGER DEFAULT 0',
                 }.items():
                     try:
                         conn.execute(f"ALTER TABLE Settings ADD COLUMN {column} {ddl}")
@@ -113,6 +114,23 @@ class Api:
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_podcast_tag_links_pair
                     ON Podcast_Tag_Links(podcast_file, tag_id)
                 """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS Podcast_Chapters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        podcast_file varchar(255) NOT NULL,
+                        name varchar(255) NOT NULL,
+                        start_secs real NOT NULL,
+                        end_secs real NULL
+                    )
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_podcast_chapters_file
+                    ON Podcast_Chapters(podcast_file, start_secs)
+                """)
+                try:
+                    conn.execute("ALTER TABLE Lyrics ADD COLUMN offset_ms INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
                 try:
                     conn.execute("ALTER TABLE Download_Queue ADD COLUMN is_podcast INTEGER DEFAULT 0")
                 except sqlite3.OperationalError:
@@ -152,6 +170,37 @@ class Api:
 
     def play_button(self, current_song=None, opening=False):
         return self.playback.play_button(current_song, opening)
+
+    def get_resume_spot(self):
+        """Latest foreign playback spot (resume across devices), if any."""
+        # Cross-device resume used to ride the retired remote DB (sync.py).
+        # Re-homing it on the server needs a device-spots table — until
+        # then there is no foreign spot to offer.
+        return None
+
+    def resume_spot_play(self, file, position_secs, is_podcast=False):
+        """Play a synced resume spot at its position. Returns True on success."""
+        try:
+            table = 'Podcasts' if is_podcast else 'Songs'
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute(
+                    f"SELECT file, title, artist FROM {table} WHERE file = ?", (file,)
+                ).fetchone()
+            if not row:
+                return False  # Not downloaded here: nothing to resume.
+            song = {'File': row[0], 'Title': row[1], 'Artist': row[2],
+                    'IsPodcast': bool(is_podcast)}
+            self.playback.play_button(song)
+            try:
+                position = max(0.0, float(position_secs or 0))
+            except (TypeError, ValueError):
+                position = 0.0
+            if position > 1.0:
+                self.progress_slider_click(position)
+            return True
+        except Exception as e:
+            print(f" [Python] Resume spot play failed: {str(e)}")
+            return False
 
     def get_current_pos(self):
         return self.playback.get_current_pos()
@@ -342,6 +391,58 @@ class Api:
     def unassign_podcast_tag(self, file, tag_id):
         return self.db.unassign_podcast_tag(file, tag_id)
 
+    # ==========================
+    # Podcast chapters (web parity)
+    # ==========================
+    def get_podcast_chapters(self, file):
+        return self.db.get_podcast_chapters(file)
+
+    def add_podcast_chapter(self, file, name, start_secs, end_secs=None):
+        return self.db.add_podcast_chapter(file, name, start_secs, end_secs)
+
+    def update_podcast_chapter(self, chapter_id, name, start_secs, end_secs=None):
+        return self.db.update_podcast_chapter(chapter_id, name, start_secs, end_secs)
+
+    def delete_podcast_chapter(self, chapter_id):
+        return self.db.delete_podcast_chapter(chapter_id)
+
+    def get_chapter_skip(self):
+        try:
+            return bool(getattr(settings, 'chapter_skip', False))
+        except Exception:
+            return False
+
+    def set_chapter_skip(self, enabled):
+        """Persist chapter auto-skip and apply it live (no restart needed)."""
+        if isinstance(enabled, str):
+            enabled = enabled.lower() in ('1', 'true', 'on', 'yes')
+        else:
+            enabled = bool(enabled)
+        settings.chapter_skip = enabled
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "UPDATE Settings SET chapter_skip = ?",
+                    (int(enabled),),
+                )
+        except Exception as e:
+            print(f" [Python] Database error: {e}")
+        # Refresh the cached state so the current episode obeys immediately.
+        try:
+            self.playback._refresh_chapter_state(getattr(self, 'last_song', None))
+        except Exception:
+            pass
+        return enabled
+
+    # ==========================
+    # Lyrics highlight offset (web parity: ms, clamped ±20000)
+    # ==========================
+    def get_lyrics_offset(self, song_file):
+        return self.db.get_lyrics_offset(song_file)
+
+    def set_lyrics_offset(self, song_file, offset_ms):
+        return self.db.set_lyrics_offset(song_file, offset_ms)
+
     def sync_local_podcasts_to_db(self):
         return self.db.sync_local_podcasts_to_db()
 
@@ -370,15 +471,22 @@ class Api:
         return self.db.sync_local_songs_to_db()
 
     def sync_remote_to_local_and_download(self):
-        return self.db.sync_remote_to_local_and_download()
+        from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
+        if sync_backend() != "api":
+            return NOT_CONFIGURED
+        try:
+            return ApiSyncClient(self.db_path).pull_once()
+        except Exception as e:
+            print(f" [Python] Pull sync error: {e}")
+            return f"Error: {e}"
 
     def sync_local_to_remote(self):
-        """Manual one-shot push of the local library to the remote DB."""
-        if not os.getenv("DB_HOST"):
-            return "No remote DB configured. Remote sync unavailable."
+        """Manual one-shot push of the local library to the sync server."""
+        from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
+        if sync_backend() != "api":
+            return NOT_CONFIGURED
         try:
-            from sync import DatabaseSync
-            return DatabaseSync(self.db_path).sync_once()
+            return ApiSyncClient(self.db_path).push_once()
         except Exception as e:
             print(f" [Python] Push sync error: {e}")
             return f"Error: {e}"
@@ -401,7 +509,7 @@ class Api:
             pass
 
     def get_playback_settings(self):
-        """Crossfade prefs for the Settings UI."""
+        """Crossfade + chapter-skip prefs for the Settings UI."""
         try:
             enabled = bool(getattr(settings, 'crossfade_enabled', False))
         except Exception:
@@ -410,7 +518,12 @@ class Api:
             seconds = float(getattr(settings, 'crossfade_seconds', 5) or 0)
         except (TypeError, ValueError):
             seconds = 5.0
-        return {'crossfade_enabled': enabled, 'crossfade_seconds': seconds}
+        try:
+            skip = bool(getattr(settings, 'chapter_skip', False))
+        except Exception:
+            skip = False
+        return {'crossfade_enabled': enabled, 'crossfade_seconds': seconds,
+                'chapter_skip': skip}
 
     def set_crossfade(self, enabled, seconds):
         """Persist crossfade prefs and apply them live."""

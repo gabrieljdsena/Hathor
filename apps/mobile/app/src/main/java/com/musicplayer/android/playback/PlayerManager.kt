@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaPlayer
 import android.os.SystemClock
 import android.util.Log
+import com.musicplayer.android.data.PodcastChapter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -110,6 +111,85 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         crossfadeEnabled = enabled
         crossfadeSeconds = seconds.coerceIn(0f, 12f)
         if (!enabled) cancelCrossfade()
+    }
+
+    // --- Podcast chapter-skip (desktop chapter_skip + web ChapterSkip) ---
+    /** Master switch (desktop chapter_skip); live-applied, no restart needed. */
+    var chapterSkipEnabled: Boolean = false
+        private set
+
+    /** Resolve chapter marks for a filename; wired to PodcastRepository. */
+    var chapterProvider: (suspend (String) -> List<PodcastChapter>)? = null
+
+    /** Classify a file as podcast; wired to the podcasts dir in MainActivity. */
+    var isPodcastFile: ((File) -> Boolean)? = null
+
+    /** Cached marks for the current file (name + start-sorted chapters). */
+    private var chapterState: Pair<String, List<PodcastChapter>>? = null
+
+    /** One-shot seek consumed on the next track start (chapter tap-to-play). */
+    private var pendingStartSeek: Pair<String, Int>? = null
+
+    /** Live-apply chapter auto-skip (desktop set_chapter_skip). */
+    fun setChapterSkip(enabled: Boolean) {
+        chapterSkipEnabled = enabled
+        if (!enabled) {
+            chapterState = null
+            pendingStartSeek = null
+        } else {
+            queue.getOrNull(index)?.let { refreshChapters(it, seekFirst = false) }
+        }
+    }
+
+    /** Play a single file, then land at positionMs (chapter time-chip). */
+    fun playFileAtPosition(file: File, positionMs: Int) {
+        pendingStartSeek = file.absolutePath to positionMs.coerceAtLeast(0)
+        playFile(file)
+    }
+
+    private fun refreshChapters(file: File, seekFirst: Boolean) {
+        val provider = chapterProvider ?: return
+        if (!chapterSkipEnabled) return
+        if (isPodcastFile?.invoke(file) == false) return
+        val name = file.name
+        scope.launch(Dispatchers.IO) {
+            val chapters = try {
+                provider(name).sortedBy { it.startSecs }
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main) {
+                if (queue.getOrNull(index)?.absolutePath != file.absolutePath) return@withContext
+                chapterState = if (chapters.isNullOrEmpty()) null else name to chapters
+                // Web parity: timestamped episodes start at the first chapter.
+                if (seekFirst && chapters != null && chapters.isNotEmpty()) {
+                    val first = chapters.first().startSecs
+                    if (first > 1.0) seekTo((first * 1000).toInt())
+                }
+            }
+        }
+    }
+
+    /** Gap-jump on the 200ms tick: past a chapter end with a next chapter. */
+    private fun maybeChapterSkip(posMs: Int) {
+        try {
+            val (name, chapters) = chapterState ?: return
+            if (chapters.isEmpty()) return
+            if (queue.getOrNull(index)?.name != name) return
+            val pos = posMs / 1000.0
+            var current = -1
+            for (i in chapters.indices) {
+                if (pos >= chapters[i].startSecs) current = i else break
+            }
+            if (current < 0) return
+            val end = chapters[current].endSecs ?: return // open-ended: never jump
+            if (pos >= end && current + 1 < chapters.size) {
+                val next = chapters[current + 1].startSecs
+                if (next > pos) seekTo((next * 1000).toInt())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "chapter skip failed: ${e.message}")
+        }
     }
 
     /** Rebuild the queue from the music dir (alphabetical, like send_song_list). */
@@ -451,9 +531,21 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     _positionMs.value = 0
                     mp.start()
                     stampStart(0)
+                    // Chapter tap-to-play lands here (consumed once, file-gated).
+                    val pending = pendingStartSeek?.takeIf { it.first == file.absolutePath }
+                    pendingStartSeek = null
+                    if (pending != null) {
+                        try {
+                            mp.seekTo(pending.second)
+                            stampStart(pending.second)
+                            _positionMs.value = pending.second
+                        } catch (_: Exception) {
+                        }
+                    }
                     _playing.value = true
                     startTicker()
                     onTrackChanged?.invoke(file.name)
+                    refreshChapters(file, seekFirst = pending == null)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "play failed: ${file.name}", e)
@@ -492,6 +584,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     _positionMs.value = 0
                     stampStart(0)
                     _playing.value = false
+                    refreshChapters(file, seekFirst = false)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "prepare failed: ${file.name}", e)
@@ -776,6 +869,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                                     autoAdvance()
                                 } else {
                                     maybeStartCrossfade(pos, dur)
+                                    maybeChapterSkip(pos)
                                 }
                             }
                             // While ramping, end-detection defers to the ramp.

@@ -27,7 +27,7 @@ public sealed class TokenValidator(
             var body = token["hth_".Length..];
             if (body.Length < 8) return null;
             var stored = await keys.GetByPrefixAsync(body[..8]);
-            if (stored is null || stored.TokenHash != apiKeys.Hash(token)) return null;
+            if (stored is null || !HashCompare.FixedTimeEquals(stored.TokenHash, apiKeys.Hash(token))) return null;
             var claims = new List<Claim>
             {
                 new(ClaimTypes.NameIdentifier, stored.UserId.ToString()),
@@ -64,4 +64,9 @@ public sealed class TokenValidator(
 
     public static bool HasScope(ClaimsPrincipal principal, string scope) =>
         principal.FindAll("scope").Any(c => c.Value == scope);
+
+    // Manual-token endpoints must check policy equivalence, not a single
+    // scope (see ScopeAuthorization.LibraryReadScopes).
+    public static bool SatisfiesLibraryRead(ClaimsPrincipal principal) =>
+        ScopeAuthorization.SatisfiesLibraryRead(principal);
 }

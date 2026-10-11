@@ -25,15 +25,41 @@ function cacheSet(file: string, src: string | null) {
   coverCache.set(file, src)
 }
 
+// Shared concurrency cap: a fresh list render fans out one detail fetch
+// per row (each carrying a base64 cover), which saturated the browser's
+// ~6-connection pool and stalled transport fetches (play/toggle/seek)
+// behind it for seconds — stale responses then resurrected old tracks.
+// Four at a time keeps covers flowing without starving playback.
+const MAX_COVER_FETCHES = 4
+let activeCoverFetches = 0
+const coverQueue: Array<() => void> = []
+
+function pumpCoverQueue() {
+  while (activeCoverFetches < MAX_COVER_FETCHES && coverQueue.length > 0) {
+    const run = coverQueue.shift()
+    run?.()
+  }
+}
+
 function fetchCover(file: string, isPodcast: boolean): Promise<string | null> {
   const hit = inflight.get(file)
   if (hit) return hit
-  const p = (isPodcast ? api.podcastDetails(file) : api.song(file, true))
-    .then((song) => song.coverArt)
-    .catch(() => null)
-    .finally(() => {
-      inflight.delete(file)
-    })
+  const p = new Promise<string | null>((resolve) => {
+    const run = () => {
+      activeCoverFetches += 1
+      ;(isPodcast ? api.podcastDetails(file) : api.song(file, true))
+        .then((song) => song.coverArt)
+        .catch(() => null)
+        .then((cover) => {
+          activeCoverFetches -= 1
+          inflight.delete(file)
+          pumpCoverQueue()
+          resolve(cover)
+        })
+    }
+    coverQueue.push(run)
+    pumpCoverQueue()
+  })
   inflight.set(file, p)
   return p
 }
@@ -76,36 +102,52 @@ export default function CoverArt({
       setLazy(coverCache.get(file) ?? null)
       return
     }
-    const el = boxRef.current
-    if (!el || typeof IntersectionObserver === 'undefined') {
+    const load = () => {
       void fetchCover(file, isPodcast).then((cover) => {
         cacheSet(file, cover)
         setLazy(cover)
       })
+    }
+    // Phones: fetch eagerly. Small viewports + nested overflow containers
+    // (#main scrolls, strips scroll sideways) make intersection delivery
+    // unreliable, which left phone rows stuck on the note fallback.
+    if (typeof window !== 'undefined' && window.innerWidth <= 700) {
+      const t = window.setTimeout(load, 50)
+      return () => window.clearTimeout(t)
+    }
+    const el = boxRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      void load()
       return
     }
     let timer: number | undefined
+    let fallback: number | undefined
     const io = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
             io.disconnect()
+            if (fallback !== undefined) window.clearTimeout(fallback)
             // Debounce fast scrolls so a fling doesn't fan out requests.
-            timer = window.setTimeout(() => {
-              void fetchCover(file, isPodcast).then((cover) => {
-                cacheSet(file, cover)
-                setLazy(cover)
-              })
-            }, 150)
+            timer = window.setTimeout(load, 150)
           }
         }
       },
-      { rootMargin: '100px' },
+      // #main (not the viewport) scrolls: a generous margin keeps art
+      // loading just before rows scroll into view.
+      { rootMargin: '400px' },
     )
     io.observe(el)
+    // Safety net: if the observer never fires (nested scroller quirks),
+    // still resolve the art instead of showing the fallback forever.
+    fallback = window.setTimeout(() => {
+      io.disconnect()
+      load()
+    }, 2500)
     return () => {
       io.disconnect()
       if (timer !== undefined) window.clearTimeout(timer)
+      if (fallback !== undefined) window.clearTimeout(fallback)
     }
   }, [src, lazy, file, isPodcast])
 

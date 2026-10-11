@@ -11,10 +11,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 // Background pull (first-run prompt + Settings Pull button share this one
-// worker via enqueueUniqueWork REPLACE). Reads the shared remote, merges
-// into Room (desktop pull 1:1), downloads missing files with exact remote
-// filenames, and reports per-song status. Progress surfaces through
-// WorkManager state (Settings polls it); never blocks UI.
+// worker via enqueueUniqueWork REPLACE). Reads the server delta, merges
+// into Room (desktop pull 1:1), downloads missing files byte-identical
+// with exact server filenames, and reports per-song status. Progress
+// surfaces through WorkManager state (Settings polls it); never blocks UI.
 class PullWorker(
     appContext: Context,
     params: WorkerParameters,
@@ -25,7 +25,7 @@ class PullWorker(
             val context = applicationContext
             val db = AppDatabase.get(context)
             val engine = DownloadEngine(context)
-            val report = RemoteSync.pullNow(db, engine)
+            val report = RemoteSync.pullNow(db, engine, context)
             Result.success(workDataOf("summary" to report.summary()))
         } catch (e: Exception) {
             val message = e.message?.takeIf { it.isNotBlank() }

@@ -174,9 +174,10 @@ def on_resized(width, height):
 # `remote_configured` gates the first-run pull prompt; pushes/pulls otherwise
 # happen exclusively via Api.sync_local_to_remote /
 # Api.sync_remote_to_local_and_download.
-remote_configured = bool(os.getenv("DB_HOST"))
+from services.api_sync import sync_backend as _sync_backend
+remote_configured = _sync_backend() == "api"
 if not remote_configured:
-    print(" [Sync] No remote DB configured in .env, sync disabled.")
+    print(" [Sync] No sync server configured in .env (HATHOR_API_URL/HATHOR_API_KEY), sync disabled.")
 
 def _run_startup_maintenance(window):
     """Background FFmpeg auto-download + YouTube-lib update checks.
@@ -257,14 +258,14 @@ def on_start(window):
     #monitor_thread = threading.Thread(target=monitor.monitor_usage, daemon=True)
     #monitor_thread.start()
 
-    # On first run with a remote DB, ask the user if they want to load from it
+    # On first run with a sync server, ask the user if they want to load from it
     if is_first_run and remote_configured:
         _prompt_remote_sync(window)
     else:
         api.load_current_song()
 
 def _prompt_remote_sync(window):
-    """Show a SweetAlert2 dialog asking the user to load data from the remote DB."""
+    """Show a SweetAlert2 dialog asking the user to load data from the sync server."""
     import time as _time
     
     # Wait for the webview DOM to be ready
@@ -274,8 +275,8 @@ def _prompt_remote_sync(window):
     (async () => {
         try {
             const result = await Swal.fire({
-                title: 'Remote Library Found',
-                html: 'A remote database is configured.<br>Would you like to <b>load your music library</b> from it?<br><br><small>This will sync songs, playlists, lyrics, and history, then download any missing songs.</small>',
+                title: 'Sync Server Found',
+                html: 'A sync server is configured.<br>Would you like to <b>load your music library</b> from it?<br><br><small>This will sync songs, playlists, lyrics, and history, then download any missing songs.</small>',
                 icon: 'question',
                 showCancelButton: true,
                 confirmButtonText: 'Yes, load from remote',
@@ -295,11 +296,11 @@ def _prompt_remote_sync(window):
         try:
             answer = window.evaluate_js(js_code)
             if answer == 'yes':
-                print(" [Python] User chose to load from remote DB.")
+                print(" [Python] User chose to load from sync server.")
                 # Show loading indicator
                 window.evaluate_js("""
                     Swal.fire({
-                        title: 'Syncing from Remote...',
+                        title: 'Syncing from Server...',
                         html: 'Downloading your library data and queuing song downloads.',
                         allowOutsideClick: false,
                         allowEscapeKey: false,

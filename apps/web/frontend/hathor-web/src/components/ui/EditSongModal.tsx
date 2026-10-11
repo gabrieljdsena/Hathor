@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { api, type Song } from '../../api/client'
+import { api, type PendingEdit, type Song } from '../../api/client'
 import CoverArt, { evictCoverCache } from './CoverArt'
 import Modal from './Modal'
 import { GhostButton, PrimaryButton, TextField } from './fields'
@@ -9,6 +9,10 @@ import { GhostButton, PrimaryButton, TextField } from './fields'
 // Title/Artist/Album/Year + cover preview + file picker + Remove.
 // CoverArt value sent: data: URL (new file), existing data: URL (kept),
 // or the 'REMOVE' sentinel. Null fields are preserved server-side.
+// Saving the currently-playing file stashes the payload server-side
+// (pending=true): playback stays gapless and the edit applies on track
+// change. A stashed edit prefills the form (edit-your-queued-edit) and can
+// be discarded from here.
 export default function EditSongModal({
   song,
   onClose,
@@ -16,7 +20,9 @@ export default function EditSongModal({
 }: {
   song: Song
   onClose: () => void
-  onSaved: (updated: Song) => void
+  // pending is true when the save was stashed (playing file): the payload
+  // applies on track change instead of immediately.
+  onSaved: (updated: Song, pending: boolean) => void
 }) {
   const queryClient = useQueryClient()
   const [title, setTitle] = useState(song.title === 'Unknown' ? '' : song.title)
@@ -27,6 +33,8 @@ export default function EditSongModal({
   const [coverRemoved, setCoverRemoved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [queued, setQueued] = useState<PendingEdit | null>(null)
+  const [discarding, setDiscarding] = useState(false)
 
   // Lazy-load full cover when the row only carried a thumb-less entry.
   useEffect(() => {
@@ -43,6 +51,38 @@ export default function EditSongModal({
     }
   }, [cover, song.file, song.isPodcast])
 
+  // A stashed edit for this file (saved while it played) prefills the
+  // form so the queued payload itself is editable; saving overwrites it.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .pendingEdits()
+      .then((all) => {
+        if (cancelled) return
+        const found = all.find((p) => p.file === song.file) ?? null
+        setQueued(found)
+        if (found) {
+          if (found.title != null) setTitle(found.title)
+          if (found.artist != null) setArtist(found.artist)
+          if (found.album != null) setAlbum(found.album)
+          if (found.year != null) setYear(found.year)
+          if (found.coverArt != null) {
+            if (found.coverArt === 'REMOVE') {
+              setCover(null)
+              setCoverRemoved(true)
+            } else {
+              setCover(found.coverArt)
+              setCoverRemoved(false)
+            }
+          }
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [song.file])
+
   const pickFile = (file: File | undefined) => {
     if (!file) return
     const reader = new FileReader()
@@ -55,42 +95,94 @@ export default function EditSongModal({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (saving) return // double-click guard: one PATCH per save, not a burst
     setSaving(true)
     setError(null)
     try {
       // Episodes save through the podcasts endpoint (shared modal, own table).
       // Empty strings clear the field; untouched fields resubmit their
       // current value (server keeps null = keep for headless clients).
-      const updated = song.isPodcast
+      // Either path may stash instead of writing (playing file): the chip
+      // in the player bar shows the queued state, applied on track change.
+      const saved = song.isPodcast
         ? await api.patchPodcast(song.file, {
             title,
             artist,
             coverArt: coverRemoved ? 'REMOVE' : cover,
           })
-        : (
-            await api.patchSong(song.file, {
-              title,
-              artist,
-              album,
-              year,
-              genre: null, // desktop modal has no genre field — preserved server-side (G1)
-              coverArt: coverRemoved ? 'REMOVE' : cover,
-            })
-          ).song
+        : await api.patchSong(song.file, {
+            title,
+            artist,
+            album,
+            year,
+            genre: null, // desktop modal has no genre field — preserved server-side (G1)
+            coverArt: coverRemoved ? 'REMOVE' : cover,
+          })
       evictCoverCache(song.file)
+      // Keyed invalidations only: an unkeyed invalidate refetches every
+      // view at once (songs, trending, jobs, settings…). This is the single
+      // invalidation point — callers (SongMenu, Podcasts) must NOT
+      // invalidate again, only player.refresh().
       void queryClient.invalidateQueries({ queryKey: ['songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['song-count'] })
+      void queryClient.invalidateQueries({ queryKey: ['songs-recent'] })
+      void queryClient.invalidateQueries({ queryKey: ['songs-recently-played'] })
+      void queryClient.invalidateQueries({ queryKey: ['artist-songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['album-songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['daily-mix'] })
+      void queryClient.invalidateQueries({ queryKey: ['playlist-songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['playlists'] })
       void queryClient.invalidateQueries({ queryKey: ['podcasts'] })
-      onSaved(updated)
+      void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
+      onSaved(saved.song, saved.pending === true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save metadata.')
+      setError(
+        err instanceof Error && /429|Rate limited/i.test(err.message)
+          ? 'Too many requests — wait a few seconds and press Save again.'
+          : err instanceof Error
+            ? err.message
+            : 'Failed to save metadata.',
+      )
     } finally {
       setSaving(false)
     }
   }
 
+  const discardQueued = () => {
+    setDiscarding(true)
+    setError(null)
+    api
+      .discardPendingEdit(song.file)
+      .then(() => {
+        setQueued(null)
+        setTitle(song.title === 'Unknown' ? '' : song.title)
+        setArtist(song.artist === 'Unknown' ? '' : song.artist)
+        setAlbum(song.album === 'Unknown' ? '' : song.album)
+        setYear(song.year === 'Unknown' ? '' : song.year)
+        setCover(song.coverArt)
+        setCoverRemoved(false)
+        void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to discard.'))
+      .finally(() => setDiscarding(false))
+  }
+
   return (
     <Modal open onClose={onClose} title="Edit Song Metadata">
       <form onSubmit={submit} className="space-y-4" onClick={(e) => e.stopPropagation()}>
+        {queued && (
+          <div className="flex items-center gap-3 text-sm text-orange-200 bg-orange-500/10 border border-orange-500/30 rounded-xl px-3 py-2">
+            <span className="flex-1">Edit queued — applies when this track changes. Saving overwrites it.</span>
+            <button
+              type="button"
+              onClick={discardQueued}
+              disabled={discarding}
+              className="px-2 py-1 rounded-md text-xs font-semibold text-red-300 hover:text-red-200 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {discarding ? 'Discarding…' : 'Discard'}
+            </button>
+          </div>
+        )}
         <TextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song Title" />
         <TextField label="Artist" value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Artist Name" />
         <div className="grid grid-cols-2 gap-4">

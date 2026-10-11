@@ -76,7 +76,12 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.HasKey("UserId", "MixDate");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Daily_Mix", (string)null);
                 });
@@ -176,10 +181,15 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Lyrics", (string)null);
                 });
@@ -207,6 +217,59 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.ToTable("Music_History", (string)null);
                 });
 
+            modelBuilder.Entity("Hathor.Domain.Entities.PendingMetadataEdit", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Album")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Artist")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("CoverArt")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("File")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Genre")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsPodcast")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Year")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "File")
+                        .IsUnique();
+
+                    b.ToTable("Pending_Metadata_Edits", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Domain.Entities.Playlist", b =>
                 {
                     b.Property<long>("Id")
@@ -225,10 +288,15 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Playlists", (string)null);
                 });
@@ -277,7 +345,12 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.HasKey("UserId", "File");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Podcasts", (string)null);
                 });
@@ -294,6 +367,9 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
@@ -301,6 +377,8 @@ namespace Hathor.Migrations.Postgres.Migrations
 
                     b.HasIndex("UserId", "Name")
                         .IsUnique();
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Podcast_Tags", (string)null);
                 });
@@ -320,10 +398,15 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.Property<long>("TagId")
                         .HasColumnType("bigint");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.HasIndex("UserId", "PodcastFile", "TagId")
                         .IsUnique();
@@ -355,6 +438,9 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.Property<double>("StartSecs")
                         .HasColumnType("double precision");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
@@ -362,37 +448,9 @@ namespace Hathor.Migrations.Postgres.Migrations
 
                     b.HasIndex("UserId", "PodcastFile");
 
+                    b.HasIndex("UserId", "UpdatedAtUtc");
+
                     b.ToTable("Podcast_Timestamps", (string)null);
-                });
-
-            modelBuilder.Entity("Hathor.Domain.Entities.RefreshToken", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("Revoked")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.ToTable("Refresh_Tokens", (string)null);
                 });
 
             modelBuilder.Entity("Hathor.Domain.Entities.Session", b =>
@@ -479,10 +537,15 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Year")
                         .HasColumnType("text");
 
                     b.HasKey("UserId", "File");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Songs", (string)null);
                 });
@@ -505,10 +568,15 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
 
                     b.ToTable("Song_Playlist", (string)null);
                 });
@@ -536,6 +604,8 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId", "DeletedAtUtc");
 
                     b.ToTable("Sync_Deletions", (string)null);
                 });
@@ -599,6 +669,40 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.HasKey("UserId");
 
                     b.ToTable("User_Settings", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Infrastructure.Ef.PlaybackSpotRow", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("DeviceLabel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("File")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<bool>("IsPodcast")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("PositionSec")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId", "DeviceId");
+
+                    b.HasIndex("UserId", "UpdatedUtc");
+
+                    b.ToTable("Playback_Spots", (string)null);
                 });
 
             modelBuilder.Entity("Hathor.Infrastructure.Ef.PlaybackStateRow", b =>

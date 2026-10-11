@@ -22,12 +22,12 @@ Hathor is a **Python backend + HTML/JS frontend** desktop app. The UI runs insid
    │ playback     │  │  yt-dlp + FFmpeg│
    │ metadata     │  │  iTunes API     │
    │ database     │  ├───────────────►─┤
-   │ lyrics       │  │ sync.py         │
-   │ windows_media│  │  DatabaseSync   │
+   │ lyrics       │  │ api_sync        │
+   │ windows_media│  │  Web API sync   │
    └──────┬───────┘  └───────┬─────────┘
           │                  │
    ┌──────▼──────┐    ┌─────▼──────────────┐
-   │ SQLite      │    │ MySQL / TiDB       │
+   │ SQLite      │    │ Hathor server     │
    │ music_player.db   │ (remote, optional) │
    └─────────────┘    └────────────────────┘
 ```
@@ -40,7 +40,7 @@ Hathor is a **Python backend + HTML/JS frontend** desktop app. The UI runs insid
 4. **Init DB** — runs `database.sql` against `music_player.db` if it exists as a script; detects first run.
 5. **Instantiate `Api(db_path)`** and create the `pywebview` window (`title='Hathor'`, centered, `min_size=(895, 400)`).
 6. **Link `api._window`** so Python can push JS back via `window.evaluate_js(...)`.
-7. **Remote sync** — manual-only. If `DB_HOST` is set, a first run asks whether to import the remote library (SweetAlert2 dialog); afterwards pushes/pulls happen exclusively through the Settings buttons (`Api.sync_local_to_remote` / `Api.sync_remote_to_local_and_download`). No background thread is started.
+7. **Server sync** — manual-only. If `HATHOR_API_URL`/`HATHOR_API_KEY` are set, a first run asks whether to import the server library (SweetAlert2 dialog); afterwards pushes/pulls happen exclusively through the Settings buttons (`Api.sync_local_to_remote` / `Api.sync_remote_to_local_and_download`). No background thread is started.
 8. **`on_start`** — init `pygame.mixer`, `api.load_current_song()` (restores the current song *and* rebuilds its queue from the persisted `Settings.queue_source` context), start-up maintenance thread.
 
 Window resizes are debounced (`threading.Timer`, 0.4 s) and persisted to `Settings.window_width/height` on every resize.

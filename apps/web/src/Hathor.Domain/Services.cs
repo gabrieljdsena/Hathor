@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Hathor.Domain.Services;
@@ -138,7 +140,6 @@ public static class LyricsCleaning
     public static bool IsUnknownArtist(string? artist) =>
         string.IsNullOrWhiteSpace(artist) ||
         artist.Trim().ToLowerInvariant() is "unknown" or "unknown artist";
-
     public static bool ArtistUsable(string? artist) => !IsUnknownArtist(artist);
 
     // Track-only fallback acceptance: exact case-insensitive track match, skips instrumentals.
@@ -148,4 +149,41 @@ public static class LyricsCleaning
         Regex.Replace(candidateTrack, @"\s+", " ").Trim().Equals(
             Regex.Replace(cleanTrack, @"\s+", " ").Trim(),
             StringComparison.OrdinalIgnoreCase);
+
+    // Podcast chapter names are "Title - Artist" (DJ-mix style) — the
+    // reverse of the "Artist - Title" filename convention CleanTrackArtist
+    // assumes, so that splitter would keep the wrong half. Take the leading
+    // title part for track-only exact matching (artist stays empty).
+    public static string CleanChapterTitle(string? name) => SplitChapterName(name).Title;
+
+    // Splits a DJ-mix style chapter name into (title, artist). Chapters
+    // without " - " yield an empty artist (track-only matching). The artist
+    // half is what makes provider search actually hit: lrclib ranks
+    // title+artist queries precisely, while title-only fuzzy search buries
+    // the right song under near-misses ("Sway" under "Sway Sway Baby!").
+    public static (string Title, string Artist) SplitChapterName(string? name)
+    {
+        var title = BracketQualifier.Replace(name ?? "", "").Trim();
+        var dash = title.IndexOf(" - ", StringComparison.Ordinal);
+        if (dash < 0) return (title, "");
+        return (title[..dash].Trim(), title[(dash + 3)..].Trim());
+    }
+
+    // Comparison form for provider candidate titles: case-insensitive,
+    // brackets/qualifiers/punctuation/diacritics folded. Applied to BOTH
+    // sides so "Beggin" matches lrclib's "Beggin'" and "Buble" matches
+    // "Bublé" — exact-equality on raw strings rejects all of these.
+    public static string NormalizeLyricTitle(string? value)
+    {
+        var s = BracketQualifier.Replace(value ?? "", "").Trim().ToLowerInvariant();
+        s = s.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(s.Length);
+        foreach (var ch in s)
+        {
+            var cat = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (cat == UnicodeCategory.NonSpacingMark) continue;
+            sb.Append(char.IsLetterOrDigit(ch) ? ch : ' ');
+        }
+        return Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+    }
 }

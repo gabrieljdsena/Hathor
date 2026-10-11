@@ -12,11 +12,17 @@ namespace Hathor.Api.Controllers;
 [Route("api/v1/system")]
 public sealed class SystemController(
     ISystemProbe probe,
-    Hathor.Infrastructure.Maintenance.IFfmpegInstaller ffmpegInstaller) : ControllerBase
+    Hathor.Infrastructure.Maintenance.IFfmpegInstaller ffmpegInstaller,
+    Hathor.Infrastructure.Maintenance.IYtDlpInstaller ytdlpInstaller) : ControllerBase
 {
     [HttpGet("ffmpeg")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
     public ActionResult<FFmpegStatusDto> FFmpeg() => Ok(probe.GetFFmpegStatus());
+
+    // yt-dlp fallback binary status (same shape as FFmpeg).
+    [HttpGet("ytdlp")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public ActionResult<FFmpegStatusDto> YtDlp() => Ok(probe.GetYtDlpStatus());
 
     [HttpGet("libraries")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
@@ -49,6 +55,28 @@ public sealed class SystemController(
         }
     }
 
+    // Self-install progress for an in-flight (or finished) yt-dlp download.
+    [HttpGet("ytdlp/download")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public ActionResult<FfmpegDownloadDto> YtDlpDownloadStatus() => Ok(ytdlpInstaller.Status());
+
+    // Starts the background yt-dlp download+install (202 + current status).
+    // 409 while one is already running; already-installed returns ready
+    // unless force=true, which re-downloads the latest release (update).
+    [HttpPost("ytdlp/download")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public ActionResult<FfmpegDownloadDto> StartYtDlpDownload([FromQuery] bool force = false)
+    {
+        try
+        {
+            return Accepted(ytdlpInstaller.StartDownload(force));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     // Live NuGet check for the YouTube downloader/searcher (YoutubeExplode)
     // and TagLibSharp. Libraries are compiled in, so "update-available"
     // means update the package and redeploy — nothing installs at runtime.
@@ -69,9 +97,19 @@ public sealed class LogsController(ILogger<LogsController> log) : ControllerBase
     [Authorize]
     public IActionResult Client([FromBody] ClientLogRequest body)
     {
+        // Never persist query-carried credentials (?token= / ?access_token=
+        // used by media streams and SignalR) that may end up in routes.
         log.LogWarning("JS: {Message} route={Route} stack={Stack}",
-            (body.Message ?? "").Length > 2000 ? body.Message![..2000] : body.Message,
-            body.Route, body.Stack);
+            Redact(body.Message, 2000), Redact(body.Route, 500), Redact(body.Stack, 2000));
         return Ok();
+    }
+
+    private static string? Redact(string? value, int max)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        var s = value.Length > max ? value[..max] : value;
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s, @"(?i)(access_token|token)=[^&\s]+", "$1=REDACTED");
+        return s;
     }
 }

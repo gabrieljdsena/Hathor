@@ -4,7 +4,6 @@
     <Project Path="src/Hathor.Application/Hathor.Application.csproj" />
     <Project Path="src/Hathor.Domain/Hathor.Domain.csproj" />
     <Project Path="src/Hathor.Infrastructure/Hathor.Infrastructure.csproj" />
-    <Project Path="src/Hathor.Migrations.MySql/Hathor.Migrations.MySql.csproj" />
     <Project Path="src/Hathor.Migrations.Postgres/Hathor.Migrations.Postgres.csproj" />
     <Project Path="src/Hathor.Worker/Hathor.Worker.csproj" />
   </Folder>

@@ -64,6 +64,9 @@ interface PlaylistDao {
 
     @Query("SELECT id FROM playlists")
     suspend fun allIds(): List<Long>
+
+    @Query("DELETE FROM playlists WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -76,6 +79,9 @@ interface SongPlaylistDao {
 
     @Query("DELETE FROM song_playlist WHERE playlist_id IN (:playlistIds)")
     suspend fun deleteForPlaylists(playlistIds: List<Long>)
+
+    @Query("DELETE FROM song_playlist WHERE song_file = :file")
+    suspend fun deleteByFile(file: String)
 
     @Query("SELECT * FROM song_playlist")
     suspend fun all(): List<SongPlaylistLink>
@@ -97,6 +103,9 @@ interface PodcastTagDao {
 
     @Query("SELECT id FROM podcast_tags")
     suspend fun allIds(): List<Long>
+
+    @Query("DELETE FROM podcast_tags WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -110,6 +119,12 @@ interface PodcastTagLinkDao {
     @Query("DELETE FROM podcast_tag_links WHERE tag_id IN (:tagIds)")
     suspend fun deleteForTags(tagIds: List<Long>)
 
+    @Query("DELETE FROM podcast_tag_links WHERE podcast_file = :file AND tag_id = :tagId")
+    suspend fun deleteLink(file: String, tagId: Long)
+
+    @Query("DELETE FROM podcast_tag_links WHERE podcast_file = :file")
+    suspend fun deleteForEpisode(file: String)
+
     @Query("SELECT * FROM podcast_tag_links")
     suspend fun all(): List<PodcastTagLink>
 }
@@ -119,14 +134,47 @@ interface LyricDao {
     @Query("SELECT * FROM lyrics WHERE id = :id LIMIT 1")
     suspend fun byId(id: Long): LyricEntity?
 
+    @Query("SELECT * FROM lyrics WHERE song_file = :file LIMIT 1")
+    suspend fun bySongFile(file: String): LyricEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(lyric: LyricEntity): Long
 
     @Update
     suspend fun update(lyric: LyricEntity)
 
+    @Query("UPDATE lyrics SET offset_ms = :ms WHERE song_file = :file")
+    suspend fun setOffsetMs(file: String, ms: Int)
+
+    @Query("DELETE FROM lyrics WHERE song_file = :file")
+    suspend fun deleteByFile(file: String)
+
     @Query("SELECT * FROM lyrics")
     suspend fun all(): List<LyricEntity>
+}
+
+@Dao
+interface PodcastChapterDao {
+    @Query("SELECT * FROM podcast_chapters WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): PodcastChapterEntity?
+
+    @Query("SELECT * FROM podcast_chapters WHERE podcast_file = :file ORDER BY start_secs")
+    suspend fun byEpisode(file: String): List<PodcastChapterEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(chapter: PodcastChapterEntity): Long
+
+    @Update
+    suspend fun update(chapter: PodcastChapterEntity)
+
+    @Query("DELETE FROM podcast_chapters WHERE id = :id")
+    suspend fun deleteById(id: Long): Int
+
+    @Query("DELETE FROM podcast_chapters WHERE podcast_file = :file")
+    suspend fun deleteForEpisode(file: String)
+
+    @Query("SELECT * FROM podcast_chapters")
+    suspend fun all(): List<PodcastChapterEntity>
 }
 
 @Dao
@@ -142,6 +190,9 @@ interface MusicHistoryDao {
 
     @Query("SELECT * FROM music_history ORDER BY id")
     suspend fun allOrdered(): List<MusicHistoryEntry>
+
+    @Query("DELETE FROM music_history WHERE song_file = :file")
+    suspend fun deleteByFile(file: String)
 }
 
 @Dao
@@ -157,6 +208,9 @@ interface PlaylistHistoryDao {
 
     @Query("SELECT * FROM playlist_history ORDER BY id")
     suspend fun allOrdered(): List<PlaylistHistoryEntry>
+
+    @Query("DELETE FROM playlist_history WHERE playlist_id = :playlistId")
+    suspend fun deleteByPlaylistId(playlistId: Long)
 }
 
 @Dao

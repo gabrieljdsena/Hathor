@@ -90,17 +90,12 @@ public static class InfrastructureServiceExtensions
     public static IServiceCollection AddHathorInfrastructure(
         this IServiceCollection services, IConfiguration config)
     {
-        var provider = Hathor.Infrastructure.Dapper.DatabaseConnection.Provider(config);
         var connectionString = Hathor.Infrastructure.Dapper.DatabaseConnection.Resolve(config);
 
         services.AddDbContext<HathorDbContext>(options =>
         {
-            if (provider == "mysql")
-                options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString),
-                    x => x.MigrationsAssembly("Hathor.Migrations.MySql"));
-            else
-                options.UseNpgsql(connectionString,
-                    x => x.MigrationsAssembly("Hathor.Migrations.Postgres"));
+            options.UseNpgsql(connectionString,
+                x => x.MigrationsAssembly("Hathor.Migrations.Postgres"));
         });
 
         var storageRoot = Path.GetFullPath(
@@ -109,10 +104,10 @@ public static class InfrastructureServiceExtensions
 
         services.AddSingleton(new Dapper.DapperConnectionFactory(config));
         services.AddScoped<Domain.Repositories.IUserRepository, Repositories.EfUserRepository>();
-        services.AddScoped<Domain.Repositories.IRefreshTokenRepository, Repositories.EfRefreshTokenRepository>();
         services.AddScoped<Domain.Repositories.ISessionRepository, Repositories.EfSessionRepository>();
         services.AddScoped<Domain.Repositories.IApiKeyRepository, Repositories.EfApiKeyRepository>();
         services.AddScoped<Domain.Repositories.IPlaybackStateRepository, Repositories.EfPlaybackStateRepository>();
+        services.AddScoped<Domain.Repositories.IPlaybackSpotRepository, Repositories.EfPlaybackSpotRepository>();
         services.AddScoped<Domain.Repositories.IUserSettingsRepository, Repositories.EfUserSettingsRepository>();
         services.AddScoped<Domain.Repositories.ITombstoneRepository, Repositories.EfTombstoneRepository>();
         services.AddScoped<Domain.Repositories.IPlaylistRepository, Repositories.EfPlaylistRepository>();
@@ -124,22 +119,12 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Domain.Repositories.ILyricsRepository, Repositories.EfLyricsRepository>();
         services.AddScoped<Domain.Repositories.IPodcastRecordRepository, Repositories.EfPodcastRecordRepository>();
         services.AddScoped<Domain.Repositories.IPodcastTimestampRepository, Repositories.EfPodcastTimestampRepository>();
+        services.AddScoped<Domain.Repositories.IPendingEditRepository, Repositories.EfPendingEditRepository>();
+        services.AddScoped<Application.Metadata.PendingMetadataApplier>();
         services.AddScoped<Application.Ports.IPodcastReadModel, Library.DapperPodcastReadModel>();
         services.AddSingleton<Application.Ports.ISystemProbe, Maintenance.SystemProbe>();
         services.AddSingleton<Maintenance.IFfmpegInstaller, Maintenance.FfmpegInstaller>();
         services.AddScoped<Application.Ports.ISyncService, Sync.EfSyncService>();
-        services.AddScoped<Application.Ports.IRemotePullService>(sp =>
-            new Sync.RemotePullService(
-                sp.GetRequiredService<Application.Ports.ISyncService>(),
-                sp.GetRequiredService<Application.Ingest.IDownloadQueue>(),
-                sp.GetRequiredService<Application.Ports.ILibraryStorage>(),
-                config.GetSection("RemoteDb").Get<Sync.RemoteDbOptions>() ?? new Sync.RemoteDbOptions(),
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Sync.RemotePullService>>()));
-        services.AddScoped<Application.Ports.IRemotePushService>(sp =>
-            new Sync.RemotePushService(
-                sp.GetRequiredService<Ef.HathorDbContext>(),
-                config.GetSection("RemoteDb").Get<Sync.RemoteDbOptions>() ?? new Sync.RemoteDbOptions(),
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Sync.RemotePushService>>()));
         services.AddScoped<Application.Ports.ISongReadModel, Library.DapperSongReadModel>();
         services.AddScoped<Application.Ports.IPlaylistReadModel, Library.DapperPlaylistReadModel>();
         services.AddScoped<Application.Ports.IPodcastTagReadModel, Library.DapperPodcastTagReadModel>();
@@ -164,7 +149,18 @@ public static class InfrastructureServiceExtensions
                 sp.GetRequiredService<Library.SongMetadataCache>()));
         services.AddSingleton<Application.Ports.IJwtTokenService, JwtTokenService>();
         services.AddSingleton<Application.Ports.IApiKeyService, ApiKeyService>();
-        services.AddSingleton<Application.Ports.IDownloadEngine, Ingest.YoutubeExplodeEngine>();
+        // YouTube ingest: YoutubeExplode primary, yt-dlp fallback on any
+        // primary download failure (403/bot-checks, cipher changes).
+        // Factory form: the fallback wraps the primary, so IDownloadEngine
+        // itself cannot be the injected primary (that would self-resolve).
+        services.AddSingleton<Ingest.YoutubeExplodeEngine>();
+        services.AddSingleton<Ingest.YtDlpDownloader>();
+        services.AddSingleton<Application.Ports.IDownloadEngine>(sp =>
+            new Ingest.FallbackDownloadEngine(
+                sp.GetRequiredService<Ingest.YoutubeExplodeEngine>(),
+                sp.GetRequiredService<Ingest.YtDlpDownloader>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ingest.FallbackDownloadEngine>>()));
+        services.AddSingleton<Maintenance.IYtDlpInstaller, Maintenance.YtDlpInstaller>();
         services.AddSingleton<Application.Ports.ILoudnessAnalyzer, Enrichment.LoudnessAnalyzer>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
@@ -187,6 +183,8 @@ public static class InfrastructureServiceExtensions
         // FFmpeg static builds are ~80MB; the installer enforces its own
         // timeout, so the client itself never times out.
         services.AddHttpClient("ffmpeg").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
+        // yt-dlp single-file binary (~30MB); same no-client-timeout shape.
+        services.AddHttpClient("ytdlp").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
         services.AddHttpClient("nuget").ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(15));
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(
             typeof(Application.Auth.LoginCommand).Assembly));
@@ -221,7 +219,6 @@ public static class InfrastructureServiceExtensions
     // the individual steps below are duplicate-tolerant anyway.
     private static IDisposable? AcquireStartupLock(HathorDbContext db)
     {
-        if (db.Database.IsMySql()) return null;
         try
         {
             var connectionString = db.Database.GetConnectionString();
@@ -248,7 +245,6 @@ public static class InfrastructureServiceExtensions
     // maintenance database. Wrong passwords still fail loudly below.
     private static void EnsurePostgresDatabaseExists(HathorDbContext db)
     {
-        if (db.Database.IsMySql()) return;
         var connectionString = db.Database.GetConnectionString();
         if (string.IsNullOrWhiteSpace(connectionString)) return;
         var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
@@ -290,7 +286,6 @@ public static class InfrastructureServiceExtensions
     // extension privileges still work.
     private static void EnsurePgFuzzyExtensions(HathorDbContext db)
     {
-        if (db.Database.IsMySql()) return;
         try
         {
             // DO-block (not bare CREATE EXTENSION): concurrent boots racing
@@ -351,28 +346,15 @@ public static class InfrastructureServiceExtensions
     private static void StampMigration(HathorDbContext db, string initial)
     {
         var version = typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "9.0.0";
-        if (db.Database.IsMySql())
-        {
-            db.Database.ExecuteSqlRaw(
-                "CREATE TABLE IF NOT EXISTS `__EFMigrationsHistory` " +
-                "(`MigrationId` varchar(150) NOT NULL, `ProductVersion` varchar(32) NOT NULL, " +
-                "PRIMARY KEY (`MigrationId`))");
-            db.Database.ExecuteSqlRaw(
-                "INSERT IGNORE INTO `__EFMigrationsHistory` (`MigrationId`, `ProductVersion`) VALUES ({0}, {1})",
-                initial, version);
-        }
-        else
-        {
-            db.Database.ExecuteSqlRaw(
-                "CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\" " +
-                "(\"MigrationId\" character varying(150) NOT NULL, " +
-                "\"ProductVersion\" character varying(32) NOT NULL, " +
-                "CONSTRAINT \"PK___EFMigrationsHistory\" PRIMARY KEY (\"MigrationId\"))");
-            db.Database.ExecuteSqlRaw(
-                "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") " +
-                "VALUES ({0}, {1}) ON CONFLICT DO NOTHING",
-                initial, version);
-        }
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\" " +
+            "(\"MigrationId\" character varying(150) NOT NULL, " +
+            "\"ProductVersion\" character varying(32) NOT NULL, " +
+            "CONSTRAINT \"PK___EFMigrationsHistory\" PRIMARY KEY (\"MigrationId\"))");
+        db.Database.ExecuteSqlRaw(
+            "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") " +
+            "VALUES ({0}, {1}) ON CONFLICT DO NOTHING",
+            initial, version);
     }
 
     private static HashSet<string> GetAppliedMigrations(HathorDbContext db)
@@ -386,10 +368,7 @@ public static class InfrastructureServiceExtensions
             try
             {
                 using var cmd = conn.CreateCommand();
-                if (db.Database.IsMySql())
-                    cmd.CommandText = "SELECT `MigrationId` FROM `__EFMigrationsHistory`";
-                else
-                    cmd.CommandText = "SELECT \"MigrationId\" FROM \"__EFMigrationsHistory\"";
+                cmd.CommandText = "SELECT \"MigrationId\" FROM \"__EFMigrationsHistory\"";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read()) applied.Add(reader.GetString(0));
             }
@@ -511,12 +490,8 @@ public static class InfrastructureServiceExtensions
             try
             {
                 using var cmd = conn.CreateCommand();
-                if (db.Database.IsMySql())
-                    cmd.CommandText = "SELECT table_name FROM information_schema.tables " +
-                        "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'";
-                else
-                    cmd.CommandText = "SELECT table_name FROM information_schema.tables " +
-                        "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'";
+                cmd.CommandText = "SELECT table_name FROM information_schema.tables " +
+                    "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read()) names.Add(reader.GetString(0));
             }
@@ -543,12 +518,8 @@ public static class InfrastructureServiceExtensions
             try
             {
                 using var cmd = conn.CreateCommand();
-                if (db.Database.IsMySql())
-                    cmd.CommandText = "SELECT column_name FROM information_schema.columns " +
-                        "WHERE table_schema = DATABASE() AND table_name = @t";
-                else
-                    cmd.CommandText = "SELECT column_name FROM information_schema.columns " +
-                        "WHERE table_schema = current_schema() AND table_name = @t";
+                cmd.CommandText = "SELECT column_name FROM information_schema.columns " +
+                    "WHERE table_schema = current_schema() AND table_name = @t";
                 var par = cmd.CreateParameter();
                 par.ParameterName = "@t";
                 par.Value = table;
@@ -570,7 +541,7 @@ public static class InfrastructureServiceExtensions
     }
 
     // EnsureCreated never alters existing databases, so columns added later
-    // need an explicit ensure (both providers).
+    // need an explicit ensure.
     private static void EnsureDownloadTargetColumn(HathorDbContext db)
     {
         try
@@ -580,35 +551,17 @@ public static class InfrastructureServiceExtensions
             if (!wasOpen) conn.Open();
             try
             {
-                if (db.Database.IsMySql())
+                using var check = conn.CreateCommand();
+                check.CommandText =
+                    "SELECT COUNT(*) FROM information_schema.columns " +
+                    "WHERE table_schema = current_schema() AND table_name = 'Download_Queue' " +
+                    "AND column_name = 'TargetFile'";
+                if (Convert.ToInt64(check.ExecuteScalar()) == 0)
                 {
-                    using var check = conn.CreateCommand();
-                    check.CommandText =
-                        "SELECT COUNT(*) FROM information_schema.columns " +
-                        "WHERE table_schema = DATABASE() AND table_name = 'Download_Queue' " +
-                        "AND column_name = 'TargetFile'";
-                    if (Convert.ToInt64(check.ExecuteScalar()) == 0)
-                    {
-                        using var alter = conn.CreateCommand();
-                        alter.CommandText =
-                            "ALTER TABLE `Download_Queue` ADD COLUMN `TargetFile` TEXT NULL";
-                        alter.ExecuteNonQuery();
-                    }
-                }
-                else
-                {
-                    using var check = conn.CreateCommand();
-                    check.CommandText =
-                        "SELECT COUNT(*) FROM information_schema.columns " +
-                        "WHERE table_schema = current_schema() AND table_name = 'Download_Queue' " +
-                        "AND column_name = 'TargetFile'";
-                    if (Convert.ToInt64(check.ExecuteScalar()) == 0)
-                    {
-                        using var alter = conn.CreateCommand();
-                        alter.CommandText =
-                            "ALTER TABLE \"Download_Queue\" ADD COLUMN \"TargetFile\" text NULL";
-                        alter.ExecuteNonQuery();
-                    }
+                    using var alter = conn.CreateCommand();
+                    alter.CommandText =
+                        "ALTER TABLE \"Download_Queue\" ADD COLUMN \"TargetFile\" text NULL";
+                    alter.ExecuteNonQuery();
                 }
             }
             finally

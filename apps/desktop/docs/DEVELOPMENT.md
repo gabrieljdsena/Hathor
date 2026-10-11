@@ -5,10 +5,9 @@ Notes for developers working on Hathor.
 ## Project layout
 
 ```
-main.py               Entry point; window + startup, first-run remote prompt
+main.py               Entry point; window + startup, first-run server prompt
 api.py                pywebview JS bridge (all methods callable from the UI)
 Download.py           yt-dlp downloader + iTunes metadata/artwork
-sync.py               DatabaseSync — manual one-shot MySQL/TiDB push (+schema)
 database.sql          SQLite schema
 settings.py           Loads persisted settings from SQLite
 monitor.py            Debug RAM monitor (disabled)
@@ -63,7 +62,7 @@ Edit **`ui/input.css`** (Tailwind v4 source) or `ui/css.css`, then restart the a
 - Follow the existing services pattern: define a class that takes `api` as its constructor arg so it can read shared state (`api.playing`, `api.song_list`, ...) and push to the UI via `api._window.evaluate_js(...)`.
 - Export it from `services/__init__.py`.
 - Keep `api.py` thin: delegate to the service and return its result.
-- New views that play audio must pass a queue `source` (`{type, id}`) to `populate_queue_from_list` so restarts rebuild the right queue; new tables need a `CREATE TABLE IF NOT EXISTS` in both `database.sql` and `Api._ensure_schema`, plus a remote mirror in `sync.py` if they should sync.
+- New views that play audio must pass a queue `source` (`{type, id}`) to `populate_queue_from_list` so restarts rebuild the right queue; new tables need a `CREATE TABLE IF NOT EXISTS` in both `database.sql` and `Api._ensure_schema`, plus a snapshot section in the sync contract (`packages/contracts/README.md`) if they should sync.
 
 ## Building the executable (PyInstaller)
 

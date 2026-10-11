@@ -33,14 +33,39 @@ internal static class FfmpegPaths
         return File.Exists(candidate) ? candidate : null;
     }
 
-    // Resolution order: explicit FFmpeg:Path → app-downloaded → PATH.
-    public static string? Resolve(IConfiguration config)
+    // Explicit PATH probe: Process.Start("ffmpeg.exe") relies on OS search
+    // order, and a bare-name failure surfaces as a cryptic Win32Exception
+    // ("... with working directory 'C:\WINDOWS\system32' ...") — services
+    // run with a minimal PATH where that lookup silently misses. Probe here
+    // so callers fail fast with the actionable message instead.
+    public static string? FindOnPath(
+        string? exeName = null, string? pathVariable = null)
     {
-        var configured = config["FFmpeg:Path"];
-        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
-            return configured;
-        return InstalledExe(config) ?? ExeName;
+        var exe = string.IsNullOrWhiteSpace(exeName) ? ExeName : exeName;
+        var path = pathVariable
+            ?? Environment.GetEnvironmentVariable("PATH")
+            ?? "";
+        foreach (var dir in path.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            string candidate;
+            try
+            {
+                candidate = Path.Combine(dir.Trim().Trim('"'), exe);
+            }
+            catch
+            {
+                continue;
+            }
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
     }
+
+    // Resolution order: explicit FFmpeg:Path → app-downloaded → PATH.
+    // (Removed: a Resolve() helper that returned the bare exe name. Callers
+    // must use FindOnPath so a miss fails fast with guidance instead of a
+    // Win32Exception from the service's minimal PATH.)
 }
 
 public interface IFfmpegInstaller

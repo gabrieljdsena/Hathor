@@ -57,10 +57,18 @@ export interface AudioElementLike {
   currentTime: number
   duration: number
   paused: boolean
+  seeking: boolean
+  readyState: number
+  // NETWORK_EMPTY=0 IDLE=1 LOADING=2 NO_SOURCE=3. NO_SOURCE/EMPTY with a
+  // loaded file means the stream unloaded underneath us (the long-file
+  // seek stall) — the watchdog treats that as a stall even when paused.
+  networkState: number
+  error: { readonly code: number; readonly message: string } | null
   volume: number
   play(): Promise<void> | void
   pause(): void
-  addEventListener(type: 'ended', fn: () => void): void
+  load(): void
+  addEventListener(type: 'ended' | 'error', fn: () => void): void
 }
 
 export interface GainParamLike {
@@ -100,8 +108,10 @@ interface Slot {
   el: AudioElementLike
   gain: GainNodeLike | null
   file: string | null
+  url: string | null
   isPodcast: boolean
   baseGain: number
+  recoveries: number
 }
 
 interface Fade {
@@ -116,6 +126,38 @@ const TICK_MS = 200
 const PRELOAD_AHEAD_SEC = 10
 const MIN_FADE_SEC = 1
 const MAX_FADE_SEC = 12
+// Stay this far from the duration edge: landing exactly on it fires
+// `ended` and the track advances away (the long-podcast seek stall).
+export const END_EPSILON_SEC = 0.25
+// Drift corrections stop this far short of the known length (client +
+// catalog): server estimates can outrun a stalled element, so correcting
+// exactly onto the edge would fire `ended` and skip mid-track. The tail
+// still plays out naturally on resume.
+export const DRIFT_EDGE_MARGIN_SEC = 2
+// An `ended` this soon after a seek whose target was safely inside the
+// track is a spurious end (bad range past EOF), not a real finish.
+const SPURIOUS_END_WINDOW_MS = 1500
+// An `ended` this far short of a sane known duration is a cut-short stream
+// (truncated file), not a real finish — recover instead of advancing.
+// Durations at/below the minimum keep the legacy advance behavior so
+// corrupt/empty files still skip past instead of pausing the queue.
+const CUT_SHORT_GAP_SEC = 3
+const CUT_SHORT_MIN_DURATION_SEC = 5
+// A playing element whose clock freezes this long gets one recovery seek;
+// then we give up (pause) instead of fake-playing forever.
+const STALL_TIMEOUT_MS = 10000
+const MAX_RECOVERIES = 3
+// Grace after (re)load and seeks: EMPTY is the normal transient while the
+// element fetches — only an old, settled emptiness means unload.
+const UNLOAD_GRACE_MS = 5000
+
+// Clamp a seek target into playable range. Duration-unknown (NaN, metadata
+// not loaded yet) keeps the old behavior — nothing better is knowable.
+export function clampSeekTarget(sec: number, duration: number): number {
+  if (!Number.isFinite(sec)) return 0
+  if (!Number.isFinite(duration) || duration <= 0) return Math.max(0, sec)
+  return Math.min(Math.max(0, sec), Math.max(0, duration - END_EPSILON_SEC))
+}
 
 // Equal-power gains at progress t ∈ [0, 1]: [outgoing, incoming].
 // Midpoint is -3 dB each — constant total power, no middle dip.
@@ -139,9 +181,68 @@ export class AudioEngine {
   private fadeEnabled = false
   private fadeSec = 5
   private peekNext: () => EngineTrack | null = () => null
-  private beginNext: (expected: EngineTrack) => Promise<EngineTrack | null> = async () => null
+  private beginNext: (expected: EngineTrack, outFile: string | null) => Promise<EngineTrack | null> =
+    async () => null
   private endedCb: () => void = () => {}
   private timer: ReturnType<typeof setInterval> | null = null
+  // Debug sink: the store wires this to the server log bridge (throttled).
+  // Seeks/ends/errors/recoveries report here — the element swallows them
+  // otherwise, which is exactly how far-seek stalls went undiagnosed.
+  // Null = console only.
+  onReport: ((message: string) => void) | null = null
+  private lastReportAt = -Infinity
+  // Throttled error reporting (server bridge + console). Seeks log at
+  // debug level only — they fire constantly during scrubs.
+  private report(message: string, debugOnly = false) {
+    try {
+      if (!debugOnly && typeof console !== 'undefined' && console.warn) {
+        console.warn(`[audio] ${message}`)
+      } else if (typeof console !== 'undefined' && console.debug) {
+        console.debug(`[audio] ${message}`)
+      }
+      if (!debugOnly && this.onReport && this.deps.now() - this.lastReportAt > 10000) {
+        this.lastReportAt = this.deps.now()
+        this.onReport(message)
+      }
+    } catch {
+      /* reporting must never break playback */
+    }
+  }
+
+  private describeSlot(slot: Slot): string {
+    let ready = '?'
+    let err = 'none'
+    let net = '?'
+    try {
+      ready = String(slot.el.readyState ?? '?')
+      err = slot.el.error ? `${slot.el.error.code}:${slot.el.error.message}` : 'none'
+      net = String(slot.el.networkState ?? '?')
+    } catch {
+      /* describe best-effort only */
+    }
+    return `file=${slot.file} pos=${slot.el.currentTime} dur=${slot.el.duration} ` +
+      `paused=${slot.el.paused} seeking=${slot.el.seeking} readyState=${ready} net=${net} error=${err}`
+  }
+
+  private tryPlay(el: AudioElementLike, why: string) {
+    try {
+      const p = el.play() as Promise<void> | undefined
+      if (p && typeof p.catch === 'function') {
+        p.catch((e: unknown) => {
+          this.report(`play() rejected (${why}): ${e instanceof Error ? e.message : String(e)}`)
+        })
+      }
+    } catch (e: unknown) {
+      this.report(`play() threw (${why}): ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  // Last position known to actually play (recovery target) + last seek
+  // (spurious-end guard). Wall clock via deps.now() for testability.
+  private lastGoodTime = 0
+  private lastAdvanceAt = 0
+  private lastSeekAt = -Infinity
+  private lastSeekTarget = 0
+  private lastLoadAt = -Infinity
 
   constructor(deps?: Partial<EngineDeps>) {
     const createElement =
@@ -160,12 +261,14 @@ export class AudioEngine {
       createContext: contextFactory,
       now: deps?.now ?? (() => performance.now()),
     }
-    const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, isPodcast: false, baseGain: 1 })
+    const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, url: null, isPodcast: false, baseGain: 1, recoveries: 0 })
     this.a = mkSlot()
     this.b = mkSlot()
     this.active = this.a
     this.a.el.addEventListener('ended', () => this.handleEnded(this.a))
     this.b.el.addEventListener('ended', () => this.handleEnded(this.b))
+    this.a.el.addEventListener('error', () => this.handleSlotError(this.a))
+    this.b.el.addEventListener('error', () => this.handleSlotError(this.b))
   }
 
   // ---- configuration -------------------------------------------------
@@ -239,7 +342,7 @@ export class AudioEngine {
 
   setNextProvider(
     peek: () => EngineTrack | null,
-    begin: (expected: EngineTrack) => Promise<EngineTrack | null>,
+    begin: (expected: EngineTrack, outFile: string | null) => Promise<EngineTrack | null>,
   ) {
     this.peekNext = peek
     this.beginNext = begin
@@ -295,59 +398,101 @@ export class AudioEngine {
       this.active.el.pause()
       this.active.el.src = ''
       this.active.file = null
+      this.active.url = null
+      this.lastGoodTime = 0
+      this.lastSeekAt = -Infinity
       this.stopTimer()
       return
     }
     if (this.active.file !== track.file) {
       this.active.el.src = track.url
-      this.active.el.currentTime = 0
+      try {
+        this.active.el.currentTime = 0
+      } catch (e: unknown) {
+        // No data yet (slow storage): the element recovers on metadata.
+        this.report(`load reset currentTime threw: ${e instanceof Error ? e.message : String(e)}`)
+      }
       this.active.file = track.file
+      this.active.url = track.url
       this.active.isPodcast = track.isPodcast
       this.active.baseGain = gainForDb(track.gainDb)
+      this.active.recoveries = 0
+      this.lastGoodTime = 0
+      this.lastSeekAt = -Infinity
+      this.lastLoadAt = this.deps.now()
     }
     this.setSlotGain(this.active, 1)
-    if (autoplay) safelyPlay(this.active.el)
+    if (autoplay) this.tryPlay(this.active.el, 'load')
     else this.active.el.pause()
+    this.lastAdvanceAt = this.deps.now()
     this.startTimer()
   }
 
   play() {
     this.ensureContext()
     this.startTimer()
+    this.lastAdvanceAt = this.deps.now()
     // Resuming a paused fade shifts its start so progress freezes cleanly.
     if (this.fading && this.fading.pauseBeganAt !== null) {
       this.fading.start += this.deps.now() - this.fading.pauseBeganAt
       this.fading.pauseBeganAt = null
     }
-    safelyPlay(this.active.el)
-    if (this.fading) safelyPlay(this.fading.incoming.el)
+    this.tryPlay(this.active.el, 'play')
+    if (this.fading) this.tryPlay(this.fading.incoming.el, 'play-fade-incoming')
   }
 
-  pause() {
-    if (this.fading && this.fading.pauseBeganAt === null) this.fading.pauseBeganAt = this.deps.now()
+  pause() {    if (this.fading && this.fading.pauseBeganAt === null) this.fading.pauseBeganAt = this.deps.now()
     this.active.el.pause()
     if (this.fading) this.fading.incoming.el.pause()
   }
 
   seek(sec: number) {
     if (this.fading) this.cancelToIncoming()
+    // Clamp into playable range (element duration is the ground truth —
+    // metadata estimates can overshoot it on huge VBR files, and landing
+    // on/past duration fires `ended` and skips away from the episode).
+    // lastGoodTime deliberately keeps the last *actually playing* position
+    // (updated by the tick): error recovery returns there, not to a seek
+    // target that may itself be poisoned.
+    const target = clampSeekTarget(sec, this.active.el.duration)
+    this.lastSeekAt = this.deps.now()
+    this.lastSeekTarget = target
+    this.lastAdvanceAt = this.deps.now()
+    this.report(
+      `seek req=${sec} target=${target} dur=${this.active.el.duration} ${this.describeSlot(this.active)}`,
+      true,
+    )
     try {
-      this.active.el.currentTime = Math.max(0, sec)
-    } catch {
-      /* a failed seek must never break playback */
+      this.active.el.currentTime = target
+    } catch (e: unknown) {
+      this.report(
+        `seek set currentTime threw target=${target}: ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
   }
 
   // ---- read model (drives progress bars, lyrics, MediaSession) --------
 
   time(): number {
-    const t = this.active.el.currentTime
-    return Number.isFinite(t) ? Math.max(0, t) : 0
+    // Reads can throw when the element unloaded mid-seek (the long-file
+    // stall): guard them, or one bad read kills the caller's ticker.
+    try {
+      const t = this.active.el.currentTime
+      return Number.isFinite(t) ? Math.max(0, t) : 0
+    } catch (e: unknown) {
+      this.report(`time() read threw: ${e instanceof Error ? e.message : String(e)}`)
+      return 0
+    }
   }
 
   duration(): number {
-    const d = this.active.el.duration
-    return Number.isFinite(d) && d > 0 ? d : 0
+    try {
+      const d = this.active.el.duration
+      return Number.isFinite(d) && d > 0 ? d : 0
+    } catch (e: unknown) {
+      this.report(`duration() read threw: ${e instanceof Error ? e.message : String(e)}`)
+      return 0
+    }
   }
 
   currentFile(): string | null {
@@ -384,7 +529,152 @@ export class AudioEngine {
       if (slot === this.fading.out) this.finishFade()
       return
     }
-    if (slot === this.active) this.endedCb()
+    // A paused element never resumes on `ended` — park inside even when
+    // the end looks spurious (seek+pause near EOF). Checked first so a
+    // seek-then-pause can't resurrect audio.
+    if (slot === this.active && this.readPaused(slot.el)) {
+      this.report(`paused ended ignored, parking inside ${this.describeSlot(slot)}`)
+      this.parkInside(slot)
+      return
+    }
+    if (slot === this.active && this.isSpuriousEnd()) {
+      // A seek just landed us here but the target was safely inside the
+      // track (bad byte range past EOF on a huge file): re-seek the target
+      // instead of advancing away from the user's episode. `ended` only
+      // fires out of playing state, so resuming here is always correct.
+      // The guard grants one recovery per seek: if the target itself is
+      // past a cut point, the next `ended` falls through to the cut-short
+      // path below instead of re-seeking forever.
+      // (Paused case already returned above — reaching here means playing.)
+      this.lastSeekAt = -Infinity
+      this.report(
+        `spurious ended ignored target=${this.lastSeekTarget} dur=${slot.el.duration} ${this.describeSlot(slot)}`,
+      )
+      try {
+        slot.el.currentTime = this.lastSeekTarget
+        this.tryPlay(slot.el, 'spurious-end')
+        return
+      } catch (e: unknown) {
+        this.report(`spurious-end recovery threw: ${e instanceof Error ? e.message : String(e)}`)
+        /* fall through to normal handling below */
+      }
+    }
+    if (slot === this.active) {
+      // Paused case already handled above (early return covers both
+      // spurious and edge parks).
+      // `ended` far from the known end (cut-short stream, truncated file):
+      // the track didn't really finish. Recover like an element error
+      // instead of advancing away mid-song. Bounded — a deterministically
+      // cut file pauses instead of spinning or skipping.
+      if (this.isCutShortEnd()) {
+        this.report(`cut-short ended, recovering ${this.describeSlot(slot)}`)
+        this.recoverCutShortEnd(slot)
+        return
+      }
+      this.report(`ended, advancing ${this.describeSlot(slot)}`)
+      this.endedCb()
+    }
+  }
+
+  // True when `ended` fired well short of a sane known duration — i.e. the
+  // audio cut out mid-track, not a real finish. Unknown/tiny durations
+  // (corrupt or empty files) keep the legacy advance behavior.
+  private isCutShortEnd(): boolean {
+    try {
+      const dur = this.active.el.duration
+      const pos = this.active.el.currentTime
+      if (!Number.isFinite(dur) || dur <= CUT_SHORT_MIN_DURATION_SEC) return false
+      if (!Number.isFinite(pos) || pos < 0) return false
+      return dur - pos > CUT_SHORT_GAP_SEC
+    } catch {
+      return false
+    }
+  }
+
+  private recoverCutShortEnd(slot: Slot) {
+    if (slot.recoveries >= MAX_RECOVERIES) {
+      this.report(`cut-short recovery exhausted, pausing ${this.describeSlot(slot)}`)
+      try {
+        slot.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    slot.recoveries += 1
+    try {
+      slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastAdvanceAt = this.deps.now()
+      // `ended` fires out of playing state (see the spurious branch), so
+      // resuming here is always correct. lastSeekAt is deliberately left
+      // alone: the spurious guard keeps its per-seek semantics.
+      this.tryPlay(slot.el, 'cut-short-end')
+    } catch (e: unknown) {
+      this.report(`cut-short recovery threw: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  private readPaused(el: AudioElementLike): boolean {
+    try {
+      return el.paused
+    } catch {
+      return false // unreadable: keep the legacy advance path
+    }
+  }
+
+  // Back off the duration edge after a paused `ended` (see handleEnded):
+  // re-seek the current position, which clampSeekTarget pulls inside when
+  // it sits on/past the edge and leaves alone otherwise. Never resumes —
+  // the user had it paused.
+  private parkInside(slot: Slot) {
+    let pos = 0
+    let ok = false
+    try {
+      pos = slot.el.currentTime
+      ok = Number.isFinite(pos) && pos >= 0
+    } catch {
+      ok = false
+    }
+    if (ok) this.seek(pos)
+  }
+
+  // True when `ended` fired suspiciously soon after a seek whose target was
+  // safely inside the known duration — i.e. not a real finish.
+  private isSpuriousEnd(): boolean {    if (this.deps.now() - this.lastSeekAt > SPURIOUS_END_WINDOW_MS) return false
+    const dur = this.active.el.duration
+    if (!Number.isFinite(dur) || dur <= 0) return false
+    return this.lastSeekTarget < dur - 2
+  }
+
+  // An element-level failure (bad range/416/decode stall after a far seek
+  // on a huge file): re-seek the last good position and resume if it was
+  // playing. Bounded — a genuinely broken file pauses instead of spinning.
+  private handleSlotError(slot: Slot) {
+    const wasPlaying = !slot.el.paused
+    if (slot.recoveries >= MAX_RECOVERIES) {
+      this.report(`error recovery exhausted, pausing ${this.describeSlot(slot)}`)
+      try {
+        slot.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    slot.recoveries += 1
+    this.report(
+      `element error #${slot.recoveries}, recovering at lastGood=${this.lastGoodTime} ${this.describeSlot(slot)}`,
+    )
+    try {
+      slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastSeekAt = this.deps.now()
+      this.lastSeekTarget = Math.max(0, this.lastGoodTime)
+      this.lastAdvanceAt = this.deps.now()
+      if (wasPlaying) this.tryPlay(slot.el, 'error-recovery')
+    } catch (e: unknown) {
+      this.report(
+        `error recovery threw: ${e instanceof Error ? e.message : String(e)} ${this.describeSlot(slot)}`,
+      )
+    }
   }
 
   private cancelFade() {
@@ -422,6 +712,66 @@ export class AudioEngine {
     this.fading = null
   }
 
+  // Stream unloaded underneath us (EMPTY/NO_SOURCE with a file assigned).
+  private isUnloaded(slot: Slot): boolean {
+    try {
+      const net = slot.el.networkState
+      return net === 0 || net === 3
+    } catch {
+      return false
+    }
+  }
+
+  // Re-attach an unloaded stream at the last good position (or the seek
+  // target if newer), resuming only if it was playing. Bounded like all
+  // recoveries; exhaustion pauses instead of fake-playing.
+  private recoverUnload(slot: Slot) {
+    const wasPlaying = !slot.el.paused
+    if (slot.recoveries >= MAX_RECOVERIES) {
+      this.report(`unload recovery exhausted, pausing ${this.describeSlot(slot)}`)
+      try {
+        slot.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    slot.recoveries += 1
+    this.report(`stream unloaded, re-attaching (#${slot.recoveries}) ${this.describeSlot(slot)}`)
+    try {
+      // Re-assigning src forces the pipeline to fetch again; without this
+      // the element sits EMPTY forever even though the URL is fine.
+      if (slot.url) slot.el.src = slot.url
+      slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      this.lastAdvanceAt = this.deps.now()
+      if (wasPlaying) this.tryPlay(slot.el, 'unload-recovery')
+    } catch (e: unknown) {
+      this.report(`unload recovery threw: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  // Frozen-clock watchdog: a playing element whose time stops advancing
+  // (stalled range request on a huge file, no error event) gets a recovery
+  // seek; the error listener covers hard failures. Seeking state never
+  // counts as stalled — the clock legitimately holds still mid-seek.
+  private watchStall() {
+    const el = this.active.el
+    const t = el.currentTime
+    const now = this.deps.now()
+    if (el.seeking || !Number.isFinite(t) || t < 0) return
+    if (t > this.lastGoodTime) {
+      this.lastGoodTime = t
+      this.lastAdvanceAt = now
+      return
+    }
+    if (now - this.lastAdvanceAt > STALL_TIMEOUT_MS) {
+      const frozenSec = Math.round((now - this.lastAdvanceAt) / 1000)
+      this.lastAdvanceAt = now
+      this.report(`stall watchdog fired (frozen ~${frozenSec}s): ${this.describeSlot(this.active)}`)
+      this.handleSlotError(this.active)
+    }
+  }
+
   private startTimer() {
     if (this.timer !== null) return;
     this.timer = setInterval(() => {
@@ -448,6 +798,18 @@ export class AudioEngine {
       this.stopTimer()
       return
     }
+    // Unloaded stream (the suspected long-file killer): EMPTY/NO_SOURCE
+    // with a file still assigned, past the post-load/seek grace. Fires
+    // whether paused or not — a user-paused element keeps its resource, so
+    // this only trips on genuine loss. Recovery re-attaches the stream.
+    if (this.active.file !== null && this.isUnloaded(this.active)) {
+      const now = this.deps.now()
+      if (now - this.lastLoadAt > UNLOAD_GRACE_MS && now - this.lastSeekAt > UNLOAD_GRACE_MS) {
+        this.lastLoadAt = now
+        this.recoverUnload(this.active)
+        return
+      }
+    }
     if (!this.active.el || this.active.el.paused) {
       // Paused (or nothing loaded): freeze fade progress. While a fade is
       // paused only the *incoming* may still be running (autoplay race) —
@@ -458,6 +820,8 @@ export class AudioEngine {
       }
       return
     }
+    // Silent-stall watchdog (skipped mid-fade so ramps keep their timing).
+    if (!this.fading) this.watchStall()
     if (this.fading) {
       const f = this.fading
       const elapsed = (this.deps.now() - f.start) / 1000
@@ -492,6 +856,9 @@ export class AudioEngine {
   }
 
   private async startFade(next: EngineTrack) {
+    // Never start a fade from a paused element: pausing inside the fade
+    // window must stay silent instead of waking queue[0].
+    if (this.readPaused(this.active.el)) return
     const idle = this.idle
     const dur = this.active.el.duration
     const effective = Math.min(this.fadeSec, Math.max(1, dur - this.active.el.currentTime))
@@ -506,6 +873,17 @@ export class AudioEngine {
     } catch {
       return // incoming wouldn't start — stay on the current track
     }
+    // The pause may have landed while `play()` was in flight: the tick
+    // froze the active slot but the incoming is now audible. Hold it and
+    // drop the fade instead of resurrecting playback after a pause.
+    if (this.readPaused(this.active.el)) {
+      try {
+        idle.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
     if (this.fading || this.active.file === next.file) {
       idle.el.pause()
       return
@@ -518,9 +896,13 @@ export class AudioEngine {
       pauseBeganAt: null,
     }
     // Advance the server exactly when the new audio starts, so its position
-    // estimate and the new track stay aligned. A changed queue (remote
-    // edit mid-fade) hard-switches to whatever the server says is current.
-    void this.beginNext(next)
+    // estimate and the new track stay aligned. The outgoing file travels
+    // along so a queue that moved under the fade (manual transport in the
+    // preload/fade window) converges instead of advancing a second time.
+    // Any other change (remote edit mid-fade) hard-switches to whatever
+    // the server says is current.
+    const outFile = this.fading.out.file
+    void this.beginNext(next, outFile)
       .then((actual) => {
         if (!this.fading || !actual || actual.file !== idle.file) {
           if (this.fading && actual && actual.file !== idle.file) this.abortTo(actual)
@@ -533,9 +915,12 @@ export class AudioEngine {
 
   // Queue changed under a fade (or advance failed): drop the fade and play
   // whatever was requested — or just stop the incoming on total failure.
+  // Never resumes paused audio: capture play state before tearing down,
+  // then swap silently when the user had it paused.
   private abortTo(actual: EngineTrack | null) {
     if (!this.fading) return
     const incoming = this.fading.incoming
+    const wasPlaying = !this.readPaused(this.active.el) || !this.readPaused(incoming.el)
     incoming.el.pause()
     this.setSlotGain(incoming, 0)
     this.fading = null
@@ -543,22 +928,23 @@ export class AudioEngine {
       this.active.el.src = actual.url
       this.active.el.currentTime = 0
       this.active.file = actual.file
+      this.active.url = actual.url
       this.active.isPodcast = actual.isPodcast
       this.active.baseGain = gainForDb(actual.gainDb)
+      this.active.recoveries = 0
+      this.lastLoadAt = this.deps.now()
       this.setSlotGain(this.active, 1)
-      safelyPlay(this.active.el)
+      if (wasPlaying) this.tryPlay(this.active.el, 'abortTo')
+      else {
+        try {
+          this.active.el.pause()
+        } catch {
+          /* keep paused */
+        }
+      }
     } else {
       this.setSlotGain(this.active, 1)
     }
-  }
-}
-
-function safelyPlay(el: AudioElementLike) {
-  try {
-    const p = el.play() as Promise<void> | undefined
-    if (p && typeof p.catch === 'function') p.catch(() => {})
-  } catch {
-    /* autoplay policy / missing bytes must never break playback */
   }
 }
 

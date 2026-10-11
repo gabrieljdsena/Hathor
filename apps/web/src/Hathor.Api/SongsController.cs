@@ -63,6 +63,8 @@ public sealed class SongsController(
     // Metadata edit (desktop update_song_metadata): null = keep existing,
     // CoverArt = data: URL | http(s) URL | "REMOVE" | null. Returns resumeSec
     // when the edited file is currently playing (client seeks back after reload).
+    // 202 when the file is playing: the payload is stashed and applies on
+    // track change (gapless playback), with Pending = true.
     [HttpPatch("{file}")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<ActionResult<UpdateSongMetadataResult>> Patch(
@@ -82,7 +84,8 @@ public sealed class SongsController(
             var result = await mediator.Send(new UpdateSongMetadataCommand(
                 CurrentUserId(), file, body.Title, body.Artist, body.Album,
                 body.Year, body.Genre, body.CoverArt), ct);
-            return result is null ? NotFound() : Ok(result);
+            if (result is null) return NotFound();
+            return result.Pending ? Accepted(result) : Ok(result);
         }
         catch (FluentValidation.ValidationException ex)
         {
@@ -143,7 +146,7 @@ public sealed class SongsController(
         {
             var principal = await tokens.ValidateAsync(token);
             if (principal is not null &&
-                TokenValidator.HasScope(principal, ScopeAuthorization.LibraryRead) &&
+                TokenValidator.SatisfiesLibraryRead(principal) &&
                 Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var tokenUser))
                 userId = tokenUser;
         }
@@ -154,12 +157,13 @@ public sealed class SongsController(
 
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    // Header-authenticated user with the library scope, or null (falls back to ?token=).
+    // Header-authenticated user with library-read access (mirrors the
+    // LibraryRead policy), or null (falls back to ?token=).
     private Guid? AuthenticatedUserId()
     {
         var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (id is null || !User.Identity?.IsAuthenticated == true) return null;
-        if (!User.FindAll("scope").Any(c => c.Value == ScopeAuthorization.LibraryRead)) return null;
+        if (!ScopeAuthorization.SatisfiesLibraryRead(User)) return null;
         return Guid.TryParse(id, out var userId) ? userId : null;
     }
 }

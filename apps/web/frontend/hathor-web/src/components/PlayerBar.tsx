@@ -1,12 +1,15 @@
-import { useEffect, useRef, type CSSProperties } from 'react'
+import { useEffect, useRef, type CSSProperties, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { engine } from '../audio/engine'
-import { formatTime, usePlayer } from '../store/player'
+import { clampSeekTarget, engine } from '../audio/engine'
+import { subscribeAudioClock } from '../audio/clock'
+import { formatTime, pushResumeSpot, usePlayer } from '../store/player'
 import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { useChapterAutoSkip, useChapterJump } from './ui/PodcastTimestamps'
+import ResumeSpot, { useResumeSpot } from './ui/ResumeSpot'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Self-ticking progress row (engine media time; display-only).
@@ -16,26 +19,49 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   const curRef = useRef<HTMLSpanElement>(null)
   const totRef = useRef<HTMLSpanElement>(null)
 
+  // Effective duration: the element's own once metadata loads (ground
+  // truth for what can play), the song's stored duration before that so a
+  // fresh long episode doesn't scrub against a stale/default maximum.
+  const effDuration = () => {
+    const d = engine.duration()
+    if (d > 0) return d
+    const meta = usePlayer.getState().currentSong?.duration ?? 0
+    return meta > 0 ? meta : 0
+  }
+
   useEffect(() => {
-    const id = setInterval(() => {
-      const slider = sliderRef.current
-      if (!slider) return
-      const dur = engine.duration()
-      const pos = engine.time()
-      if (dur > 0) slider.max = String(dur)
-      if (document.activeElement !== slider) slider.value = String(pos)
-      if (curRef.current) curRef.current.textContent = formatTime(pos)
-      if (totRef.current) totRef.current.textContent = formatTime(dur)
-      const max = Number.parseFloat(slider.max) || 100
-      const val = Number.parseFloat(slider.value) || 0
-      slider.style.setProperty('--range-percent', `${(val / max) * 100}%`)
-    }, 500)
-    return () => clearInterval(id)
+    // Ref-only DOM writes (no re-render): both mounted instances (mobile +
+    // desktop, one CSS-hidden) share the 500ms clock instead of ticking alone.
+    return subscribeAudioClock(500, () => {
+      try {
+        const slider = sliderRef.current
+        if (!slider) return
+        const dur = effDuration()
+        const pos = engine.time()
+        if (dur > 0) slider.max = String(dur)
+        if (document.activeElement !== slider) slider.value = String(pos)
+        if (curRef.current) curRef.current.textContent = formatTime(pos)
+        if (totRef.current) totRef.current.textContent = formatTime(dur)
+        const max = Number.parseFloat(slider.max) || 100
+        const val = Number.parseFloat(slider.value) || 0
+        slider.style.setProperty('--range-percent', `${(val / max) * 100}%`)
+      } catch {
+        // A throwing element read (unloaded mid-seek) must never kill the ticker.
+      }
+    })
   }, [])
 
   const commitSeek = () => {
     const slider = sliderRef.current
-    if (slider) void api.seek(Number.parseFloat(slider.value)).catch(() => {})
+    if (!slider) return
+    // Same clamp as the engine's live scrub: server and element agree, so
+    // no drift snap yanks playback back afterwards. A seek-while-paused
+    // also moves this browser's resume spot for other devices.
+    const raw = Number.parseFloat(slider.value) || 0
+    void api
+      .seek(clampSeekTarget(raw, effDuration()))
+      .then(() => pushResumeSpot())
+      .catch(() => {})
   }
 
   return (
@@ -103,6 +129,38 @@ export function VolumeSlider({ volume, className, id }: { volume: number; classN
   )
 }
 
+// Queued metadata edit for the playing file (saved while it played, applies
+// on track change so playback stays gapless): tiny line under the artist;
+// click discards it. Null when nothing is stashed for this file. All chips
+// share one ['pending-edits'] entry (the fetch returns the whole list) and
+// select their file out of it — never one fetch per chip.
+export function PendingEditChip({ file }: { file: string }) {
+  const queryClient = useQueryClient()
+  const { data: hasPending } = useQuery({
+    queryKey: ['pending-edits'],
+    queryFn: api.pendingEdits,
+    staleTime: 1000 * 30,
+    select: (all) => all.some((p) => p.file === file),
+  })
+  if (!hasPending) return null
+  const discard = (e: MouseEvent) => {
+    e.stopPropagation()
+    void api
+      .discardPendingEdit(file)
+      .then(() => queryClient.invalidateQueries({ queryKey: ['pending-edits'] }))
+      .catch(() => {})
+  }
+  return (
+    <button
+      onClick={discard}
+      title="Edit queued — applies when this track changes. Click to discard."
+      className="text-[10px] font-semibold uppercase tracking-[0.15em] text-orange-300/90 hover:text-orange-200 transition-colors cursor-pointer"
+    >
+      Edit queued
+    </button>
+  )
+}
+
 // Bottom player bar cloned from Music Player/ui/index.html #controls
 // (h-28, orange top border, glass). Audio renders server state; crossfade
 // and gapless arrive in a later phase — manual next/prev stay instant.
@@ -136,6 +194,9 @@ export default function PlayerBar({
   // Podcast chapters: auto-skip pump + chapter-aware transport arrows.
   useChapterAutoSkip()
   const chapterJump = useChapterJump()
+  // Another browser's paused spot (server excludes this browser's own
+  // device id — a pause here never echoes back). Explicit tap only.
+  const resumeSpot = useResumeSpot()
   const songMenuRef = useRef<SongMenuHandle | null>(null)
   const openSongMenu = (x: number, y: number) => songMenuRef.current?.openAt(x, y)
   const goArtist = (e: React.MouseEvent, artist: string) => {
@@ -171,15 +232,21 @@ export default function PlayerBar({
     if (!('mediaSession' in navigator)) return
     const toggle = () => void usePlayer.getState().toggle()
     const next = () =>
-      void api.next().then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio()
-      })
+      void api
+        .next()
+        .then((s) => {
+          usePlayer.setState(s)
+          usePlayer.getState().syncAudio()
+        })
+        .catch(() => {})
     const prev = () =>
-      void api.prev().then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio()
-      })
+      void api
+        .prev()
+        .then((s) => {
+          usePlayer.setState(s)
+          usePlayer.getState().syncAudio()
+        })
+        .catch(() => {})
     try {
       navigator.mediaSession.setActionHandler('play', toggle)
       navigator.mediaSession.setActionHandler('pause', toggle)
@@ -206,18 +273,24 @@ export default function PlayerBar({
     // (chapter seek, not a track change) — even with auto-skip off. Past
     // the last chapter it falls through to the next track.
     if (chapterJump.next()) return
-    void api.next().then((s) => {
-      usePlayer.setState(s)
-      usePlayer.getState().syncAudio() // hard switch; cancels any fade
-    })
+    void api
+      .next()
+      .then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio() // hard switch; cancels any fade
+      })
+      .catch(() => {})
   }
   const doPrev = () => {
     // Same deal backwards (restarts the chapter when well inside it).
     if (chapterJump.prev()) return
-    void api.prev().then((s) => {
-      usePlayer.setState(s)
-      usePlayer.getState().syncAudio() // hard switch; cancels any fade
-    })
+    void api
+      .prev()
+      .then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio() // hard switch; cancels any fade
+      })
+      .catch(() => {})
   }
   const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
   const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))
@@ -267,6 +340,14 @@ export default function PlayerBar({
               </button>
             ) : (
               <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
+            )}
+            {song && <PendingEditChip file={song.file} />}
+            {song && resumeSpot && resumeSpot.file !== song.file && (
+              <ResumeSpot
+                key={resumeSpot.file + resumeSpot.updatedUtc}
+                spot={resumeSpot}
+                compact
+              />
             )}
           </div>
         </div>
@@ -345,6 +426,14 @@ export default function PlayerBar({
             </button>
           ) : (
             <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
+          )}
+          {song && <PendingEditChip file={song.file} />}
+          {song && resumeSpot && resumeSpot.file !== song.file && (
+            <ResumeSpot
+              key={resumeSpot.file + resumeSpot.updatedUtc}
+              spot={resumeSpot}
+              compact
+            />
           )}
         </div>
       </div>

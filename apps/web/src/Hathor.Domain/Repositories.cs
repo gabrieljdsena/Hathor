@@ -26,14 +26,6 @@ public interface ISessionRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
-public interface IRefreshTokenRepository
-{
-    Task AddAsync(RefreshToken token, CancellationToken ct = default);
-    Task<RefreshToken?> GetValidAsync(string tokenHash, CancellationToken ct = default);
-    Task RevokeAsync(Guid id, CancellationToken ct = default);
-    Task SaveChangesAsync(CancellationToken ct = default);
-}
-
 public interface IApiKeyRepository
 {
     Task AddAsync(ApiKey key, CancellationToken ct = default);
@@ -46,6 +38,16 @@ public interface IApiKeyRepository
 public interface IPlaybackStateRepository
 {
     Task<Playback.PlaybackState> GetOrCreateAsync(Guid userId, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+// Cross-device resume spots (EF): one row per (user, device), last wins.
+public interface IPlaybackSpotRepository
+{
+    Task UpsertAsync(Entities.PlaybackSpot spot, CancellationToken ct = default);
+    Task<Entities.PlaybackSpot?> LatestForeignAsync(
+        Guid userId, string? excludeDeviceId, DateTime minUpdatedUtc,
+        CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
@@ -125,6 +127,17 @@ public interface IPodcastTimestampRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
+// Deferred metadata edits (EF): one pending payload per file (last wins),
+// applied when the track changes so playback never gaps.
+public interface IPendingEditRepository
+{
+    Task<PendingMetadataEdit?> GetAsync(Guid userId, string file, CancellationToken ct = default);
+    Task<List<PendingMetadataEdit>> ListAsync(Guid userId, CancellationToken ct = default);
+    Task UpsertAsync(PendingMetadataEdit edit, CancellationToken ct = default);
+    Task<bool> DeleteAsync(Guid userId, string file, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
 // Songs-table writes (EF). File metadata itself is TagLib + filesystem;
 // the materialized columns mirror it so lists/search never open MP3s.
 public interface ISongRecordRepository
@@ -181,5 +194,8 @@ public interface ILyricsRepository
     Task<int> GetOffsetAsync(Guid userId, string file, CancellationToken ct = default);
     // Zero removes the row when it holds no lyrics (sparse storage).
     Task SetOffsetAsync(Guid userId, string file, int offsetMs, CancellationToken ct = default);
+    // Per-chapter cache keys ("{file}::chapter:{id}") for one episode, for
+    // tombstoning on delete/move (the remote applier is exact-match).
+    Task<IReadOnlyList<string>> ListChapterKeysAsync(Guid userId, string file, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }

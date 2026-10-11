@@ -122,9 +122,9 @@ fun SettingsScreen(
             }
         }
 
-        // ---- Remote sync (desktop settings view owns these actions) ----
+        // ---- Sync server (desktop settings view owns these actions) ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionLabel(Icons.Filled.Sync, "Remote sync")
+            SectionLabel(Icons.Filled.Sync, "Sync server")
             Text(settings.remoteStatus(), style = MaterialTheme.typography.bodySmall)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -209,6 +209,30 @@ fun SettingsScreen(
                 enabled = xEnabled,
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+
+        // ---- Chapter auto-skip (desktop Settings toggle, podcasts only) ----
+        // Timestamped episodes start at the first chapter and skip to the
+        // next chapter when one ends. Chapters are managed per episode.
+        val chapterSkip by settings.chapterSkip.collectAsState()
+        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Chapter auto-skip", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Podcast episodes start at the first chapter and skip ahead at chapter ends.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                HathorSwitch(
+                    checked = chapterSkip,
+                    onCheckedChange = { scope.launch { settings.setChapterSkip(it) } }
+                )
+            }
         }
 
         // ---- Concurrency ----

@@ -51,7 +51,7 @@ public sealed class Phase4HandlerTests
             });
         var lrclib = Substitute.For<ILrclibClient>();
 
-        var dto = await new GetLyricsHandler(cache, lrclib).Handle(
+        var dto = await new GetLyricsHandler(cache, lrclib, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new GetLyricsQuery(UserId, "s.mp3", "Track", "Artist", null, null),
             CancellationToken.None);
 
@@ -67,7 +67,7 @@ public sealed class Phase4HandlerTests
         lrclib.GetExactAsync("Track", "Artist", null, Arg.Any<CancellationToken>())
             .Returns(new Dtos.LyricsDto("[00:01.00] la", "la"));
 
-        var dto = await new GetLyricsHandler(cache, lrclib).Handle(
+        var dto = await new GetLyricsHandler(cache, lrclib, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new GetLyricsQuery(UserId, "s.mp3", "Track", "Artist", null, null),
             CancellationToken.None);
 
@@ -76,10 +76,185 @@ public sealed class Phase4HandlerTests
     }
 
     [Fact]
+    public async Task GetLyrics_ChapterHit_ReturnsChapterLyrics_WithoutNetwork()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.Lyric
+            {
+                UserId = UserId,
+                SongFile = "ep.mp3::chapter:7",
+                LyricsJson = """{"Synced":"[00:01.00] ch","Plain":null}""",
+            });
+        var lrclib = Substitute.For<ILrclibClient>();
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 7, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Intro", StartSecs = 0,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 7),
+            CancellationToken.None);
+
+        dto!.Synced.Should().Contain("ch");
+        await lrclib.DidNotReceiveWithAnyArgs().SearchAsync(default!, default!, default, default, default);
+    }
+
+    [Fact]
+    public async Task GetLyrics_ChapterMiss_SearchesTitleAndArtist_UnderChapterKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchAsync("Intro", "", null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(1, "Intro", "", null, null, "[00:01.00] intro", "intro"),
+            });
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 7, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Intro", StartSecs = 0,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 7),
+            CancellationToken.None);
+
+        dto!.Plain.Should().Be("intro");
+        await cache.Received(1).UpsertAsync(
+            UserId, "ep.mp3::chapter:7", Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetLyrics_DashedChapterName_SearchesTitleWithArtist()
+    {
+        // DJ-mix chapters ("Title - Artist") query the provider with both
+        // halves: title-only fuzzy search misses ("Beggin" vs "Beggin'").
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:9", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchAsync("Jaja Ding Dong", "Will Ferrell & Molly Sandén",
+                null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(9, "Jaja Ding Dong", "Will Ferrell & Molly Sandén",
+                    null, null, null, "ding dong"),
+            });
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 9, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 9, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Jaja Ding Dong - Will Ferrell & Molly Sandén", StartSecs = 9861,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 9),
+            CancellationToken.None);
+
+        dto!.Plain.Should().Be("ding dong");
+        await lrclib.DidNotReceiveWithAnyArgs().GetExactAsync(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task GetLyrics_ChapterPicksArtistMatch_DespitePunctuation()
+    {
+        // "Beggin" must resolve to Frankie Valli's "Beggin'", not the
+        // first same-normalized-title hit (Madcon) — live lrclib order.
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:39", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchAsync("Beggin", "Frankie Valli & The Four Seasons",
+                null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(1, "Beggin'", "Madcon", null, null, null, "madcon"),
+                new(2, "Beggin'", "Frankie Valli", null, null, "[00:01.00] valli", "valli"),
+            });
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 39, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 39, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Beggin - Frankie Valli & The Four Seasons", StartSecs = 8217,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 39),
+            CancellationToken.None);
+
+        dto!.Plain.Should().Be("valli");
+    }
+
+    [Fact]
+    public async Task GetLyrics_ChapterArtistMismatch_ReturnsNull_WithoutCache()
+    {
+        // Same title, wrong artist only: wrong-song lyrics are worse than
+        // none (manual search stays one tap away).
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3::chapter:39", Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.Lyric?)null);
+        var lrclib = Substitute.For<ILrclibClient>();
+        lrclib.SearchAsync("Beggin", "Frankie Valli & The Four Seasons",
+                null, null, Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.LyricsHitDto>
+            {
+                new(1, "Beggin'", "Madcon", null, null, null, "madcon"),
+            });
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 39, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 39, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Beggin - Frankie Valli & The Four Seasons", StartSecs = 8217,
+            });
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 39),
+            CancellationToken.None);
+
+        dto.Should().BeNull();
+        await cache.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task GetLyrics_ForeignChapterId_FallsBackToFileFlow()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetByFileAsync(UserId, "ep.mp3", Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.Lyric
+            {
+                UserId = UserId,
+                SongFile = "ep.mp3",
+                LyricsJson = """{"Synced":null,"Plain":"ep"}""",
+            });
+        var lrclib = Substitute.For<ILrclibClient>();
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 99, Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.PodcastTimestamp?)null);
+
+        var dto = await new GetLyricsHandler(cache, lrclib, timestamps).Handle(
+            new GetLyricsQuery(UserId, "ep.mp3", "Ep Title", "Host", null, null, ChapterId: 99),
+            CancellationToken.None);
+
+        dto!.Plain.Should().Be("ep");
+        await cache.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default!, default!, default);
+    }
+
+    [Fact]
     public async Task SaveLyrics_Empty_ReturnsFalse()
     {
         var cache = Substitute.For<ILyricsRepository>();
-        (await new SaveLyricsHandler(cache).Handle(
+        (await new SaveLyricsHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new SaveLyricsCommand(UserId, "s.mp3", null, null), CancellationToken.None))
             .Should().BeFalse();
         await cache.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default!, default!, default);
@@ -93,7 +268,7 @@ public sealed class Phase4HandlerTests
         lrclib.GetExactAsync("Track", "Artist", null, Arg.Any<CancellationToken>())
             .Returns(new Dtos.LyricsDto("[00:01.00] fresh", "fresh"));
 
-        var dto = await new GetLyricsHandler(cache, lrclib).Handle(
+        var dto = await new GetLyricsHandler(cache, lrclib, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new GetLyricsQuery(UserId, "s.mp3", "Track", "Artist", null, null, Refresh: true),
             CancellationToken.None);
 
@@ -107,7 +282,7 @@ public sealed class Phase4HandlerTests
     {
         var cache = Substitute.For<ILyricsRepository>();
         cache.DeleteAsync(UserId, "s.mp3", Arg.Any<CancellationToken>()).Returns(false);
-        (await new DeleteLyricsHandler(cache).Handle(
+        (await new DeleteLyricsHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new DeleteLyricsCommand(UserId, "s.mp3"), CancellationToken.None))
             .Should().BeFalse();
         await cache.DidNotReceiveWithAnyArgs().SaveChangesAsync(default);
@@ -118,8 +293,65 @@ public sealed class Phase4HandlerTests
     {
         var cache = Substitute.For<ILyricsRepository>();
         cache.DeleteAsync(UserId, "s.mp3", Arg.Any<CancellationToken>()).Returns(true);
-        (await new DeleteLyricsHandler(cache).Handle(
+        (await new DeleteLyricsHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new DeleteLyricsCommand(UserId, "s.mp3"), CancellationToken.None))
+            .Should().BeTrue();
+        await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SaveLyrics_Chapter_SavesUnderChapterKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 7, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Intro", StartSecs = 0,
+            });
+
+        (await new SaveLyricsHandler(cache, timestamps).Handle(
+            new SaveLyricsCommand(UserId, "ep.mp3", "[00:01.00] x", "x", ChapterId: 7),
+            CancellationToken.None))
+            .Should().BeTrue();
+        await cache.Received(1).UpsertAsync(
+            UserId, "ep.mp3::chapter:7", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SaveLyrics_ForeignChapterId_FallsBackToFileKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 99, Arg.Any<CancellationToken>())
+            .Returns((Domain.Entities.PodcastTimestamp?)null);
+
+        (await new SaveLyricsHandler(cache, timestamps).Handle(
+            new SaveLyricsCommand(UserId, "ep.mp3", null, "x", ChapterId: 99),
+            CancellationToken.None))
+            .Should().BeTrue();
+        await cache.Received(1).UpsertAsync(
+            UserId, "ep.mp3", Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task DeleteLyrics_Chapter_DeletesChapterKey()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.DeleteAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>()).Returns(true);
+        var timestamps = Substitute.For<IPodcastTimestampRepository>();
+        timestamps.GetAsync(UserId, "ep.mp3", 7, Arg.Any<CancellationToken>())
+            .Returns(new Domain.Entities.PodcastTimestamp
+            {
+                Id = 7, UserId = UserId, PodcastFile = "ep.mp3",
+                Name = "Intro", StartSecs = 0,
+            });
+
+        (await new DeleteLyricsHandler(cache, timestamps).Handle(
+            new DeleteLyricsCommand(UserId, "ep.mp3", ChapterId: 7),
+            CancellationToken.None))
             .Should().BeTrue();
         await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
@@ -179,8 +411,8 @@ public sealed class Phase4HandlerTests
         var cache = Substitute.For<ILyricsRepository>();
         var result = await new SetLyricsOffsetHandler(cache).Handle(
             new SetLyricsOffsetCommand(UserId, "s.mp3", 99999), CancellationToken.None);
-        result.Should().Be(10000);
-        await cache.Received(1).SetOffsetAsync(UserId, "s.mp3", 10000, Arg.Any<CancellationToken>());
+        result.Should().Be(20000);
+        await cache.Received(1).SetOffsetAsync(UserId, "s.mp3", 20000, Arg.Any<CancellationToken>());
         await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 }

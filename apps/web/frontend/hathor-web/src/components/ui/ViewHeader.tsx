@@ -17,7 +17,7 @@ export default function ViewHeader({
   compact?: boolean
 }) {
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-3">
       <div
         className={`inline-flex items-center justify-center rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.15)] ${
           compact ? 'w-10 h-10' : 'w-12 h-12'
@@ -31,7 +31,11 @@ export default function ViewHeader({
           <p className="text-sm text-zinc-500 mt-1 tracking-wide">{subtitle}</p>
         )}
       </div>
-      {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="ml-auto flex items-center gap-2 max-[700px]:ml-0 max-[700px]:w-full max-[700px]:justify-start max-[700px]:flex-wrap">
+          {actions}
+        </div>
+      )}
     </div>
   )
 }

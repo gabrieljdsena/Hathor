@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.MetadataRepository
+import com.musicplayer.android.data.PodcastChapter
 import com.musicplayer.android.data.PodcastRepository
 import com.musicplayer.android.data.SongMeta
 import com.musicplayer.android.ui.theme.HathorColors
@@ -88,7 +89,8 @@ fun PodcastsScreen(
     nowPlayingFile: String?,
     isPlaying: Boolean,
     isCurrentlyPlaying: () -> Boolean = { false },
-    onTogglePause: () -> Unit = {}
+    onTogglePause: () -> Unit = {},
+    onSeekTo: (SongMeta, Double) -> Unit = { _, _ -> },
 ) {
     val episodes by repo.episodes.collectAsState()
     val tags by repo.tags.collectAsState()
@@ -103,6 +105,7 @@ fun PodcastsScreen(
     var selectedTagId by remember { mutableStateOf<Long?>(null) }
     var showTagManager by remember { mutableStateOf(false) }
     var tagging by remember { mutableStateOf<SongMeta?>(null) }
+    var chapterEpisode by remember { mutableStateOf<SongMeta?>(null) }
     var renamingTag by remember { mutableStateOf<PodcastRepository.PodcastTag?>(null) }
     var deletingTag by remember { mutableStateOf<PodcastRepository.PodcastTag?>(null) }
     val scope = rememberCoroutineScope()
@@ -327,6 +330,10 @@ fun PodcastsScreen(
                         onClick = { tagging = ep; menuEpisode = null },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Tags…") }
+                    OutlinedButton(
+                        onClick = { chapterEpisode = ep; menuEpisode = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Chapters…") }
                     TextButton(
                         onClick = { confirmingDelete = ep; menuEpisode = null },
                         modifier = Modifier.fillMaxWidth()
@@ -428,6 +435,16 @@ fun PodcastsScreen(
             episode = ep,
             repo = repo,
             onDismiss = { tagging = null }
+        )
+    }
+
+    // Per-episode chapter marks (desktop Chapters… menu + web parity).
+    chapterEpisode?.let { ep ->
+        ChapterManagerDialog(
+            episode = ep,
+            repo = repo,
+            onSeekTo = { secs -> onSeekTo(ep, secs) },
+            onDismiss = { chapterEpisode = null }
         )
     }
 
@@ -581,7 +598,7 @@ private fun TagRow(
     name: String,
     caption: String,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -742,4 +759,216 @@ private fun shortDate(raw: String): String {
     } catch (_: Exception) {
         raw
     }
+}
+
+/** Seconds -> m:ss or h:mm:ss (desktop _podFmtTime parity). */
+private fun formatChapterTime(sec: Double?): String {
+    if (sec == null || sec.isNaN()) return "—"
+    val s = maxOf(0, sec.toInt())
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val r = s % 60
+    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:${r.toString().padStart(2, '0')}"
+    else "$m:${r.toString().padStart(2, '0')}"
+}
+
+/** Accepts raw seconds or m:ss / h:mm:ss (desktop _podParseTime parity). */
+private fun parseChapterTime(raw: String): Double? {
+    val t = raw.trim()
+    if (t.isEmpty()) return null
+    if (t.matches(Regex("\\d+(\\.\\d+)?"))) return t.toDouble()
+    val parts = t.split(":").map { it.trim() }
+    if (parts.size > 3 || parts.any { !it.matches(Regex("\\d+(\\.\\d+)?")) }) return Double.NaN
+    var sec = 0.0
+    for (p in parts) sec = sec * 60 + p.toDouble()
+    return sec
+}
+
+/**
+ * Per-episode chapter marks (desktop Chapters… modal + web parity): seek
+ * chips jump playback, rows edit inline, two-tap delete, mm:ss add form.
+ */
+@Composable
+private fun ChapterManagerDialog(
+    episode: SongMeta,
+    repo: PodcastRepository,
+    onSeekTo: (Double) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var chapters by remember(episode.file) { mutableStateOf<List<PodcastChapter>>(emptyList()) }
+    var editingId by remember(episode.file) { mutableStateOf<Long?>(null) }
+    var confirmDeleteId by remember(episode.file) { mutableStateOf<Long?>(null) }
+    var newName by remember(episode.file) { mutableStateOf("") }
+    var newStart by remember(episode.file) { mutableStateOf("") }
+    var newEnd by remember(episode.file) { mutableStateOf("") }
+    var error by remember(episode.file) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    suspend fun reload() {
+        chapters = repo.chaptersFor(episode.file)
+    }
+
+    LaunchedEffect(episode.file) { reload() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { DialogTitleBar(title = "Chapters", onClose = onDismiss) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    episode.title.ifBlank { episode.file },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HathorColors.TextHint,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                if (chapters.isEmpty()) {
+                    Text(
+                        "No chapters yet — mark the moments worth jumping back to.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HathorColors.TextHint
+                    )
+                }
+                chapters.forEach { c ->
+                    if (editingId == c.id) {
+                        var eName by remember(c.id) { mutableStateOf(c.name) }
+                        var eStart by remember(c.id) { mutableStateOf(formatChapterTime(c.startSecs)) }
+                        var eEnd by remember(c.id) {
+                            mutableStateOf(c.endSecs?.let(::formatChapterTime) ?: "")
+                        }
+                        Column(
+                            modifier = Modifier.fillMaxWidth().hathorGlass().padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            HathorTextField(value = eName, onValueChange = { eName = it }, label = "Name")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                HathorTextField(
+                                    value = eStart, onValueChange = { eStart = it }, label = "Start",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                HathorTextField(
+                                    value = eEnd, onValueChange = { eEnd = it }, label = "End (optional)",
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        scope.launch(Dispatchers.IO) {
+                                            val end = eEnd.trim().takeIf { it.isNotEmpty() }?.let(::parseChapterTime)
+                                            val ok = repo.updateChapter(
+                                                c.id, eName, parseChapterTime(eStart) ?: Double.NaN, end
+                                            )
+                                            withContext(Dispatchers.Main) {
+                                                if (ok) {
+                                                    editingId = null
+                                                    error = null
+                                                    reload()
+                                                } else {
+                                                    error = "Name can't be blank; end must be after start."
+                                                }
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = HathorColors.Accent, contentColor = Color.White
+                                    )
+                                ) { Text("Save") }
+                                TextButton(onClick = { editingId = null }) { Text("Cancel") }
+                            }
+                        }
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth().hathorGlass().padding(8.dp)
+                        ) {
+                            TextButton(onClick = { onSeekTo(c.startSecs) }) {
+                                Text(
+                                    formatChapterTime(c.startSecs),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = HathorColors.AccentBright
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    c.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    if (c.endSecs == null) "open-ended"
+                                    else "→ ${formatChapterTime(c.endSecs)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = HathorColors.TextHint
+                                )
+                            }
+                            IconButton(onClick = { editingId = c.id; confirmDeleteId = null }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Edit chapter")
+                            }
+                            if (confirmDeleteId == c.id) {
+                                TextButton(onClick = {
+                                    scope.launch(Dispatchers.IO) {
+                                        repo.deleteChapter(c.id)
+                                        withContext(Dispatchers.Main) {
+                                            confirmDeleteId = null
+                                            reload()
+                                        }
+                                    }
+                                }) { Text("Sure?", color = MaterialTheme.colorScheme.error) }
+                            } else {
+                                IconButton(onClick = { confirmDeleteId = c.id }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Delete chapter")
+                                }
+                            }
+                        }
+                    }
+                }
+                error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                Column(
+                    modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Add chapter", style = MaterialTheme.typography.titleSmall, color = HathorColors.AccentBright)
+                    HathorTextField(value = newName, onValueChange = { newName = it }, label = "Name…")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HathorTextField(
+                            value = newStart, onValueChange = { newStart = it }, label = "Start mm:ss",
+                            modifier = Modifier.weight(1f)
+                        )
+                        HathorTextField(
+                            value = newEnd, onValueChange = { newEnd = it }, label = "End (optional)",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            scope.launch(Dispatchers.IO) {
+                                val end = newEnd.trim().takeIf { it.isNotEmpty() }?.let(::parseChapterTime)
+                                val id = repo.createChapter(
+                                    episode.file, newName, parseChapterTime(newStart) ?: Double.NaN, end
+                                )
+                                withContext(Dispatchers.Main) {
+                                    if (id != -1L) {
+                                        newName = ""
+                                        newStart = ""
+                                        newEnd = ""
+                                        error = null
+                                        reload()
+                                    } else {
+                                        error = "Name can't be blank; end must be after start."
+                                    }
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HathorColors.Accent, contentColor = Color.White
+                        )
+                    ) { Text("Add") }
+                }
+            }
+        },
+        confirmButton = {}
+    )
 }

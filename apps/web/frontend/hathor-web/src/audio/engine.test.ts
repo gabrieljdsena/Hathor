@@ -1,14 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AudioEngine, fadeGains, type AudioContextLike, type AudioElementLike, type EngineTrack } from './engine'
+import {
+  AudioEngine,
+  END_EPSILON_SEC,
+  clampSeekTarget,
+  fadeGains,
+  type AudioContextLike,
+  type AudioElementLike,
+  type EngineTrack,
+} from './engine'
 
 class FakeEl implements AudioElementLike {
   src = ''
   currentTime = 0
   duration = Number.NaN
   paused = true
+  seeking = false
+  readyState = 4
+  networkState = 2
+  error: { readonly code: number; readonly message: string } | null = null
   volume = 1
   plays = 0
+  pauses = 0
+  reports: string[] = []
   private ended: Array<() => void> = []
+  private errored: Array<() => void> = []
 
   play() {
     this.plays += 1
@@ -17,15 +32,25 @@ class FakeEl implements AudioElementLike {
   }
 
   pause() {
+    this.pauses += 1
     this.paused = true
   }
 
-  addEventListener(_type: 'ended', fn: () => void) {
-    this.ended.push(fn)
+  load() {
+    this.currentTime = 0
+  }
+
+  addEventListener(type: 'ended' | 'error', fn: () => void) {
+    if (type === 'error') this.errored.push(fn)
+    else this.ended.push(fn)
   }
 
   fireEnded() {
     for (const fn of this.ended) fn()
+  }
+
+  fireError() {
+    for (const fn of this.errored) fn()
   }
 }
 
@@ -238,6 +263,33 @@ describe('AudioEngine crossfade', () => {
     expect(begun).toEqual(['b.mp3'])
   })
 
+  it('hands the outgoing file to the advance callback', async () => {
+    const s = playingFiveMinuteTrack()
+    const seen: Array<{ expected: string; out: string | null }> = []
+    s.engine.setNextProvider(
+      () => track('b.mp3'),
+      async (t, outFile) => {
+        seen.push({ expected: t.file, out: outFile })
+        return t
+      },
+    )
+    await s.advance(250)
+    expect(seen).toEqual([{ expected: 'b.mp3', out: 'a.mp3' }])
+  })
+
+  it('pauses both slots when pausing mid-fade', async () => {
+    const s = playingFiveMinuteTrack()
+    s.engine.setNextProvider(() => track('b.mp3'), async () => null)
+    await s.advance(250) // fade starts, both slots audible
+    expect(s.els[0].paused).toBe(false)
+    expect(s.els[1].paused).toBe(false)
+    s.engine.pause()
+    expect(s.els[0].paused).toBe(true)
+    expect(s.els[1].paused).toBe(true)
+    expect(s.engine.isPlaying()).toBe(false)
+    expect(s.engine.isFading()).toBe(true) // frozen, resumable
+  })
+
   it('does not fade when disabled, for podcasts, or without a next track', async () => {
     const s = playingFiveMinuteTrack()
     s.engine.setCrossfade(false, 5)
@@ -443,5 +495,311 @@ describe('AudioEngine per-track loudness gain', () => {
     expect(gainForDb(-8)).toBeCloseTo(Math.pow(10, -8 / 20), 5)
     expect(gainForDb(30)).toBeCloseTo(Math.pow(10, 12 / 20), 5)
     expect(gainForDb(-30)).toBeCloseTo(Math.pow(10, -12 / 20), 5)
+  })
+})
+
+describe('clampSeekTarget', () => {
+  it('stops short of a known duration', () => {
+    expect(clampSeekTarget(20000, 10800)).toBeCloseTo(10800 - END_EPSILON_SEC, 5)
+    expect(clampSeekTarget(100, 200)).toBe(100)
+    expect(clampSeekTarget(-5, 200)).toBe(0)
+  })
+
+  it('passes through when duration is unknown', () => {
+    expect(clampSeekTarget(5000, Number.NaN)).toBe(5000)
+    expect(clampSeekTarget(5000, 0)).toBe(5000)
+    expect(clampSeekTarget(Number.NaN, 200)).toBe(0)
+  })
+})
+
+describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
+  function playingThreeHourTrack() {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 3600
+    return s
+  }
+
+  it('clamps far seeks short of the duration edge', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.engine.seek(20000)
+    expect(s.els[0].currentTime).toBeCloseTo(10800 - END_EPSILON_SEC, 5)
+  })
+
+  it('treats ended right after an inside-range seek as spurious', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    await s.advance(200)
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(5000)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('still advances on a genuine finish after a seek', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    await s.advance(2000) // past the spurious-end window
+    s.els[0].currentTime = 10799 // at the real end, not mid-track
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended'])
+  })
+
+  it('recovers instead of advancing on a cut-short ended', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250) // tick records lastGoodTime = 3600
+    s.els[0].currentTime = 47 // stream cut out mid-track
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(3600)
+    expect(s.els[0].paused).toBe(false)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('pauses instead of spinning on a deterministically cut file', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    for (let i = 0; i < 3; i += 1) {
+      s.els[0].currentTime = 47
+      s.els[0].fireEnded()
+      expect(s.els[0].paused).toBe(false)
+    }
+    s.els[0].currentTime = 47
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('grants one spurious recovery per seek, then treats repeats as cut-short', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    await s.advance(200)
+    s.els[0].fireEnded() // spurious: re-seeks the target
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(5000)
+    // Target itself is past a cut point: ends again at once. Must not
+    // re-seek forever — cut-short recovery instead of advancing.
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('ignores ended on a paused element instead of advancing', async () => {
+    // A paused element at the edge got there by seek (drift correction
+    // past the real end, chapter past EOF), not by playing through:
+    // advancing would skip the user's episode over nothing.
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.pause()
+    s.els[0].currentTime = 10799.9 // correction overshoot onto the edge
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+    expect(s.els[0].paused).toBe(true)
+    // Parked just inside so resume plays the tail instead of sitting on
+    // the edge (or skipping away).
+    expect(s.els[0].currentTime).toBeCloseTo(10800 - END_EPSILON_SEC, 5)
+  })
+
+  it('leaves a mid-track paused ended where it is', async () => {
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.pause()
+    s.els[0].currentTime = 3600
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].currentTime).toBe(3600)
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('stays paused on ended right after seek+pause (no spurious resurrect)', async () => {
+    // Regression: the spurious-end branch used to run before the paused
+    // check, so seek-then-pause near EOF resumed the same track.
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    s.engine.pause()
+    await s.advance(200) // still inside the spurious-end window
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].paused).toBe(true)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
+  it('keeps the legacy advance for tiny or unknown durations', async () => {
+    const s = setup()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    s.engine.load(track('clip.mp3'), true)
+    await s.advance(250)
+    // Unknown duration (metadata not loaded): advance as before.
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended'])
+    // Tiny duration (jingle/clip): advance as before, never recover.
+    s.els[0].duration = 4
+    s.els[0].currentTime = 1
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended', 'ended'])
+  })
+
+  it('reports genuine advances to the server log bridge', async () => {
+    const s = playingThreeHourTrack()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.els[0].currentTime = 10799
+    s.els[0].fireEnded()
+    expect(ended).toEqual(['ended'])
+    expect(reports.some((m) => m.includes('ended, advancing'))).toBe(true)
+  })
+
+  it('reports cut-short ends to the server log bridge', async () => {
+    const s = playingThreeHourTrack()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    await s.advance(250)
+    s.els[0].currentTime = 47
+    s.els[0].fireEnded()
+    expect(reports.some((m) => m.includes('cut-short ended, recovering'))).toBe(true)
+  })
+
+  it('recovers a failed element at the last good position', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    s.els[0].currentTime = 5000
+    await s.advance(250) // tick records lastGoodTime = 5000
+    const plays = s.els[0].plays
+    s.els[0].currentTime = 9999 // glitch state before the error surfaces
+    s.els[0].fireError()
+    expect(s.els[0].currentTime).toBe(5000)
+    expect(s.els[0].plays).toBeGreaterThan(plays)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('gives up (pauses) after repeated failures instead of spinning', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    for (let i = 0; i < 3; i += 1) s.els[0].fireError()
+    expect(s.els[0].paused).toBe(false)
+    s.els[0].fireError()
+    expect(s.els[0].paused).toBe(true)
+  })
+
+  it('rescues a frozen clock via the stall watchdog', async () => {
+    const s = playingThreeHourTrack()
+    await s.advance(250)
+    const plays = s.els[0].plays
+    // Clock frozen (buffering stall, no error event): 11s without advance.
+    await s.advance(11000)
+    expect(s.els[0].plays).toBeGreaterThan(plays)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('does not mistake a fresh load for a stall', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    // Frozen from the start, but the watchdog grace starts at load.
+    await s.advance(5000)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('time() and duration() survive throwing reads', async () => {
+    const s = setup()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    s.engine.load(track('ep.mp3', true), true)
+    Object.defineProperty(s.els[0], 'currentTime', {
+      configurable: true,
+      get: () => {
+        throw new Error('unloaded')
+      },
+    })
+    expect(s.engine.time()).toBe(0)
+    expect(reports.some((m) => m.includes('time() read threw'))).toBe(true)
+  })
+
+  it('re-attaches an unloaded stream at the last good position', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    s.els[0].currentTime = 5000
+    await s.advance(250) // tick records lastGoodTime = 5000
+    // The pipeline drops the stream (the suspected long-file killer).
+    s.els[0].networkState = 3
+    s.els[0].src = ''
+    await s.advance(6000) // past the unload grace
+    expect(s.els[0].src).toBe('http://x/ep.mp3')
+    expect(s.els[0].currentTime).toBe(5000)
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('ignores transient emptiness right after load', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].networkState = 0 // EMPTY before first bytes: normal, not loss
+    await s.advance(1000)
+    expect(s.els[0].src).toBe('http://x/ep.mp3') // untouched
+    expect(s.els[0].paused).toBe(false)
+  })
+
+  it('gives up re-attaching after repeated loss', async () => {
+    const s = setup()
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    await s.advance(250)
+    for (let i = 0; i < 4; i += 1) {
+      s.els[0].networkState = 3
+      await s.advance(6000)
+    }
+    expect(s.els[0].paused).toBe(true)
+  })
+  it('reports element errors with media details for debugging', async () => {
+    const s = setup()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    await s.advance(250)
+    s.els[0].error = { code: 4, message: 'src not supported' }
+    s.els[0].fireError()
+    expect(reports.some((m) => m.includes('element error'))).toBe(true)
+    expect(reports.some((m) => m.includes('4:src not supported'))).toBe(true)
+  })
+
+  it('reports spurious ends for debugging', async () => {
+    const s = setup()
+    const reports: string[] = []
+    s.engine.onReport = (m) => reports.push(m)
+    s.engine.load(track('ep.mp3', true), true)
+    s.els[0].duration = 10800
+    await s.advance(250)
+    s.engine.seek(7000)
+    await s.advance(200)
+    s.els[0].fireEnded()
+    expect(reports.some((m) => m.includes('spurious ended ignored'))).toBe(true)
   })
 })

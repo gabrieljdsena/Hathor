@@ -96,45 +96,6 @@ export interface FfmpegDownloadStatus {
   error: string | null
 }
 
-export interface SyncSnapshot {
-  songs?: unknown[] | null
-  podcasts?: unknown[] | null
-  playlists?: unknown[] | null
-  songLinks?: unknown[] | null
-  podcastTags?: unknown[] | null
-  podcastTagLinks?: unknown[] | null
-  lyrics?: unknown[] | null
-  musicHistory?: unknown[] | null
-  playlistHistory?: unknown[] | null
-  dailyMix?: unknown[] | null
-  deletions?: unknown[] | null
-}
-
-export interface SyncSummary {
-  songs: number
-  podcasts: number
-  playlists: number
-  songLinks: number
-  podcastTags: number
-  podcastTagLinks: number
-  lyrics: number
-  musicHistory: number
-  playlistHistory: number
-  dailyMix: number
-  deletions: number
-}
-
-export interface RemotePullResult {
-  added: number
-  downloadsStarted: number
-  message: string
-}
-
-export interface RemotePushResult {
-  rows: number
-  message: string
-}
-
 export interface ApiKey {
   id: string
   name: string
@@ -154,6 +115,67 @@ export interface MetadataPatch {
   year: string | null
   genre: string | null
   coverArt: string | null // data: URL | http(s) URL | 'REMOVE' | null(keep)
+}
+
+// Deferred metadata edit: PATCH on the playing file stashes the payload
+// (pending=true, 202) instead of rewriting tags mid-stream; it applies
+// automatically on track change.
+export interface PendingEdit {
+  file: string
+  isPodcast: boolean
+  title: string | null
+  artist: string | null
+  album: string | null
+  year: string | null
+  genre: string | null
+  coverArt: string | null
+  createdUtc: string
+}
+
+// Stable per-browser device id (one UUID in localStorage, shared by all
+// tabs): readers exclude their own id, so a browser never echoes its own
+// paused track back as a resume pill. crypto.randomUUID needs a secure
+// context (missing on plain-LAN http) — fall back to a random string.
+const DEVICE_KEY = 'hathor:device-id'
+export function deviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY)
+    if (!id) {
+      id =
+        globalThis.crypto?.randomUUID?.() ??
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+      localStorage.setItem(DEVICE_KEY, id)
+    }
+    return id
+  } catch {
+    return 'ephemeral'
+  }
+}
+
+// Short human label for the pill ("from Windows"); the server falls back
+// to the User-Agent substring when this is null.
+export function deviceLabel(): string | null {
+  try {
+    const nav = navigator as unknown as {
+      userAgentData?: { platform?: string }
+      platform?: string
+    }
+    return nav.userAgentData?.platform || nav.platform || null
+  } catch {
+    return null
+  }
+}
+
+// Resume-across-devices spot: another device's paused playback state.
+// userKey is the writer's device id. Pull only surfaces it — tapping plays
+// explicitly, nothing auto-plays.
+export interface PlaybackSpot {
+  userKey: string
+  file: string
+  positionSec: number
+  isPodcast: boolean
+  device: string | null
+  updatedUtc: string
 }
 
 export interface HistoryItem {
@@ -302,6 +324,12 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
     logoutLocal()
     throw new Error('Unauthorized')
   }
+  if (res.status === 429) {
+    const retryAfter = res.headers.get('Retry-After')
+    const hint = retryAfter ? ` (retry in ${retryAfter}s)` : ' (too many requests — wait a few seconds and retry)'
+    const body = await res.text().catch(() => '')
+    throw new Error((body && `${body}${hint}`) || `Rate limited: 429${hint}`)
+  }
   if (!res.ok) {
     const body = await res.text()
     throw new Error(body || `Request failed: ${res.status}`)
@@ -378,10 +406,6 @@ export const api = {
 
   // player state + headless controls (plan §4 — same surface external clients use)
   playerState: () => request<PlayerState>('/player/state'),
-  nowPlaying: () =>
-    request<{ title: string | null; artist: string | null; coverUrl: string | null; positionSec: number; durationSec: number | null }>(
-      '/player/now-playing',
-    ),
   play: (file?: string, isPodcast?: boolean) =>
     request<PlayerState>('/player/play', {
       method: 'POST',
@@ -399,7 +423,14 @@ export const api = {
     }),
   toggle: () => request<PlayerState>('/player/toggle', { method: 'POST' }),
   pause: () => request<PlayerState>('/player/pause', { method: 'POST' }),
-  next: () => request<PlayerState>('/player/next', { method: 'POST', body: '{}' }),
+  // expectedFile: conditional advance for the crossfade handoff — the
+  // server skips the advance when the current track already moved on
+  // (manual transport consumed it), converging instead of skipping a song.
+  next: (expectedFile?: string | null) =>
+    request<PlayerState>(
+      '/player/next',
+      { method: 'POST', body: JSON.stringify({ expectedFile: expectedFile ?? null }) },
+    ),
   prev: () => request<PlayerState>('/player/prev', { method: 'POST' }),
   seek: (seconds: number) =>
     request<PlayerState>('/player/seek', { method: 'POST', body: JSON.stringify({ seconds }) }),
@@ -449,6 +480,13 @@ export const api = {
   // ingest
   youtubeSearch: (q: string, limit = 5) =>
     request<VideoHit[]>(`/youtube/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  // Embeddability probe + direct-audio fallback for blocked embeds.
+  // resolveAudio forces the manifest lookup even for embeddable videos
+  // (used when the iframe player itself reports an error afterwards).
+  youtubePreview: (id: string, resolveAudio = false) =>
+    request<{ id: string; embeddable: boolean; audioUrl: string | null }>(
+      `/youtube/preview?id=${encodeURIComponent(id)}${resolveAudio ? '&resolveAudio=true' : ''}`,
+    ),
   // Already-in-library pre-check (normalized title+artist, live files only).
   checkDownload: (title: string, artist: string | null) =>
     request<{ owned: boolean; file: string | null }>(
@@ -491,24 +529,34 @@ export const api = {
     ),
 
   // lyrics
-  songLyrics: (file: string, track: string, artist: string, durationSec?: number, refresh = false) =>
+  songLyrics: (
+    file: string,
+    track: string,
+    artist: string,
+    durationSec?: number,
+    refresh = false,
+    chapterId?: number | null,
+  ) =>
     request<Lyrics>(
       `/songs/${encodeURIComponent(file)}/lyrics?track=${encodeURIComponent(track)}&artist=${encodeURIComponent(artist)}${
         durationSec ? `&duration=${Math.round(durationSec)}` : ''
-      }${refresh ? '&refresh=true' : ''}`,
+      }${refresh ? '&refresh=true' : ''}${chapterId != null ? `&chapterId=${chapterId}` : ''}`,
     ),
   searchLyrics: (track: string, artist: string) =>
     request<LyricsHit[]>('/lyrics/search', {
       method: 'POST',
       body: JSON.stringify({ Track: track, Artist: artist }),
     }),
-  saveLyrics: (file: string, synced: string | null, plain: string | null) =>
-    request<void>(`/songs/${encodeURIComponent(file)}/lyrics`, {
+  saveLyrics: (file: string, synced: string | null, plain: string | null, chapterId?: number | null) =>
+    request<void>(`/songs/${encodeURIComponent(file)}/lyrics${chapterId != null ? `?chapterId=${chapterId}` : ''}`, {
       method: 'PUT',
       body: JSON.stringify({ Synced: synced, Plain: plain }),
     }),
-  deleteLyrics: (file: string) =>
-    request<void>(`/songs/${encodeURIComponent(file)}/lyrics`, { method: 'DELETE' }),
+  deleteLyrics: (file: string, chapterId?: number | null) =>
+    request<void>(
+      `/songs/${encodeURIComponent(file)}/lyrics${chapterId != null ? `?chapterId=${chapterId}` : ''}`,
+      { method: 'DELETE' },
+    ),
   lyricsOffset: (file: string) =>
     request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset`),
   setLyricsOffset: (file: string, offsetMs: number) =>
@@ -531,7 +579,7 @@ export const api = {
   song: (file: string, includeCover = false) =>
     request<Song>(`/songs/${encodeURIComponent(file)}?includeCover=${includeCover}`),
   patchSong: (file: string, patch: MetadataPatch) =>
-    request<{ song: Song; resumeSec: number }>(`/songs/${encodeURIComponent(file)}`, {
+    request<{ song: Song; resumeSec: number; pending: boolean }>(`/songs/${encodeURIComponent(file)}`, {
       method: 'PATCH',
       body: JSON.stringify({
         Title: patch.title ?? null,
@@ -544,6 +592,31 @@ export const api = {
     }),
   deleteSong: (file: string) =>
     request<void>(`/songs/${encodeURIComponent(file)}`, { method: 'DELETE' }),
+  // Stashed edits for playing files (applied on track change).
+  pendingEdits: () => request<PendingEdit[]>('/pending-edits'),
+  discardPendingEdit: (file: string) =>
+    request<void>(`/pending-edits/${encodeURIComponent(file)}`, { method: 'DELETE' }),
+  // Resume across devices: snapshot this device's spot (pause/pagehide/
+  // paused-seek, fire-and-forget) / read the latest spot from ANOTHER
+  // device (excludeDevice = own id — never echo self).
+  pushPlayback: (
+    id: string,
+    spot: { file: string; positionSec: number; isPodcast: boolean; deviceLabel?: string | null },
+  ) =>
+    request<boolean>('/sync/playback', {
+      method: 'POST',
+      body: JSON.stringify({
+        deviceId: id,
+        deviceLabel: spot.deviceLabel ?? null,
+        file: spot.file,
+        positionSec: spot.positionSec,
+        isPodcast: spot.isPodcast,
+      }),
+    }),
+  latestPlayback: (excludeDevice?: string | null) =>
+    request<PlaybackSpot | null>(
+      `/sync/playback${excludeDevice ? `?excludeDevice=${encodeURIComponent(excludeDevice)}` : ''}`,
+    ),
 
   // artists / albums
   artists: () => request<string[]>('/artists'),
@@ -624,7 +697,7 @@ export const api = {
   deletePodcastTimestamp: (file: string, id: number) =>
     request<void>(`/podcasts/${encodeURIComponent(file)}/timestamps/${id}`, { method: 'DELETE' }),
   patchPodcast: (file: string, patch: { title?: string | null; artist?: string | null; coverArt?: string | null }) =>
-    request<Song>(`/podcasts/${encodeURIComponent(file)}`, {
+    request<{ song: Song; pending: boolean }>(`/podcasts/${encodeURIComponent(file)}`, {
       method: 'PATCH',
       body: JSON.stringify({
         Title: patch.title ?? null,
@@ -670,7 +743,6 @@ export const api = {
         ChapterSkip: patch.chapterSkip ?? null,
       }),
     }),
-  playerSettings: () => request<PlayerSettings>('/player/settings'),
   setPlayerSettings: (crossfadeEnabled: boolean, crossfadeSeconds: number) =>
     request<PlayerSettings>('/player/settings', {
       method: 'PUT',
@@ -703,6 +775,16 @@ export const api = {
   ffmpegDownloadStatus: () => request<FfmpegDownloadStatus>('/system/ffmpeg/download'),
   startFfmpegDownload: () =>
     request<FfmpegDownloadStatus>('/system/ffmpeg/download', { method: 'POST' }),
+  // yt-dlp fallback-downloader status + self-install (Settings → yt-dlp).
+  // Same status shape as FFmpeg (state/progress/exe/error); force=true
+  // re-downloads the latest release even when one is installed (update).
+  // The status Error field carries the --version output when found on PATH.
+  ytdlpStatus: () => request<SystemStatus>('/system/ytdlp'),
+  ytdlpDownloadStatus: () => request<FfmpegDownloadStatus>('/system/ytdlp/download'),
+  startYtdlpDownload: (force = false) =>
+    request<FfmpegDownloadStatus>(`/system/ytdlp/download${force ? '?force=true' : ''}`, {
+      method: 'POST',
+    }),
   // Live NuGet check for YoutubeExplode/TagLibSharp (Settings → YouTube
   // downloader). An update means "update the package and redeploy".
   checkLibraryUpdates: () => request<LibraryInfo[]>('/system/libraries/check', { method: 'POST' }),
@@ -712,16 +794,4 @@ export const api = {
       body: JSON.stringify({ Message: message, Route: route, Stack: stack }),
     }).catch(() => {}),
 
-  // sync snapshot exchange (desktop/mobile compat)
-  syncExport: (sinceId = 0) => request<SyncSnapshot>(`/sync/export?sinceId=${sinceId}`),
-  syncImport: (snapshot: SyncSnapshot) =>
-    request<SyncSummary>('/sync/import', { method: 'POST', body: JSON.stringify(snapshot) }),
-  // Per-library pull from the desktop TiDB remote (desktop
-  // sync_remote_to_local_and_download, split in two): merges remote rows
-  // and queues downloads for files missing on disk.
-  pullSongs: () => request<RemotePullResult>('/sync/pull-songs', { method: 'POST' }),
-  pullPodcasts: () => request<RemotePullResult>('/sync/pull-podcasts', { method: 'POST' }),
-  // Push this user's rows back into the desktop TiDB remote (desktop push).
-  pushSongs: () => request<RemotePushResult>('/sync/push-songs', { method: 'POST' }),
-  pushPodcasts: () => request<RemotePushResult>('/sync/push-podcasts', { method: 'POST' }),
 }

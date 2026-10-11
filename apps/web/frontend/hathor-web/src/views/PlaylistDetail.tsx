@@ -48,7 +48,7 @@ export default function PlaylistDetail() {
         ) : !playlist ? (
           <EmptyState title="Playlist not found" hint="It may have been deleted." />
         ) : (
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
             <PlaylistCover src={playlist.thumbnail} title={playlist.title} />
             <div className="min-w-0 flex-1">
               <h1 className="text-2xl font-bold text-zinc-100 truncate">{playlist.title}</h1>

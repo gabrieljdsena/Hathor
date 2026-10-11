@@ -73,6 +73,26 @@ public sealed class PostgresLogSinkTests
     }
 
     [Fact]
+    public void LogsDbConnection_EmptyPassword_FallsBackToEnvironment()
+    {
+        var previous = Environment.GetEnvironmentVariable(LogsDbConnection.PasswordEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(LogsDbConnection.PasswordEnvVar, "env-secret");
+            var config = new StubConfig(new Dictionary<string, string?>
+            {
+                ["Logging:ConnectionString"] = "Host=localhost;Database=myhomelab;Username=postgres",
+                ["Logging:Password"] = "",
+            });
+            LogsDbConnection.Resolve(config).Should().Contain("Password=env-secret");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(LogsDbConnection.PasswordEnvVar, previous);
+        }
+    }
+
+    [Fact]
     public void LogsDbConnection_UnfilledPlaceholders_ResolveNull()
     {
         var config = new StubConfig(new Dictionary<string, string?>

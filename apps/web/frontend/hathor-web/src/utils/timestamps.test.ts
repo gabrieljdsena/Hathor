@@ -7,6 +7,7 @@ import {
   parseChapterInput,
   prevChapterStart,
   sortChapters,
+  splitChapterName,
 } from './timestamps'
 import type { PodcastTimestamp } from '../api/client'
 
@@ -16,6 +17,19 @@ const chap = (id: number, name: string, startSecs: number, endSecs: number | nul
   name,
   startSecs,
   endSecs,
+})
+
+describe('splitChapterName', () => {
+  it('splits DJ-mix "Title - Artist" into the right fields', () => {
+    expect(splitChapterName('Beggin - Frankie Valli & The Four Seasons')).toEqual({
+      title: 'Beggin',
+      artist: 'Frankie Valli & The Four Seasons',
+    })
+  })
+
+  it('yields an empty artist without a dash', () => {
+    expect(splitChapterName('Intro')).toEqual({ title: 'Intro', artist: '' })
+  })
 })
 
 describe('formatChapterTime', () => {

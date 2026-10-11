@@ -106,3 +106,13 @@ export function autoSkipTarget(
   }
   return null
 }
+
+// DJ-mix style chapter names are "Title - Artist" (mirrors the backend
+// SplitChapterName): split for lyrics-search prefill so the provider gets
+// the title and artist in the right fields instead of the whole name as
+// the track. Chapters without " - " yield an empty artist.
+export function splitChapterName(name: string): { title: string; artist: string } {
+  const dash = name.indexOf(' - ')
+  if (dash < 0) return { title: name.trim(), artist: '' }
+  return { title: name.slice(0, dash).trim(), artist: name.slice(dash + 3).trim() }
+}

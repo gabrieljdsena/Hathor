@@ -2,7 +2,7 @@
 
 > Part of the [Hathor monorepo](../../README.md) (`apps/desktop`). Web app: `../../web/`, mobile: `../../mobile/`.
 
-A Windows desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can mirror your library to a MySQL/TiDB database for multi-device sync.
+A Windows desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can sync your library with the Hathor server for multi-device use.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d6)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
@@ -13,15 +13,15 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 - **Playback & queue** — play/pause, next/previous, seek bar, volume with persistence, shuffle and repeat, plus a reorderable "play next" queue per song or playlist. Restarting rebuilds the queue from where you were listening (playlist, mix, artist, …). Optional equal-power **crossfade** (1–12 s) with gapless handoff.
 - **Library management** — scan a local folder for MP3s, edit song metadata (title, artist, album, year, genre, cover art) in place, and delete tracks. Home is a dashboard: full-library view, daily mix, and recently-played/downloaded strips.
 - **Daily Mix** — a fresh 50-song mix every day built from your listening history (favorites-weighted with room for discoveries).
-- **Podcasts / non-music audio** — a fully separate library (own folder, own tables) with its own view, per-episode menu, metadata editing, and two-way sync. Episodes can share the queue with songs in both directions.
+- **Podcasts / non-music audio** — a fully separate library (own folder, own tables) with its own view, per-episode menu, metadata editing, chapter marks with auto-skip, and two-way sync. Episodes can share the queue with songs in both directions.
 - **YouTube downloads** — search YouTube in-app and download audio as 320 kbps MP3 via `yt-dlp` + FFmpeg, with live progress in the UI. A Songs/Podcast toggle routes each download to the right library (podcast downloads skip the iTunes song-match).
 - **Automatic metadata enrichment** — every song download looks up the matching track on the iTunes Search API and writes ID3 tags (`TIT2`, `TPE1`, `TALB`, `TDRC`, `TCON`, `APIC`) and renames the file to the cleaned title.
-- **Lyrics** — synced (LRC-style) and plain lyrics fetched per track, cached locally for offline use, with Japanese-to-romaji romanization via `pykakasi` and a track-only fallback for artist-less songs.
+- **Lyrics** — synced (LRC-style) and plain lyrics fetched per track, cached locally for offline use, with Japanese-to-romaji romanization via `pykakasi`, a per-song highlight-timing correction (±20 s, persisted), and a track-only fallback for artist-less songs.
 - **Playlists** — create/delete playlists, add songs to multiple playlists, attach custom cover art, and play an entire playlist.
 - **History** — download history and playback (played songs / played playlists) with pagination.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
-- **Remote sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics, daily mix, and history to a MySQL or TiDB server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
+- **Server sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history with the Hathor server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
 
 ## Tech stack
 
@@ -32,7 +32,7 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 | Downloads | `yt-dlp`, FFmpeg |
 | Metadata | `mutagen` (ID3), iTunes Search API |
 | Lyrics  | `pykakasi` (romanization), `urllib` |
-| Storage | SQLite (`sqlite3`), optional MySQL/TiDB (`pymysql`) |
+| Storage | SQLite (`sqlite3`); sync via the Hathor Web API (`urllib`, no DB driver) |
 | Media keys | `winsdk` (Windows.Media / SMTC) |
 | Packaging | PyInstaller |
 
@@ -66,15 +66,11 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Remote sync is opt-in and configured exclusively through a `.env` file next to `main.py` (or the executable):
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured exclusively through a `.env` file next to `main.py` (or the executable):
 
 ```env
-DB_HOST=your-mysql-or-tidb-host
-DB_PORT=4000
-DB_USER=user
-DB_PASSWORD=password
-DB_NAME=dbname
-DB_SSL_CA=path/to/ca.pem
+HATHOR_API_URL=http://192.168.1.10:5051
+HATHOR_API_KEY=hth_your-device-key
 ```
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
@@ -94,8 +90,8 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 main.py            App entry point, window creation, startup + first-run flow
 api.py             pywebview JS bridge: every method the UI calls
 Download.py        yt-dlp YouTube downloader + iTunes metadata/artwork lookup
-sync.py            Manual one-shot MySQL/TiDB push (DatabaseSync) + remote schema
 database.sql       SQLite schema
+services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
 settings.py        Loads persisted settings from the SQLite Settings table
 monitor.py         Debug RAM usage monitor (currently disabled)
 services/          Domain logic: playback (+crossfade), metadata, database, lyrics, windows_media, downloads, apple

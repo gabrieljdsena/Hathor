@@ -212,6 +212,217 @@ class DatabaseManager:
             print(f" [Python] Error unassigning podcast tag: {str(e)}")
             return False
 
+    # ==========================
+    # Podcast chapters (web parity)
+    # ==========================
+    @staticmethod
+    def _validate_chapter(name, start_secs, end_secs):
+        """Mirror web validation (PodcastTimestamps Validate). None = valid."""
+        import math
+        clean = (name or "").strip()
+        if not clean:
+            return "Timestamp name can't be blank."
+        if len(clean) > 255:
+            return "Timestamp name is too long (max 255)."
+        try:
+            start = float(start_secs)
+        except (TypeError, ValueError):
+            return "Start time must be zero or later."
+        if math.isnan(start) or math.isinf(start) or start < 0:
+            return "Start time must be zero or later."
+        if end_secs is not None:
+            try:
+                end = float(end_secs)
+            except (TypeError, ValueError):
+                return "End time must be later than the start time."
+            if math.isnan(end) or math.isinf(end) or end <= start:
+                return "End time must be later than the start time."
+        return None
+
+    def _ensure_chapter_schema(self, conn):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS Podcast_Chapters ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "podcast_file varchar(255) NOT NULL, "
+            "name varchar(255) NOT NULL, "
+            "start_secs real NOT NULL, "
+            "end_secs real NULL)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_podcast_chapters_file "
+            "ON Podcast_Chapters(podcast_file, start_secs)"
+        )
+
+    def get_podcast_chapters(self, file):
+        """Chapter marks for one episode, ordered by start. Empty list if none."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                rows = conn.execute(
+                    "SELECT id, podcast_file, name, start_secs, end_secs "
+                    "FROM Podcast_Chapters WHERE podcast_file = ? ORDER BY start_secs",
+                    (file,),
+                ).fetchall()
+                return [
+                    {'id': r[0], 'file': r[1], 'name': r[2],
+                     'startSecs': r[3], 'endSecs': r[4]}
+                    for r in rows
+                ]
+        except Exception as e:
+            print(f" [Python] Error loading podcast chapters: {str(e)}")
+            return []
+
+    def add_podcast_chapter(self, file, name, start_secs, end_secs=None):
+        """Add a chapter. Returns {'ok': True, 'chapter': {...}} or {'ok': False, 'message': ...}."""
+        if not os.path.exists(os.path.join(settings.podcasts_path, file or "")):
+            return {'ok': False, 'message': 'Episode not found.'}
+        error = self._validate_chapter(name, start_secs, end_secs)
+        if error:
+            return {'ok': False, 'message': error}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                cur = conn.execute(
+                    "INSERT INTO Podcast_Chapters (podcast_file, name, start_secs, end_secs) "
+                    "VALUES (?, ?, ?, ?)",
+                    (file, (name or "").strip(), float(start_secs),
+                     None if end_secs is None else float(end_secs)),
+                )
+                chapter_id = cur.lastrowid
+            chapters = self.get_podcast_chapters(file)
+            chapter = next((c for c in chapters if c['id'] == chapter_id), None)
+            return {'ok': True, 'chapter': chapter}
+        except Exception as e:
+            print(f" [Python] Error adding podcast chapter: {str(e)}")
+            return {'ok': False, 'message': 'Could not save the chapter.'}
+
+    def update_podcast_chapter(self, chapter_id, name, start_secs, end_secs=None):
+        """Edit a chapter. Same result shape as add_podcast_chapter."""
+        error = self._validate_chapter(name, start_secs, end_secs)
+        if error:
+            return {'ok': False, 'message': error}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                row = conn.execute(
+                    "SELECT podcast_file FROM Podcast_Chapters WHERE id = ?",
+                    (chapter_id,),
+                ).fetchone()
+                if not row:
+                    return {'ok': False, 'message': 'Chapter not found.'}
+                conn.execute(
+                    "UPDATE Podcast_Chapters SET name = ?, start_secs = ?, end_secs = ? "
+                    "WHERE id = ?",
+                    ((name or "").strip(), float(start_secs),
+                     None if end_secs is None else float(end_secs), chapter_id),
+                )
+            chapters = self.get_podcast_chapters(row[0])
+            chapter = next((c for c in chapters if c['id'] == int(chapter_id)), None)
+            return {'ok': True, 'chapter': chapter}
+        except Exception as e:
+            print(f" [Python] Error updating podcast chapter: {str(e)}")
+            return {'ok': False, 'message': 'Could not save the chapter.'}
+
+    def delete_podcast_chapter(self, chapter_id):
+        """Delete one chapter mark."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_chapter_schema(conn)
+                cur = conn.execute("DELETE FROM Podcast_Chapters WHERE id = ?", (chapter_id,))
+                return cur.rowcount > 0
+        except Exception as e:
+            print(f" [Python] Error deleting podcast chapter: {str(e)}")
+            return False
+
+    # ==========================
+    # Lyrics highlight offset (web parity: ±20000 ms, sparse)
+    # ==========================
+    def get_lyrics_offset(self, song_file):
+        """Persisted highlight-timing correction in ms. 0 when unset."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                try:
+                    row = conn.execute(
+                        "SELECT offset_ms FROM Lyrics WHERE song_file = ?", (song_file,)
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    return 0
+                if not row or row[0] is None:
+                    return 0
+                return max(-20000, min(20000, int(row[0])))
+        except Exception as e:
+            print(f" [Python] Error loading lyrics offset: {str(e)}")
+            return 0
+
+    def set_lyrics_offset(self, song_file, offset_ms):
+        """Persist the correction (clamped). Works even with no lyrics row yet."""
+        try:
+            offset = max(-20000, min(20000, int(offset_ms or 0)))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                try:
+                    row = conn.execute(
+                        "SELECT id FROM Lyrics WHERE song_file = ?", (song_file,)
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    return offset
+                if row:
+                    conn.execute(
+                        "UPDATE Lyrics SET offset_ms = ? WHERE song_file = ?",
+                        (offset, song_file),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO Lyrics (song_file, lyrics, offset_ms) VALUES (?, ?, ?)",
+                        (song_file, None, offset),
+                    )
+            return offset
+        except Exception as e:
+            print(f" [Python] Error saving lyrics offset: {str(e)}")
+            return 0
+
+    # ==========================
+    # Per-track loudness (web parity: integrated LUFS for normalization)
+    # ==========================
+    def _ensure_loudness_schema(self, conn):
+        try:
+            conn.execute("ALTER TABLE Songs ADD COLUMN loudness_db REAL")
+        except Exception:
+            pass  # Column already there (or very old DBs without Songs).
+
+    def get_song_loudness(self, song_file):
+        """Integrated LUFS for one file. None when never analyzed."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_loudness_schema(conn)
+                row = conn.execute(
+                    "SELECT loudness_db FROM Songs WHERE file = ?", (song_file,)
+                ).fetchone()
+                if not row or row[0] is None:
+                    return None
+                return float(row[0])
+        except Exception as e:
+            print(f" [Python] Error loading loudness: {str(e)}")
+            return None
+
+    def set_song_loudness(self, song_file, loudness_db):
+        """Persist a measurement (None clears it). Never raises."""
+        try:
+            value = None if loudness_db is None else float(loudness_db)
+        except (TypeError, ValueError):
+            return
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_loudness_schema(conn)
+                conn.execute(
+                    "UPDATE Songs SET loudness_db = ? WHERE file = ?",
+                    (value, song_file),
+                )
+        except Exception as e:
+            print(f" [Python] Error saving loudness: {str(e)}")
+
     def get_playlist_songs(self, playlist_id):
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -756,249 +967,3 @@ class DatabaseManager:
         except Exception as e:
             print(f" [Python] Sync error: {e}")
             return f"Error: {str(e)}"
-
-    def sync_remote_to_local_and_download(self):
-        """Fetch missing songs from remote database, save to local, and trigger downloads."""
-        if not os.getenv("DB_HOST"):
-            return "No remote DB configured. Remote sync unavailable."
-        
-        try:
-            from sync import get_mysql_connection
-            conn = get_mysql_connection()
-            with conn.cursor() as cur:
-                # Add check for songs table existence
-                cur.execute(
-                    "SELECT COUNT(*) FROM information_schema.tables "
-                    "WHERE table_schema = DATABASE() AND table_name = 'songs'"
-                )
-                if not cur.fetchone()[0]:
-                    return "Remote database not initialized yet."
-                cur.execute("SELECT file, downloaded_link, title, date_download, artist FROM songs")
-                remote_songs = cur.fetchall()
-                
-                cur.execute("SELECT id, title, description, thumbnail FROM playlists")
-                remote_playlists = cur.fetchall()
-                
-                cur.execute("SELECT id, song_file, playlist_id, date_added FROM song_playlist")
-                remote_song_playlist = cur.fetchall()
-                
-                cur.execute("SELECT id, song_file, lyrics FROM lyrics")
-                remote_lyrics = cur.fetchall()
-                
-                cur.execute("SELECT id, song_file, date_played FROM music_history")
-                remote_music_history = cur.fetchall()
-                
-                cur.execute("SELECT id, playlist_id, date_played FROM playlist_history")
-                remote_playlist_history = cur.fetchall()
-
-                # daily_mix may not exist on remote DBs created before this feature
-                try:
-                    cur.execute("SELECT mix_date, song_files FROM daily_mix")
-                    remote_daily_mix = cur.fetchall()
-                except Exception:
-                    remote_daily_mix = []
-
-                # podcasts may not exist on remote DBs created before this feature
-                try:
-                    cur.execute("SELECT file, downloaded_link, title, date_download, artist FROM podcasts")
-                    remote_podcasts = cur.fetchall()
-                except Exception:
-                    remote_podcasts = []
-
-                # podcast_tags / podcast_tag_links are newer still (same guard)
-                try:
-                    cur.execute("SELECT id, name FROM podcast_tags")
-                    remote_podcast_tags = cur.fetchall()
-                except Exception:
-                    remote_podcast_tags = []
-                try:
-                    cur.execute("SELECT id, podcast_file, tag_id FROM podcast_tag_links")
-                    remote_podcast_tag_links = cur.fetchall()
-                except Exception:
-                    remote_podcast_tag_links = []
-            conn.close()
-        except Exception as e:
-            return f"Error connecting to remote DB: {e}"
-        
-        songs_to_download = []
-        added_count = 0
-        podcasts_added = 0
-        podcasts_to_download = []
-        try:
-            with sqlite3.connect(self.db_path) as local_conn:
-                local_conn.execute(
-                    "CREATE TABLE IF NOT EXISTS Podcasts ("
-                    "file varchar(255) PRIMARY KEY, downloaded_link varchar(255), "
-                    "title varchar(255) NOT NULL, date_download DATETIME DEFAULT CURRENT_TIMESTAMP, "
-                    "artist varchar(255))"
-                )
-                for file, downloaded_link, title, date_download, artist in remote_songs:
-                    # Check if exists in local db
-                    cursor = local_conn.execute("SELECT file FROM Songs WHERE file = ?", (file,))
-                    if not cursor.fetchone():
-                        # Insert into local
-                        local_conn.execute(
-                            "INSERT INTO Songs (file, downloaded_link, title, date_download, artist) VALUES (?, ?, ?, ?, ?)",
-                            (file, downloaded_link, title, date_download, artist)
-                        )
-                        added_count += 1
-                        
-                        file_path = os.path.join(settings.path, file)
-                        if not os.path.exists(file_path):
-                            if downloaded_link:
-                                vid_id = downloaded_link.split("v=")[-1] if "v=" in downloaded_link else downloaded_link.split("/")[-1]
-                                url = downloaded_link
-                            else:
-                                vid_id = ""
-                                url = f"{title} {artist if artist else ''} audio".strip()
-                                
-                            songs_to_download.append({
-                                "id": vid_id,
-                                "url": url,
-                                "title": title,
-                                "artist": artist if artist else "Unknown",
-                                # Pin the exact remote filename on disk so the
-                                # merged row resolves instead of dangling.
-                                "target_file": file,
-                            })
-                
-                # Sync other tables
-                for row in remote_playlists:
-                    local_conn.execute("""
-                        INSERT INTO Playlists (id, title, description, thumbnail) VALUES (?, ?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            title = excluded.title,
-                            description = excluded.description,
-                            thumbnail = excluded.thumbnail
-                    """, row)
-                for row in remote_song_playlist:
-                    local_conn.execute("""
-                        INSERT INTO Song_Playlist (id, song_file, playlist_id, date_added) VALUES (?, ?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            song_file = excluded.song_file,
-                            playlist_id = excluded.playlist_id,
-                            date_added = excluded.date_added
-                    """, row)
-                for row in remote_lyrics:
-                    local_conn.execute("""
-                        INSERT INTO Lyrics (id, song_file, lyrics) VALUES (?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            song_file = excluded.song_file,
-                            lyrics = excluded.lyrics
-                    """, row)
-                for row in remote_music_history:
-                    local_conn.execute("""
-                        INSERT INTO Music_History (id, song_file, date_played) VALUES (?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            song_file = excluded.song_file,
-                            date_played = excluded.date_played
-                    """, row)
-                for row in remote_playlist_history:
-                    local_conn.execute("""
-                        INSERT INTO Playlist_History (id, playlist_id, date_played) VALUES (?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            playlist_id = excluded.playlist_id,
-                            date_played = excluded.date_played
-                    """, row)
-                # Podcast tags + links (upsert by id, like song_playlist: an
-                # empty snapshot never wipes local tags)
-                local_conn.execute("""
-                    CREATE TABLE IF NOT EXISTS Podcast_Tags (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name varchar(255) NOT NULL UNIQUE
-                    )
-                """)
-                local_conn.execute("""
-                    CREATE TABLE IF NOT EXISTS Podcast_Tag_Links (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        podcast_file varchar(255) NOT NULL,
-                        tag_id bigint NOT NULL
-                    )
-                """)
-                local_conn.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_podcast_tag_links_pair
-                    ON Podcast_Tag_Links(podcast_file, tag_id)
-                """)
-                for row in remote_podcast_tags:
-                    local_conn.execute("""
-                        INSERT INTO Podcast_Tags (id, name) VALUES (?, ?)
-                        ON CONFLICT(id) DO UPDATE SET name = excluded.name
-                    """, row)
-                for row in remote_podcast_tag_links:
-                    local_conn.execute("""
-                        INSERT INTO Podcast_Tag_Links (id, podcast_file, tag_id) VALUES (?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            podcast_file = excluded.podcast_file,
-                            tag_id = excluded.tag_id
-                    """, row)
-                # Adopt the remote daily mix (same mix of the day on every device)
-                if remote_daily_mix:
-                    local_conn.execute(
-                        "CREATE TABLE IF NOT EXISTS Daily_Mix ("
-                        "mix_date varchar(10) PRIMARY KEY, song_files text not null, "
-                        "created_at datetime default CURRENT_TIMESTAMP)"
-                    )
-                    for mix_date, song_files in remote_daily_mix:
-                        try:
-                            files = json.loads(song_files)
-                        except Exception:
-                            continue
-                        if not isinstance(files, list):
-                            continue
-                        local_conn.execute(
-                            "INSERT INTO Daily_Mix (mix_date, song_files) VALUES (?, ?) "
-                            "ON CONFLICT(mix_date) DO UPDATE SET song_files = excluded.song_files",
-                            (mix_date, json.dumps(files)),
-                        )
-                    local_conn.execute(
-                        "DELETE FROM Daily_Mix WHERE mix_date < ?",
-                        (datetime.date.today().isoformat(),),
-                    )
-                # Sync podcasts: rows + missing-file downloads into the podcasts folder
-                for file, downloaded_link, title, date_download, artist in remote_podcasts:
-                    cursor = local_conn.execute("SELECT file FROM Podcasts WHERE file = ?", (file,))
-                    if not cursor.fetchone():
-                        local_conn.execute(
-                            "INSERT INTO Podcasts (file, downloaded_link, title, date_download, artist) VALUES (?, ?, ?, ?, ?)",
-                            (file, downloaded_link, title, date_download, artist)
-                        )
-                        podcasts_added += 1
-
-                        file_path = os.path.join(settings.podcasts_path, file)
-                        if not os.path.exists(file_path):
-                            if downloaded_link:
-                                vid_id = downloaded_link.split("v=")[-1] if "v=" in downloaded_link else downloaded_link.split("/")[-1]
-                                url = downloaded_link
-                            else:
-                                vid_id = ""
-                                url = f"{title} {artist if artist else ''} audio".strip()
-
-                            podcasts_to_download.append({
-                                "id": vid_id,
-                                "url": url,
-                                "title": title,
-                                "artist": artist if artist else "Unknown",
-                                "is_podcast": True,
-                                "target_file": file,
-                            })
-                    
-        except Exception as e:
-            return f"Error syncing to local DB: {e}"
-        
-        if songs_to_download or podcasts_to_download:
-            for song_data in songs_to_download + podcasts_to_download:
-                try:
-                    self.api.download_manager.submit(song_data, block=False)
-                except Exception as e:
-                    print(f" [Python] Could not enqueue download for {song_data.get('title')}: {e}")
-
-            def _complete():
-                if getattr(self.api, '_window', None):
-                    self.api._window.evaluate_js("if (typeof window.pywebview !== 'undefined' && typeof window.pywebview.api !== 'undefined') window.pywebview.api.send_song_list();")
-
-            self.api.download_manager.set_idle_callback(_complete)
-
-        msg = f"Synced {added_count} new entries from remote DB. Started downloading {len(songs_to_download)} songs."
-        if podcasts_added or podcasts_to_download:
-            msg += f" Podcasts: {podcasts_added} new entries, {len(podcasts_to_download)} downloads started."
-        return msg

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { engine } from '../../audio/engine'
+import { pushResumeSpot } from '../../store/player'
+import { useAudioClock } from '../../audio/clock'
 import { activeLrcIndex, parseLrc } from '../../lyrics'
 
 // Shared synced-lyrics renderer (desktop renderLyrics + updateHighlightedLine):
@@ -16,24 +18,20 @@ export function useSongLyrics(
   artist: string,
   durationSec: number | undefined,
   enabled: boolean,
+  chapterId?: number | null,
 ) {
   return useQuery({
-    queryKey: ['lyrics', file],
-    queryFn: () => api.songLyrics(file!, title, artist, durationSec),
+    queryKey: ['lyrics', file, chapterId ?? ''],
+    queryFn: () => api.songLyrics(file!, title, artist, durationSec, false, chapterId),
     enabled: enabled && !!file,
     retry: false,
   })
 }
 
 export function useAudioPosition(): number {
-  const [position, setPosition] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setPosition(engine.time())
-    }, 250)
-    return () => window.clearInterval(id)
-  }, [])
-  return position
+  // Lyric highlight clock (250ms): shares one interval across every mounted
+  // lyrics view instead of polling per component.
+  return useAudioClock(250)
 }
 
 export const LYRICS_OFFSET_STEP_MS = 250;
@@ -77,6 +75,7 @@ export default function SyncedLyrics({
   plain,
   isLoading,
   offsetMs = 0,
+  chapterStartSecs = 0,
   className = '',
   loadingLabel = 'Loading lyrics…',
   emptySlot,
@@ -86,6 +85,10 @@ export default function SyncedLyrics({
   isLoading: boolean
   // Highlight timing correction, milliseconds (server-persisted per song).
   offsetMs?: number
+  // Chapter-relative lyric clock (podcast chapters): lrclib timestamps
+  // describe the song, so the episode clock is rebased to the chapter.
+  // 0 = file flow, unchanged behavior.
+  chapterStartSecs?: number
   className?: string
   loadingLabel?: string
   emptySlot?: ReactNode
@@ -93,7 +96,7 @@ export default function SyncedLyrics({
   const lines = useMemo(() => parseLrc(synced ?? null), [synced])
   const position = useAudioPosition()
 
-  const activeIdx = activeLrcIndex(lines, position + offsetMs / 1000)
+  const activeIdx = activeLrcIndex(lines, position - chapterStartSecs + offsetMs / 1000)
   const listRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLParagraphElement>(null)
 
@@ -125,8 +128,13 @@ export default function SyncedLyrics({
               key={`${line.timeSec}-${i}`}
               ref={i === activeIdx ? activeRef : undefined}
               onClick={() => {
-                engine.seek(line.timeSec)
-                void api.seek(line.timeSec).catch(() => {})
+                const at = chapterStartSecs + line.timeSec
+                engine.seek(at)
+                // Paused lyric seeks move this browser's resume spot.
+                void api
+                  .seek(at)
+                  .then(() => pushResumeSpot())
+                  .catch(() => {})
               }}
               className={`lyric-line font-bold cursor-pointer transition-all duration-300 text-4xl sm:text-5xl lg:text-6xl xl:text-7xl ${
                 i === activeIdx ? 'text-white scale-105' : 'text-zinc-600 hover:text-zinc-400'

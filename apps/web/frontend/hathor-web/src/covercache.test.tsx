@@ -27,6 +27,24 @@ describe('CoverArt cache', () => {
     expect(mockSong).toHaveBeenCalledTimes(1)
   })
 
+  it('caps concurrent detail fetches so covers cannot starve transport', async () => {
+    // Six rows mount at once (fresh list render): only four detail fetches
+    // may be inflight — the rest wait instead of saturating the browser's
+    // connection pool and stalling play/toggle behind covers.
+    const resolvers: Array<(v: unknown) => void> = []
+    mockSong.mockImplementation(() => new Promise((r) => resolvers.push(r)))
+    const mounts = Array.from({ length: 6 }, (_, i) =>
+      render(<CoverArt file={`cap-${i}.mp3`} src={null} alt="" />),
+    )
+    await waitFor(() => expect(mockSong).toHaveBeenCalledTimes(4))
+    expect(resolvers).toHaveLength(4)
+    resolvers.splice(0).forEach((r, i) => r({ coverArt: `data:CAP${i}` }))
+    await waitFor(() => expect(mockSong).toHaveBeenCalledTimes(6))
+    resolvers.splice(0).forEach((r, i) => r({ coverArt: `data:CAP${i + 4}` }))
+    await waitFor(() => expect(screen.getAllByAltText('')).toHaveLength(6))
+    mounts.forEach((m) => m.unmount())
+  })
+
   it('refetches after eviction (metadata edit / remove / delete)', async () => {
     mockSong.mockResolvedValueOnce({ coverArt: 'data:OLD' })
     const { unmount } = render(<CoverArt file="g.mp3" src={null} alt="" />)

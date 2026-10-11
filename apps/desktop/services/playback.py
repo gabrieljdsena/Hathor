@@ -54,6 +54,16 @@ class PlaybackController:
         self._xfade_lock = threading.RLock()
         self._threads_started = False
 
+        # --- Podcast chapter-skip state (web parity) ---
+        # Cached on every track change so the 0.2s monitor tick never hits
+        # SQLite: {'file': str, 'chapters': [(start, end_or_None), ...]} or None.
+        self._chapter_state = None
+
+        # --- Per-track normalization gain (web parity) ---
+        # Linear multiplier for the current track (<= 1.0, attenuate-only so
+        # nothing clips). Refreshed on every track change; 1.0 when unmeasured.
+        self._track_gain = 1.0
+
     # ==========================
     # Queue persistence
     # ==========================
@@ -353,6 +363,99 @@ class PlaybackController:
         except (TypeError, ValueError):
             return 1.0
 
+    def _track_gain_for(self, song):
+        """Linear normalization multiplier for a song dict (<= 1.0).
+
+        1.0 when unmeasured — and in that case a background analysis is
+        queued (songs only, web parity) so the library converges as you
+        listen instead of blocking play on a full-file loudnorm pass.
+        """
+        filename = (song or {}).get('File') if isinstance(song, dict) else None
+        if not filename:
+            return 1.0
+        try:
+            value = self.api.db.get_song_loudness(filename)
+        except Exception:
+            value = None
+        if value is None and not (song or {}).get('IsPodcast'):
+            self._queue_loudness_analysis(filename)
+        try:
+            from services import loudness as loudness_mod
+            return loudness_mod.gain_for_lufs(value)
+        except Exception:
+            return 1.0
+
+    def _queue_loudness_analysis(self, filename):
+        """Daemon-thread loudnorm measure + persist, once per file. Never raises."""
+        try:
+            pending = self.__dict__.setdefault('_loudness_pending', set())
+            if filename in pending:
+                return
+            pending.add(filename)
+        except Exception:
+            return
+
+        def work():
+            try:
+                from services import startup_maintenance
+                found = startup_maintenance.find_ffmpeg()
+                exe = found.get('exe') if found.get('found') else None
+                path = os.path.join(self._base_for({'File': filename}), filename)
+                from services import loudness as loudness_mod
+                value = loudness_mod.analyze_file(exe, path) if os.path.isfile(path) else None
+                if value is not None:
+                    self.api.db.set_song_loudness(filename, value)
+            except Exception as e:
+                print(f" [Python] Loudness analysis failed for {filename}: {str(e)}")
+            finally:
+                try:
+                    pending.discard(filename)
+                except Exception:
+                    pass
+
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception:
+            try:
+                pending.discard(filename)
+            except Exception:
+                pass
+
+    def _effective_volume(self, gain=None):
+        """User volume leveled by the track gain (mute stays mute)."""
+        try:
+            g = self._track_gain if gain is None else gain
+            return max(0.0, min(1.0, float(self._user_volume()) * float(g)))
+        except Exception:
+            return self._user_volume()
+
+    def _push_resume_spot(self):
+        """Snapshot (file, position) to the shared remote table (daemon thread).
+
+        Pause is the resume signal: pushing live positions on track change
+        would clobber genuine paused spots elsewhere. Never raises, never
+        blocks playback.
+        """
+        try:
+            filename = self.api.current_filename
+            if not filename:
+                return
+            position = float(self.get_current_pos())
+            is_podcast = bool((getattr(self.api, 'last_song', None) or {}).get('IsPodcast'))
+        except Exception:
+            return
+
+        def work():
+            # Resume push used to write the retired remote DB (sync.py).
+            # Re-homing it on the server needs a device-spots table — until
+            # then the pause spot stays local-only.
+            return
+
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception:
+            pass
+
     def _ensure_threads(self):
         """Start the end-of-stream + crossfade monitors once the mixer is ready."""
         if self._threads_started:
@@ -457,6 +560,7 @@ class PlaybackController:
                         ramping = False
                     else:
                         continue
+                self._maybe_chapter_skip()
                 if out == 'music':
                     if self._music_ended():
                         self.play_next(auto=True)
@@ -606,6 +710,11 @@ class PlaybackController:
             return
         nxt_path = os.path.join(self._base_for(next_song), str(next_song.get('File')))
         chan = None
+        # Per-track normalization across the overlap: the outgoing track
+        # keeps its own gain, the incoming track uses its own (the commit
+        # below refreshes self._track_gain to the new track mid-ramp).
+        old_gain = self._track_gain
+        new_gain = self._track_gain_for(next_song)
         try:
             if to_channel:
                 try:
@@ -700,15 +809,15 @@ class PlaybackController:
                 out_gain = math.cos(t * half_pi)
                 in_gain = math.sin(t * half_pi)
                 if to_channel:
-                    pygame.mixer.music.set_volume(vol * out_gain)
+                    pygame.mixer.music.set_volume(vol * old_gain * out_gain)
                     if chan is not None:
-                        chan.set_volume(vol * in_gain)
+                        chan.set_volume(vol * new_gain * in_gain)
                 else:
-                    pygame.mixer.music.set_volume(vol * in_gain)
+                    pygame.mixer.music.set_volume(vol * new_gain * in_gain)
                     with self._xfade_lock:
                         live_chan = self._xfade_chan
                     if live_chan is not None:
-                        live_chan.set_volume(vol * out_gain)
+                        live_chan.set_volume(vol * old_gain * out_gain)
             except Exception:
                 pass
 
@@ -717,7 +826,8 @@ class PlaybackController:
                 return
             self._finish_ramp_now = False
         try:
-            vol = self._user_volume()
+            # Post-commit: self._track_gain is the new track's.
+            vol = self._effective_volume()
             if to_channel:
                 try:
                     pygame.mixer.music.set_volume(0.0)
@@ -764,7 +874,7 @@ class PlaybackController:
                 pass
         if ramping or out == 'chan':
             try:
-                pygame.mixer.music.set_volume(self._user_volume())
+                pygame.mixer.music.set_volume(self._effective_volume())
             except Exception:
                 pass
         with self._xfade_lock:
@@ -789,7 +899,7 @@ class PlaybackController:
 
     def sync_output_volume(self):
         """Apply the user volume to whichever output is active."""
-        vol = self._user_volume()
+        vol = self._effective_volume()
         try:
             pygame.mixer.music.set_volume(vol)
         except Exception:
@@ -804,12 +914,116 @@ class PlaybackController:
         except Exception:
             pass
 
+    # ==========================
+    # Podcast chapter-skip (web parity)
+    # ==========================
+    def _chapter_skip_enabled(self):
+        try:
+            return bool(getattr(settings, 'chapter_skip', False))
+        except Exception:
+            return False
+
+    def _refresh_chapter_state(self, song):
+        """Cache chapter marks for the new track (podcasts only, skip on)."""
+        self._chapter_state = None
+        try:
+            if not song or not song.get('IsPodcast'):
+                return
+            if not self._chapter_skip_enabled():
+                return
+            db = getattr(self.api, 'db', None)
+            if db is None:
+                return
+            chapters = db.get_podcast_chapters(song.get('File')) or []
+            self._chapter_state = {
+                'file': song.get('File'),
+                'chapters': [
+                    (float(c.get('startSecs') or 0),
+                     None if c.get('endSecs') is None else float(c.get('endSecs')))
+                    for c in chapters
+                ],
+            }
+        except Exception as e:
+            print(f" [Python] Chapter state error: {e}")
+            self._chapter_state = None
+
+    def _seek_to_seconds(self, sec):
+        """Seek the current file (progress_slider_click core, no crossfade)."""
+        try:
+            self._cancel_crossfade()
+        except Exception:
+            pass
+        try:
+            base = settings.podcasts_path if (self.api.last_song or {}).get('IsPodcast') else settings.path
+            pygame.mixer.music.load(os.path.join(base, str(self.api.current_filename)))
+        except Exception as e:
+            print(f" [Python] Could not load file for chapter seek: {e}")
+            return
+        pygame.mixer.music.play(0, float(sec))
+        self.current_time_offset = float(sec)
+        self.last_play_time = time.time()
+        if not self.api.playing:
+            pygame.mixer.music.pause()
+            self.pause_time = float(sec)
+
+    def _maybe_start_at_first_chapter(self, song):
+        """Web parity: timestamped episodes start at the first chapter."""
+        try:
+            state = self._chapter_state
+            if not state or state.get('file') != (song or {}).get('File'):
+                return
+            chapters = state.get('chapters') or []
+            if not chapters:
+                return
+            first_start = chapters[0][0]
+            if first_start > 1.0:
+                self._seek_to_seconds(first_start)
+        except Exception as e:
+            print(f" [Python] First-chapter seek error: {e}")
+
+    def _maybe_chapter_skip(self):
+        """Jump to the next chapter when the current one ends (0.2s tick)."""
+        try:
+            state = self._chapter_state
+            if not state:
+                return
+            current = (self.api.last_song or {}).get('File')
+            if not current or state.get('file') != current:
+                return
+            chapters = state.get('chapters') or []
+            if not chapters:
+                return
+            pos = self.get_current_pos()
+            current_idx = -1
+            for i, (start, _end) in enumerate(chapters):
+                if pos >= start:
+                    current_idx = i
+                else:
+                    break
+            if current_idx < 0:
+                return
+            _start, end = chapters[current_idx]
+            if end is None:
+                return  # open-ended: never auto-jump
+            if pos >= end and current_idx + 1 < len(chapters):
+                next_start = chapters[current_idx + 1][0]
+                if next_start > pos:
+                    self._seek_to_seconds(next_start)
+        except Exception as e:
+            print(f" [Python] Chapter skip error: {e}")
+
     def _commit_new_song_state(self, next_song, shift_queue_ui=True):
         """Shared bookkeeping when a new song takes over (DB/history/UI)."""
         if self.api.last_song and self.api.last_song.get('File'):
             self.prev_songs.append(self.api.last_song)
         self.api.current_filename = next_song.get('File')
         self.api.last_song = next_song
+        # Refresh the normalization gain with the new track (1.0 when
+        # unmeasured — analysis backfills in the background).
+        try:
+            self._track_gain = self._track_gain_for(next_song)
+        except Exception:
+            self._track_gain = 1.0
         self.api.first_play = False
         self.last_play_time = time.time()
         self.current_time_offset = 0
@@ -862,6 +1076,7 @@ class PlaybackController:
                 self.api.media_controls.set_playing(True)
             except Exception:
                 pass
+        self._refresh_chapter_state(next_song)
         self.api.playing = True
 
     def _complete_ramp_to_channel(self, gen, next_song):
@@ -879,7 +1094,8 @@ class PlaybackController:
             except Exception:
                 pass
             try:
-                pygame.mixer.music.set_volume(self._user_volume())
+                # Aborted ramp: restore the (still current) track's level.
+                pygame.mixer.music.set_volume(self._effective_volume())
             except Exception:
                 pass
             with self._xfade_lock:
@@ -1088,15 +1304,20 @@ class PlaybackController:
                     except Exception:
                         pass
                 return False
-            pygame.mixer.music.set_volume(settings.volume)
+            # Direct (non-fade) play: refresh the normalization gain here —
+            # this path doesn't go through _commit_new_song_state.
+            self._track_gain = self._track_gain_for(current_song)
+            pygame.mixer.music.set_volume(self._effective_volume())
             pygame.mixer.music.play()
             self.current_time_offset = 0
             self.last_play_time = time.time()
-            
+            self._refresh_chapter_state(current_song)
+            self._maybe_start_at_first_chapter(current_song)
+
             if opening:
                 pygame.mixer.music.pause()
                 self.api.playing = False
-                self.pause_time = 0
+                self.pause_time = float(self.current_time_offset or 0)
                 if hasattr(self.api, 'media_controls'):
                     self.api.media_controls.set_playing(False)
                 if getattr(self.api, '_window', None):
@@ -1141,6 +1362,8 @@ class PlaybackController:
             self.pause_time = self.get_current_pos()
             pygame.mixer.music.pause()
             self.api.playing = False
+            # Pause is the resume signal: snapshot for other devices.
+            self._push_resume_spot()
             if hasattr(self.api, 'media_controls'):
                 self.api.media_controls.set_playing(False)
         else:

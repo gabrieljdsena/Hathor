@@ -30,16 +30,18 @@ public sealed class PodcastsController(
         return episode is null ? NotFound() : Ok(episode);
     }
 
+    // 202 when the episode is playing: stashed, applies on track change.
     [HttpPatch("{file}")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<SongDto>> Patch(
+    public async Task<ActionResult<UpdatePodcastMetadataResult>> Patch(
         string file, [FromBody] UpdatePodcastRequest body, CancellationToken ct)
     {
         try
         {
             var updated = await mediator.Send(new UpdatePodcastMetadataCommand(
                 CurrentUserId(), file, body.Title, body.Artist, body.CoverArt), ct);
-            return updated is null ? NotFound() : Ok(updated);
+            if (updated is null) return NotFound();
+            return updated.Pending ? Accepted(updated) : Ok(updated);
         }
         catch (InvalidOperationException ex)
         {
@@ -73,7 +75,7 @@ public sealed class PodcastsController(
         {
             var principal = await tokens.ValidateAsync(token);
             if (principal is not null &&
-                TokenValidator.HasScope(principal, ScopeAuthorization.LibraryRead) &&
+                TokenValidator.SatisfiesLibraryRead(principal) &&
                 Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var tokenUser))
                 userId = tokenUser;
         }
@@ -170,7 +172,7 @@ public sealed class PodcastsController(
     {
         var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (id is null || !User.Identity?.IsAuthenticated == true) return null;
-        if (!User.FindAll("scope").Any(c => c.Value == ScopeAuthorization.LibraryRead)) return null;
+        if (!ScopeAuthorization.SatisfiesLibraryRead(User)) return null;
         return Guid.TryParse(id, out var userId) ? userId : null;
     }
 }

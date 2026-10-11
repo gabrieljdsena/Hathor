@@ -34,7 +34,6 @@ pygame         # audio playback
 winsdk         # Windows.Media (SMTC) overlay + media keys
 psutil         # debug resource monitor
 pykakasi       # Japanese text → romaji (lyrics)
-pymysql        # MySQL/TiDB remote sync
 pillow         # image handling for cover art
 ```
 

@@ -39,12 +39,12 @@ function matchesToken(hayTokens: string[], token: string): boolean {
   return false
 }
 
-export function maxDistance(token: string): number {
+function maxDistance(token: string): number {
   return token.length < 4 ? 1 : Math.min(3, Math.floor(token.length / 3))
 }
 
 // Optimal string alignment: adjacent transpositions count as one edit.
-export function damerauLevenshtein(a: string, b: string, maxDist: number): number {
+function damerauLevenshtein(a: string, b: string, maxDist: number): number {
   if (a === b) return 0
   if (a.length === 0) return b.length
   if (b.length === 0) return a.length
@@ -72,7 +72,7 @@ export function damerauLevenshtein(a: string, b: string, maxDist: number): numbe
   return prev[b.length]
 }
 
-export function normalize(value: string): string {
+function normalize(value: string): string {
   // Strip diacritics so "beyonce" matches "Beyoncé".
   const folded = value
     .normalize('NFD')
@@ -81,6 +81,6 @@ export function normalize(value: string): string {
   return folded.split(/\s+/).filter(Boolean).join(' ')
 }
 
-export function tokenize(normalized: string): string[] {
+function tokenize(normalized: string): string[] {
   return normalized.split(/[\s\-_/,.;:!?"'()[\]]+/).filter(Boolean)
 }

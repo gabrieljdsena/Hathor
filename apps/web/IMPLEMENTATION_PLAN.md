@@ -1,5 +1,13 @@
 # Hathor Web — Implementation Plan (C# + React + DDD + Dapper)
 
+> **Superseded in part (Oct 2026):** the shared MySQL/TiDB remote is retired.
+> Devices sync over the Web API now — `GET /api/v1/sync/delta?cursor=`,
+> `POST /api/v1/sync/import` (→ `missingFiles`), `GET/PUT
+> /api/v1/sync/files/{file}` (see `packages/contracts/README.md`); the
+> per-library pull-/push- endpoints, `RemotePull/PushService`, and the
+> compose `db` service are deleted. The server is Postgres-only. Plan items
+> below that describe the remote DB are historical — everything else stands.
+
 **Stack:** C# ASP.NET Core 10 backend (DDD + REST + EF Core + Dapper) + React 18 + Vite + Tailwind frontend.
 **App name:** Hathor (matches desktop + mobile).
 **Sources of truth:**

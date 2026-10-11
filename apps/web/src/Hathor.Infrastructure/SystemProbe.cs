@@ -24,7 +24,7 @@ public sealed class SystemProbe(
         var installed = FfmpegPaths.InstalledExe(config);
         if (installed is not null)
             return new FFmpegStatusDto(true, installed, Path.GetDirectoryName(installed), null);
-        var exe = FfmpegPaths.ExeName;
+        var exe = FfmpegPaths.FindOnPath() ?? FfmpegPaths.ExeName;
         try
         {
             using var proc = new Process
@@ -49,6 +49,43 @@ public sealed class SystemProbe(
         {
             return new FFmpegStatusDto(false, null, null,
                 "FFmpeg not found. Download it from Settings, install FFmpeg on PATH, or set the FFmpeg__Path environment variable.");
+        }
+    }
+
+    public FFmpegStatusDto GetYtDlpStatus()
+    {
+        // Resolution order: explicit YtDlp:Path → app-downloaded → PATH.
+        var configured = config["YtDlp:Path"];
+        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
+            return new FFmpegStatusDto(true, configured, Path.GetDirectoryName(configured), null);
+        var installed = YtDlpPaths.InstalledExe(config);
+        if (installed is not null)
+            return new FFmpegStatusDto(true, installed, Path.GetDirectoryName(installed), null);
+        var exe = YtDlpPaths.FindOnPath() ?? YtDlpPaths.ExeName;
+        try
+        {
+            using var proc = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    ArgumentList = { "--version" },
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                },
+            };
+            proc.Start();
+            var first = proc.StandardOutput.ReadLine() ?? "";
+            if (!proc.WaitForExit(10_000)) { try { proc.Kill(); } catch { } }
+            return proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(first)
+                ? new FFmpegStatusDto(true, exe, null, first.Trim())
+                : new FFmpegStatusDto(false, null, null, "yt-dlp --version failed");
+        }
+        catch
+        {
+            return new FFmpegStatusDto(false, null, null,
+                "yt-dlp not found. Download it from Settings, install yt-dlp on PATH, or set the YtDlp__Path environment variable.");
         }
     }
 

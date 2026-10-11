@@ -5,6 +5,8 @@ import { usePlayer } from '../store/player'
 import Icon from './ui/icons'
 import { LoadingState } from './ui/states'
 import SyncedLyrics, { LYRICS_OFFSET_STEP_MS, useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
+import { useActiveChapter } from './ui/PodcastTimestamps'
+import { splitChapterName } from '../utils/timestamps'
 
 // Timing correction beside Romaji: −/+ steppers (250ms), numeric input
 // with native arrows, persisted server-side per song (0 = none, deleted).
@@ -81,12 +83,21 @@ export default function LyricsSheet({
   const [showSearch, setShowSearch] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
+  // Podcast chapter lyrics: track = active chapter name, artist always
+  // empty (track-only search). Chapter flips refetch under a new query key;
+  // the loading state covers the swap so highlight and base never mismatch.
+  const chapter = useActiveChapter(song?.file, song?.isPodcast)
+  // Chapter search prefill: split "Title - Artist" into the right fields
+  // (the backend would read the whole name as the track and split it
+  // backwards). Non-chapter songs keep their own metadata.
+  const chapterSplit = chapter ? splitChapterName(chapter.name) : null
   const { data: lyrics, isLoading } = useSongLyrics(
     song?.file,
-    song?.title ?? '',
-    song?.artist ?? '',
+    chapter?.name ?? song?.title ?? '',
+    chapter ? '' : (song?.artist ?? ''),
     song?.duration,
     open,
+    chapter?.id ?? null,
   )
 
   // Short content hash for the romanization key: the raw synced/plain
@@ -175,13 +186,14 @@ export default function LyricsSheet({
         ) : showSearch ? (
           <LyricsSearchPanel
             songFile={song.file}
-            initialTrack={song.title}
-            initialArtist={song.artist === 'Unknown' ? '' : song.artist}
+            initialTrack={chapterSplit?.title ?? song.title}
+            initialArtist={chapterSplit?.artist ?? (song.artist === 'Unknown' ? '' : song.artist)}
             durationSec={song.duration}
             hasLyrics={hasLyrics}
             notice={notice}
             setNotice={setNotice}
             onDone={() => setShowSearch(false)}
+            chapterId={chapter?.id ?? null}
           />
         ) : (
           <SyncedLyrics
@@ -189,6 +201,7 @@ export default function LyricsSheet({
             plain={plain}
             isLoading={isLoading}
             offsetMs={offsetMs}
+            chapterStartSecs={chapter?.startSecs ?? 0}
             emptySlot={
               <div className="flex flex-col items-center gap-4">
                 <p className="text-zinc-500 text-xl font-semibold">No lyrics found.</p>
@@ -230,6 +243,7 @@ function LyricsSearchPanel({
   notice,
   setNotice,
   onDone,
+  chapterId = null,
 }: {
   songFile: string
   initialTrack: string
@@ -239,6 +253,9 @@ function LyricsSearchPanel({
   notice: string | null
   setNotice: (m: string | null) => void
   onDone: () => void
+  // Chapter context: save/remove/refetch target the chapter cache row so
+  // the chapter view reads back exactly what was picked.
+  chapterId?: number | null
 }) {
   const queryClient = useQueryClient()
   const [track, setTrack] = useState(initialTrack)
@@ -259,7 +276,8 @@ function LyricsSearchPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songFile])
 
-  const refreshLyrics = () => queryClient.invalidateQueries({ queryKey: ['lyrics', songFile] })
+  const refreshLyrics = () =>
+    queryClient.invalidateQueries({ queryKey: ['lyrics', songFile] })
 
   const search = (t: string, a: string) => {
     if (!t.trim()) {
@@ -291,7 +309,7 @@ function LyricsSearchPanel({
     setSavingId(hit.id)
     setNotice(null)
     void api
-      .saveLyrics(songFile, hit.syncedLyrics, hit.plainLyrics)
+      .saveLyrics(songFile, hit.syncedLyrics, hit.plainLyrics, chapterId)
       .then(() => {
         refreshLyrics()
         setNotice(`Saved “${hit.trackName} — ${hit.artistName}”.`)
@@ -305,9 +323,9 @@ function LyricsSearchPanel({
     setBusyAction('refetch')
     setNotice(null)
     void api
-      .songLyrics(songFile, track.trim() || initialTrack, artist.trim(), durationSec, true)
+      .songLyrics(songFile, track.trim() || initialTrack, artist.trim(), durationSec, true, chapterId)
       .then((fresh) => {
-        queryClient.setQueryData(['lyrics', songFile], fresh)
+        queryClient.setQueryData(['lyrics', songFile, chapterId ?? ''], fresh)
         setNotice('Re-fetched from the provider.')
         onDone()
       })
@@ -319,7 +337,7 @@ function LyricsSearchPanel({
     setBusyAction('remove')
     setNotice(null)
     void api
-      .deleteLyrics(songFile)
+      .deleteLyrics(songFile, chapterId)
       .then(() => {
         refreshLyrics()
         setNotice('Saved lyrics removed — re-fetching from the provider.')

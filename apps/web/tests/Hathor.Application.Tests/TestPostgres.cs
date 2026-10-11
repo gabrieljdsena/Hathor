@@ -6,13 +6,14 @@ namespace Hathor.Application.Tests;
 
 // Ephemeral Postgres databases for handler tests (real SQL incl.
 // ExecuteDelete, unlike the InMemory provider). Requires a reachable
-// Postgres superuser connection: HATHOR_TEST_PG, e.g.
-// "Host=localhost;Port=5433;Username=postgres;Password=postgres;Database=postgres".
+// Postgres superuser connection via HATHOR_TEST_PG, e.g.
+// "Host=localhost;Port=5433;Username=postgres;Password=<local-dev-password>;Database=postgres".
+// NOTE: no password baked in — set HATHOR_TEST_PG in your shell/CI.
 public static class TestPostgres
 {
     public static string AdminConnectionString =>
         Environment.GetEnvironmentVariable("HATHOR_TEST_PG")
-        ?? "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=postgres";
+        ?? "Host=localhost;Port=5432;Username=postgres;Database=postgres";
 
     public static async Task<(string ConnectionString, string Database)> CreateDatabaseAsync(string prefix)
     {

@@ -45,10 +45,11 @@ A separate library for podcasts and other spoken audio, kept fully apart from mu
 - **Separate folder** – `%appdata%\musicPlayerPodcasts` by default (changeable in Settings). Files here never show up in All Songs, Daily Mix, or Recently Played.
 - **Downloading** – the Download view has a **Songs / Podcast-Audio** toggle. Podcast downloads skip the iTunes song-match (which would mangle episode names) and keep the uploader's title/author instead. Failed podcast downloads retry as podcasts.
 - **Listing is lightweight** – the view shows filenames/DB titles and dates only. Full metadata (duration, cover) loads on demand: **Get Metadata** in the episode menu, automatically when you press play, or via **Edit Info**.
-- **Episode menu** (⋮ button or right-click) – Play, Play Next, Add to Queue, Get Metadata, Edit Info, Delete.
+- **Episode menu** (⋮ button or right-click) – Play, Play Next, Add to Queue, Get Metadata, Edit Info, Tags…, Chapters…, Delete.
+- **Chapters** – per-episode chapter marks (name + start, optional end; `mm:ss` input). Click a chapter's time chip to jump there. With **Chapter auto-skip** on (Settings), episodes start at the first chapter and skip to the next chapter when one ends; open-ended chapters never auto-jump.
 - **No playlists, but queues merge** – episodes queue among themselves, and Play Next / Add to Queue work in both directions, so one queue can mix songs and episodes. Episode plays don't pollute music history, Daily Mix, or Recently Played.
 - **Editing** – Edit Info opens the shared metadata modal and writes tags to the episode file plus the `Podcasts` table.
-- **Sync** – podcasts sync both ways with the remote DB like songs do (see [Database & remote sync](DATABASE.md)).
+- **Sync** – podcasts sync both ways with the server like songs do (see [Database & sync](DATABASE.md)).
 
 ## Now Playing & shortcuts
 
@@ -61,7 +62,7 @@ A separate library for podcasts and other spoken audio, kept fully apart from mu
 - **New playlist** – name + optional description + optional cover image.
 - **Add songs** – from any song, pick one or more playlists to add it to.
 - **Open a playlist** – shows its songs; playing one queues the rest of the playlist.
-- **Edit / Delete** – rename, change description/cover, or delete. Deletion is recorded for remote sync (see [Database & remote sync](DATABASE.md)).
+- **Edit / Delete** – rename, change description/cover, or delete. Deletion is recorded for server sync (see [Database & sync](DATABASE.md)).
 
 ## Download Songs
 
@@ -82,6 +83,7 @@ The lyrics panel shows the current song's lyrics.
 - **Local cache** – fetched lyrics are stored in the `Lyrics` table so they work offline.
 - **Unknown artists** – LRCLIB's exact endpoint requires an artist (it answers those requests with HTTP 400), so artist-less songs fall back to a track-only search that is only accepted on an exact track-name match.
 - **Romanization** – for Japanese tracks, a "romaji" toggle converts kana to Hepburn romanization via `pykakasi` (both for timed and plain lyrics).
+- **Highlight timing correction** – if the synced highlighting runs early/late, nudge it with the −1s/−.1s/+.1s/+1s stepper in the lyrics header. Persisted per song (±20 s max) in the `Lyrics` table, so it survives restarts and syncs to other devices.
 
 ## History
 
@@ -99,23 +101,23 @@ Two paginated lists:
 - **Volume** – default playback volume.
 - **Crossfade** – enable/disable overlap between consecutive tracks (1–12 s, equal-power curve). Applies to automatic transitions; manual next/previous stay instant. Track handoff is gapless whether crossfade is on or off.
 
-## Remote sync (manual)
+## Server sync (manual)
 
 There is **no background auto-sync**. Both directions run only when you click:
 
-- **Push to Remote** – one-shot upload of songs, podcasts, playlists, lyrics, and history to the remote DB.
-- **Sync Remote** (pull) – downloads remote rows into SQLite and queues downloads for missing files (songs → songs folder, podcasts → podcasts folder). Pulling also adopts the remote daily mix of the day.
+- **Push to Server** – one-shot upload of songs, podcasts, playlists, lyrics, and history rows plus new file bytes to the server.
+- **Sync from Server** (pull) – downloads the incremental delta into SQLite and fetches missing files straight from the server (songs → songs folder, podcasts → podcasts folder). Pulling also adopts the server daily mix of the day.
 - **Sync Local Songs to Database** – rescans the songs folder into the DB (see Podcasts folder row for the podcast equivalent).
 
 ## Windows media keys / overlay
 
 Hathor registers **System Media Transport Controls** via `winsdk` (see `services/windows_media.py`). Media keys (Play/Pause, Next, Previous) on your keyboard control playback, the OS media overlay shows the song title/artist/album art, and its press status stays in sync with the app's play state.
 
-## First-run remote sync
+## First-run server sync
 
-If a `.env` with `DB_HOST` is present, the first launch asks whether to load the library from the remote DB. Choosing **"Yes, load from remote"**:
+If a `.env` with `HATHOR_API_URL`/`HATHOR_API_KEY` is present, the first launch asks whether to load the library from the sync server. Choosing **"Yes, load from server"**:
 
 1. Pulls songs, podcasts, playlists, lyrics, daily mix, and history down into the local SQLite DB.
-2. Queues downloads for any songs/podcasts whose files aren't present locally (each into its own folder).
+2. Downloads any songs/podcasts whose files aren't present locally, straight from the server (each into its own folder).
 
 Afterwards, sync stays fully manual via the Settings buttons above.

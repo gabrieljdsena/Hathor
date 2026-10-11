@@ -121,6 +121,13 @@
         </svg>
         Tags…
     </button>
+    <button id="podm-chapters"
+        class="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-white/5 hover:text-white transition-colors flex items-center gap-2 cursor-pointer">
+        <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        Chapters…
+    </button>
     <button id="podm-delete"
         class="w-full text-left px-4 py-2 text-sm hover:bg-white/5 transition-colors flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer">
         <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -176,6 +183,38 @@
                 class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none">
             <button onclick="window._podAssignCreate()"
                 class="px-4 py-2 bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium rounded-lg transition-all active:scale-95 shadow-lg shadow-orange-500/20 focus:outline-none cursor-pointer">Add</button>
+        </div>
+    </div>
+</div>
+
+<!-- Per-episode chapter marks modal -->
+<div id="pod-chapters-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="w-full max-w-md bg-zinc-900/90 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl p-6">
+        <div class="flex items-center justify-between mb-1">
+            <h2 class="text-xl font-bold text-zinc-100">Chapters</h2>
+            <button onclick="window._podCloseChaptersModal()" title="Close"
+                class="p-2 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <p id="pod-chapters-caption" class="text-xs text-zinc-500 truncate mb-4"></p>
+        <div id="pod-chapters-list" class="flex flex-col gap-2 max-h-72 overflow-y-auto mb-4"></div>
+        <div class="border-t border-white/10 pt-4">
+            <p class="text-xs font-semibold text-orange-400 tracking-wide mb-2">ADD CHAPTER</p>
+            <div class="flex flex-col gap-2">
+                <input type="text" id="pod-chapter-name" placeholder="Name…" spellcheck="false"
+                    class="w-full bg-zinc-800/80 border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none">
+                <div class="flex gap-2">
+                    <input type="text" id="pod-chapter-start" placeholder="Start mm:ss" spellcheck="false"
+                        class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none font-mono">
+                    <input type="text" id="pod-chapter-end" placeholder="End mm:ss (optional)" spellcheck="false"
+                        class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none font-mono">
+                    <button onclick="window._podAddChapter()"
+                        class="px-4 py-2 bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium rounded-lg transition-all active:scale-95 shadow-lg shadow-orange-500/20 focus:outline-none cursor-pointer">Add</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -564,6 +603,7 @@
         byId('podm-getmeta', () => { const f = window._podMenuFile; if (f) _podGetMetadata(f); });
         byId('podm-edit', () => { const f = window._podMenuFile; if (f) _podEdit(f); });
         byId('podm-tags', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) window._podOpenAssign(f); });
+        byId('podm-chapters', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) window._podOpenChapters(f); });
         byId('podm-delete', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) _podDelete(f); });
     })();
 
@@ -598,6 +638,173 @@
 
     window._podCloseTagsModal = () => _podHideModal("pod-tags-modal");
     window._podCloseAssignModal = () => { window._podAssignFile = null; _podHideModal("pod-assign-modal"); };
+
+    // ---- Podcast chapter marks (web parity) ----
+    window._podChaptersFile = null;
+    window._podChaptersEditId = null;
+
+    window._podCloseChaptersModal = () => {
+        window._podChaptersFile = null;
+        window._podChaptersEditId = null;
+        _podHideModal("pod-chapters-modal");
+    };
+
+    function _podFmtTime(sec) {
+        if (sec === null || sec === undefined || isNaN(sec)) return "—";
+        sec = Math.max(0, Math.floor(sec));
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+        const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+        return (h > 0 ? h + ":" : "") + mm + ":" + String(s).padStart(2, "0");
+    }
+
+    function _podParseTime(raw) {
+        if (raw === null || raw === undefined) return null;
+        const t = String(raw).trim();
+        if (!t) return null;
+        if (/^\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+        const parts = t.split(":").map(p => p.trim());
+        if (parts.length > 3 || parts.some(p => !/^\d+(\.\d+)?$/.test(p))) return NaN;
+        let sec = 0;
+        for (const p of parts) sec = sec * 60 + parseFloat(p);
+        return sec;
+    }
+
+    function _podChapterApi() {
+        return (window.pywebview && window.pywebview.api) || null;
+    }
+
+    function _podSeekTo(sec) {
+        const api = _podChapterApi();
+        if (typeof window.progress_slider_click === "function") {
+            window.progress_slider_click(sec);
+        } else if (api && api.progress_slider_click) {
+            api.progress_slider_click(sec);
+        }
+    }
+
+    window._podOpenChapters = function (file) {
+        window._podChaptersFile = file;
+        window._podChaptersEditId = null;
+        const cap = document.getElementById("pod-chapters-caption");
+        if (cap) cap.textContent = file || "";
+        window._podRenderChapters();
+        _podShowModal("pod-chapters-modal");
+        setTimeout(() => { const i = document.getElementById("pod-chapter-name"); if (i) i.focus(); }, 50);
+    };
+
+    window._podRenderChapters = async function () {
+        const list = document.getElementById("pod-chapters-list");
+        if (!list) return;
+        const file = window._podChaptersFile;
+        const api = _podChapterApi();
+        let chapters = [];
+        if (api && api.get_podcast_chapters && file) {
+            try { chapters = await api.get_podcast_chapters(file); } catch (e) { chapters = []; }
+        }
+        list.innerHTML = "";
+        if (!chapters.length) {
+            list.innerHTML = `<p class="text-xs text-zinc-500">No chapters yet — mark the moments worth jumping back to.</p>`;
+            return;
+        }
+        const editId = window._podChaptersEditId;
+        chapters.forEach(c => {
+            const row = document.createElement("div");
+            row.className = "flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-2.5";
+            if (editId === c.id) {
+                row.innerHTML = `
+                    <div class="flex-1 min-w-0 flex flex-col gap-2">
+                        <input type="text" data-f="name" value="${_podEsc(c.name)}" spellcheck="false"
+                            class="w-full bg-zinc-800/80 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-orange-500/50">
+                        <div class="flex gap-2">
+                            <input type="text" data-f="start" value="${_podFmtTime(c.startSecs)}" spellcheck="false"
+                                class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-200 focus:outline-none focus:border-orange-500/50">
+                            <input type="text" data-f="end" value="${c.endSecs === null || c.endSecs === undefined ? '' : _podFmtTime(c.endSecs)}" placeholder="End (optional)" spellcheck="false"
+                                class="flex-1 min-w-0 bg-zinc-800/80 border border-white/10 rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-200 focus:outline-none focus:border-orange-500/50">
+                        </div>
+                    </div>
+                    <div class="flex flex-col gap-1 flex-shrink-0">
+                        <button data-act="save" title="Save" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-orange-500 hover:bg-orange-400 transition-all cursor-pointer">Save</button>
+                        <button data-act="cancel" title="Cancel" class="px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-white hover:bg-white/10 transition-all cursor-pointer">Cancel</button>
+                    </div>`;
+                row.querySelector('[data-act="save"]').onclick = async () => {
+                    const name = row.querySelector('[data-f="name"]').value;
+                    const start = _podParseTime(row.querySelector('[data-f="start"]').value);
+                    const endRaw = row.querySelector('[data-f="end"]').value;
+                    const end = endRaw.trim() ? _podParseTime(endRaw) : null;
+                    const res = await api.update_podcast_chapter(c.id, name, start, end);
+                    if (res && res.ok) {
+                        window._podChaptersEditId = null;
+                        window._podRenderChapters();
+                    } else {
+                        _podNotifyErr((res && res.message) || "Could not save the chapter.");
+                    }
+                };
+                row.querySelector('[data-act="cancel"]').onclick = () => {
+                    window._podChaptersEditId = null;
+                    window._podRenderChapters();
+                };
+            } else {
+                const endLabel = (c.endSecs === null || c.endSecs === undefined)
+                    ? "open-ended" : ("→ " + _podFmtTime(c.endSecs));
+                row.innerHTML = `
+                    <button data-act="seek" title="Skip to ${_podEsc(_podFmtTime(c.startSecs))}"
+                        class="font-mono text-xs font-semibold text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-lg px-2 py-1 hover:bg-orange-500/20 transition-all cursor-pointer whitespace-nowrap flex-shrink-0">${_podEsc(_podFmtTime(c.startSecs))}</button>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium text-zinc-100 truncate">${_podEsc(c.name)}</div>
+                        <div class="text-xs text-zinc-500">${_podEsc(endLabel)}</div>
+                    </div>
+                    <button data-act="edit" title="Edit chapter" class="p-2 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                    </button>
+                    <button data-act="delete" title="Delete chapter" class="p-2 rounded-full text-red-400/70 hover:text-red-300 hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>`;
+                row.querySelector('[data-act="seek"]').onclick = () => _podSeekTo(c.startSecs);
+                row.querySelector('[data-act="edit"]').onclick = () => {
+                    window._podChaptersEditId = c.id;
+                    window._podRenderChapters();
+                };
+                const delBtn = row.querySelector('[data-act="delete"]');
+                delBtn.onclick = async () => {
+                    if (delBtn.dataset.armed) {
+                        if (await api.delete_podcast_chapter(c.id)) {
+                            window._podRenderChapters();
+                        } else {
+                            _podNotifyErr("Could not delete the chapter.");
+                        }
+                    } else {
+                        delBtn.dataset.armed = "1";
+                        delBtn.classList.add("bg-red-500/20");
+                        delBtn.title = "Click again to confirm";
+                        setTimeout(() => { delete delBtn.dataset.armed; delBtn.classList.remove("bg-red-500/20"); }, 3000);
+                    }
+                };
+            }
+            list.appendChild(row);
+        });
+    };
+
+    window._podAddChapter = async function () {
+        const api = _podChapterApi();
+        const file = window._podChaptersFile;
+        if (!api || !file) return;
+        const nameEl = document.getElementById("pod-chapter-name");
+        const startEl = document.getElementById("pod-chapter-start");
+        const endEl = document.getElementById("pod-chapter-end");
+        const endRaw = endEl.value;
+        const res = await api.add_podcast_chapter(
+            file, nameEl.value, _podParseTime(startEl.value),
+            endRaw.trim() ? _podParseTime(endRaw) : null);
+        if (res && res.ok) {
+            nameEl.value = "";
+            startEl.value = "";
+            endEl.value = "";
+            window._podRenderChapters();
+            _podNotifyOk("Chapter added.");
+        } else {
+            _podNotifyErr((res && res.message) || "Could not add the chapter.");
+        }
+    };
 
     window._podOpenTagsModal = function () {
         window._podRenderTagsList();

@@ -1,8 +1,10 @@
 package com.musicplayer.android.data
 
 import android.content.Context
+import com.musicplayer.android.data.api.SyncApi
+import com.musicplayer.android.data.api.SyncApiException
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.db.AppDatabase
-import com.musicplayer.android.data.remote.RemoteDb
 import com.musicplayer.android.data.remote.RemoteWriter
 import com.musicplayer.android.engine.DownloadEngine
 import kotlinx.coroutines.Dispatchers
@@ -13,9 +15,9 @@ import kotlinx.coroutines.withContext
 
 // Manual-only sync (no background threads/timers): push runs here when the
 // Settings Push button is tapped; pull runs in PullWorker (first-run prompt
-// + Pull button). Semantics mirror desktop sync.py + web RemotePushService:
-// schema init, upserts, scoped link replace, tombstone propagation,
-// newest-wins mix + prune, incremental history past remote MAX(id).
+// + Pull button). Semantics mirror desktop api_sync push: rows + tombstones
+// via POST import, missing bytes via PUT, tombstones cleared only on
+// server accept.
 class SyncRepository(
     context: Context,
     private val engine: DownloadEngine,
@@ -43,32 +45,37 @@ class SyncRepository(
 
     suspend fun pushToRemote() {
         if (_state.value is SyncState.Running) return
-        _state.value = SyncState.Running("Connecting to remote DB…")
+        _state.value = SyncState.Running("Connecting to sync server…")
         try {
-            if (!RemoteDb.isConfigured()) {
-                _state.value = SyncState.Error("No remote DB configured. Remote sync unavailable.")
+            if (!SyncConfig.isConfigured()) {
+                _state.value = SyncState.Error(SyncConfig.NOT_CONFIGURED)
                 return
             }
+            val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
             val songsPushed = withContext(Dispatchers.IO) {
                 _state.value = SyncState.Running("Pushing songs, playlists and lyrics…")
-                RemoteWriter.pushSongs(db)
+                RemoteWriter.pushSongs(db, engine, api)
             }
             val podcastsPushed = withContext(Dispatchers.IO) {
                 _state.value = SyncState.Running("Pushing podcasts and tags…")
-                RemoteWriter.pushPodcasts(db)
+                RemoteWriter.pushPodcasts(db, engine, api)
             }
             val total = songsPushed.rows + podcastsPushed.rows
             refreshLocalList()
-            _state.value = SyncState.Done("Pushed $total rows to remote DB.")
+            _state.value = SyncState.Done("Pushed $total rows to sync server.")
         } catch (e: Exception) {
-            _state.value = SyncState.Error(describe("Error pushing to remote DB", e))
+            _state.value = SyncState.Error(describe("Error pushing to sync server", e))
         }
     }
 
     private fun describe(prefix: String, e: Exception): String {
         val msg = e.message.orEmpty()
-        return if (msg.contains("connect timeout", ignoreCase = true)) {
-            "$prefix: $msg (the remote cluster may be waking from sleep — try again in a minute)."
+        return if (e is SyncApiException) {
+            msg
+        } else if (msg.contains("connect", ignoreCase = true) ||
+            msg.contains("host", ignoreCase = true)
+        ) {
+            "$prefix: $msg (is the server on your LAN and running?)"
         } else {
             "$prefix: $msg"
         }

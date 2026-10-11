@@ -5,14 +5,29 @@ import hashlib
 import io
 import tempfile
 import settings
-import winsdk.windows.media as media
-import winsdk.windows.media.playback as playback
-from winsdk.windows.storage.streams import RandomAccessStreamReference
-from winsdk.windows.foundation import Uri
+
+try:
+    import winsdk.windows.media as media
+    import winsdk.windows.media.playback as playback
+    from winsdk.windows.storage.streams import RandomAccessStreamReference
+    from winsdk.windows.foundation import Uri
+    _HAS_WINSDK = True
+except ImportError:
+    media = None
+    playback = None
+    RandomAccessStreamReference = None
+    Uri = None
+    _HAS_WINSDK = False
+    print(" [Python] winsdk not available (Python 3.13+ has no wheel) —"
+          " SMTC media overlay disabled.")
 
 class WindowsMediaOverlay:
     def __init__(self, api):
         self.api = api
+        if not _HAS_WINSDK:
+            self._media_player = None
+            self._smtc = None
+            return
         self._media_player = playback.MediaPlayer()
         self._smtc = self._media_player.system_media_transport_controls
         self._smtc.is_play_enabled = True
@@ -45,12 +60,16 @@ class WindowsMediaOverlay:
                 self.api.play_prev()
 
     def set_playing(self, is_playing):
+        if not _HAS_WINSDK or self._smtc is None:
+            return
         if is_playing:
             self._smtc.playback_status = media.MediaPlaybackStatus.PLAYING
         else:
             self._smtc.playback_status = media.MediaPlaybackStatus.PAUSED
 
     def set_stopped(self):
+        if not _HAS_WINSDK or self._smtc is None:
+            return
         self._smtc.playback_status = media.MediaPlaybackStatus.STOPPED
 
     @staticmethod
@@ -136,6 +155,8 @@ class WindowsMediaOverlay:
             return None
 
     def update_overlay(self, title, artist, cover_art=None):
+        if not _HAS_WINSDK or self._smtc is None:
+            return
         updater = self._smtc.display_updater
         updater.type = media.MediaPlaybackType.MUSIC
         updater.music_properties.title = str(title)

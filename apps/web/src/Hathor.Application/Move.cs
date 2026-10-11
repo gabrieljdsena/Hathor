@@ -28,6 +28,7 @@ public sealed class MoveSongToPodcastHandler(
     ILibraryStorage storage,
     ISongRecordRepository songRecords,
     IPodcastRecordRepository podcastRecords,
+    ILyricsRepository lyrics,
     ITombstoneRepository tombstones,
     IPlaybackStateRepository playback,
     IPlaybackHub hub,
@@ -46,6 +47,7 @@ public sealed class MoveSongToPodcastHandler(
         try { File.Move(storage.SongPath(cmd.UserId, cmd.File), storage.PodcastPath(cmd.UserId, cmd.File)); }
         catch (IOException) { return new LibraryMoveResult.Conflict("File is in use and could not be moved."); }
 
+        var chapterKeys = await lyrics.ListChapterKeysAsync(cmd.UserId, cmd.File, ct);
         await songRecords.DeleteCascadeAsync(cmd.UserId, cmd.File, ct);
         await podcastRecords.EnsureAsync(cmd.UserId, cmd.File, meta.Title,
             meta.Artist == "Unknown" ? "" : meta.Artist, link, ct);
@@ -54,6 +56,8 @@ public sealed class MoveSongToPodcastHandler(
 
         await tombstones.RecordAsync(cmd.UserId, "songs", cmd.File, ct);
         await tombstones.RecordAsync(cmd.UserId, "lyrics", cmd.File, ct);
+        foreach (var key in chapterKeys)
+            await tombstones.RecordAsync(cmd.UserId, "lyrics", key, ct);
         await tombstones.RecordAsync(cmd.UserId, "music_history", cmd.File, ct);
         await tombstones.SaveChangesAsync(ct);
 
@@ -70,6 +74,7 @@ public sealed class MovePodcastToSongHandler(
     ILibraryStorage storage,
     ISongRecordRepository songRecords,
     IPodcastRecordRepository podcastRecords,
+    ILyricsRepository lyrics,
     IPodcastReadModel podcasts,
     ITombstoneRepository tombstones,
     IPlaybackStateRepository playback,
@@ -89,6 +94,7 @@ public sealed class MovePodcastToSongHandler(
         try { File.Move(storage.PodcastPath(cmd.UserId, cmd.File), storage.SongPath(cmd.UserId, cmd.File)); }
         catch (IOException) { return new LibraryMoveResult.Conflict("File is in use and could not be moved."); }
 
+        var chapterKeys = await lyrics.ListChapterKeysAsync(cmd.UserId, cmd.File, ct);
         await podcastRecords.DeleteCascadeAsync(cmd.UserId, cmd.File, ct);
         await songRecords.UpsertDownloadedAsync(cmd.UserId, cmd.File, link, meta.Title,
             meta.Artist, meta.Album, meta.Year, meta.Genre, meta.Duration, ct);
@@ -96,6 +102,9 @@ public sealed class MovePodcastToSongHandler(
         await songRecords.SaveChangesAsync(ct);
 
         await tombstones.RecordAsync(cmd.UserId, "podcasts", cmd.File, ct);
+        await tombstones.RecordAsync(cmd.UserId, "lyrics", cmd.File, ct);
+        foreach (var key in chapterKeys)
+            await tombstones.RecordAsync(cmd.UserId, "lyrics", key, ct);
         await tombstones.SaveChangesAsync(ct);
 
         await MoveHelpers.StopIfCurrentAsync(playback, hub, songs, cmd.UserId, cmd.File, isPodcast: false, ct);

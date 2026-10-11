@@ -11,8 +11,11 @@ using YoutubeExplode.Videos.Streams;
 namespace Hathor.Infrastructure.Ingest;
 
 // YoutubeExplode search + audio download, FFmpeg MP3 transcode.
-// FFmpeg resolution: FFmpeg:Path config → PATH. (Auto-download ships with
-// the maintenance phase; until then a missing binary fails jobs loudly.)
+// FFmpeg resolution: FFmpeg:Path config → app-downloaded (Settings) → PATH,
+// probed explicitly so a missing binary fails jobs with the actionable
+// message below instead of a raw Win32Exception. The probe result is
+// cached per process but reset on launch failure, so installing FFmpeg
+// (or setting FFmpeg__Path) takes effect without an app restart.
 public sealed class YoutubeExplodeEngine(
     IConfiguration config,
     ILogger<YoutubeExplodeEngine> log,
@@ -73,19 +76,36 @@ public sealed class YoutubeExplodeEngine(
     }
 
     public async Task DownloadAudioAsync(string url, string destMp3Path,
-        Action<double> progress, CancellationToken ct = default)
+        Action<double> progress, Action<string>? onPhase = null, CancellationToken ct = default)
     {
         string? container = null;
+        void Phase(string name)
+        {
+            try { onPhase?.Invoke(name); } catch { }
+        }
         try
         {
-            var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
+            Phase("manifest");
+            // Manifest resolution reports no progress and can hang on
+            // throttled/bot-checked videos: bound it well under the queue's
+            // 5-minute silence watchdog so a stall fails fast into the
+            // yt-dlp fallback instead of burning the whole watchdog window.
+            using var manifestCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            manifestCts.CancelAfter(ManifestTimeout(config));
+            var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, manifestCts.Token);
             var audio = manifest.GetAudioOnlyStreams().GetWithHighestBitrate();
+            // Phase-transition heartbeat for the queue's silence watchdog:
+            // manifest resolution reports no progress and can take a while
+            // on throttled/bot-checked videos.
+            try { progress(0.02); } catch { }
             var dir = Path.GetDirectoryName(destMp3Path)!;
             Directory.CreateDirectory(dir);
             container = Path.Combine(dir, Guid.NewGuid().ToString("N") + "." + audio.Container.Name);
+            Phase("download");
             await _youtube.Videos.Streams.DownloadAsync(
                 audio, container, new Progress<double>(progress), ct);
             progress(1.0);
+            Phase("transcode");
             await TranscodeAsync(container, destMp3Path, ct);
         }
         catch (Exception ex)
@@ -96,6 +116,28 @@ public sealed class YoutubeExplodeEngine(
         finally
         {
             try { if (container is not null && File.Exists(container)) File.Delete(container); } catch { }
+        }
+    }
+
+    public async Task<string?> GetPreviewUrlAsync(string url, CancellationToken ct = default)
+    {
+        // Previews are best-effort by contract: never throw, never Error-log
+        // (Warning only — the DB logs table stays for operational failures).
+        try
+        {
+            var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
+            var audio = manifest.GetAudioOnlyStreams().TryGetWithHighestBitrate();
+            if (audio is null)
+            {
+                log.LogWarning("No preview audio stream for {Url}", url);
+                return null;
+            }
+            return audio.Url;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Preview stream resolve failed for {Url}", url);
+            return null;
         }
     }
 
@@ -114,7 +156,19 @@ public sealed class YoutubeExplodeEngine(
             },
         };
         using var reg = ct.Register(() => { try { proc.Kill(entireProcessTree: true); } catch { } });
-        proc.Start();
+        try
+        {
+            proc.Start();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            // Lost a race with an uninstall (or a PATH that changed under
+            // us): drop the cached probe so the next job re-resolves.
+            _ffmpegProbed = false;
+            _ffmpeg = null;
+            throw new InvalidOperationException(
+                $"{FFmpegMissing().Message} (tried '{ffmpeg}': {ex.Message})");
+        }
         await proc.WaitForExitAsync(ct);
         if (proc.ExitCode != 0)
         {
@@ -127,19 +181,29 @@ public sealed class YoutubeExplodeEngine(
     {
         if (_ffmpegProbed) return _ffmpeg ?? throw FFmpegMissing();
         _ffmpegProbed = true;
-        // Explicit FFmpeg:Path → app-downloaded (Settings) → PATH.
+        // Explicit FFmpeg:Path → app-downloaded (Settings) → PATH probe.
         var configured = config["FFmpeg:Path"];
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
         {
             _ffmpeg = configured;
             return _ffmpeg;
         }
-        _ffmpeg = Maintenance.FfmpegPaths.InstalledExe(config) ?? Maintenance.FfmpegPaths.ExeName;
-        return _ffmpeg; // Process.Start throws Win32Exception when absent → wrapped below
+        _ffmpeg = Maintenance.FfmpegPaths.InstalledExe(config)
+            ?? Maintenance.FfmpegPaths.FindOnPath()
+            ?? throw FFmpegMissing();
+        return _ffmpeg;
     }
 
     private static Exception FFmpegMissing() => new InvalidOperationException(
-        "FFmpeg not found. Install FFmpeg on PATH or set the FFmpeg__Path environment variable.");
+        "FFmpeg not found. Download it from Settings → FFmpeg, install FFmpeg on PATH, "
+        + "or set the FFmpeg__Path environment variable.");
+
+    // Bound for the progress-blind manifest fetch (Downloads:ManifestTimeoutSec,
+    // default 120s, clamped 30..600): must stay well under the queue's
+    // 5-minute silence watchdog so a hung resolve fails fast into fallback.
+    internal static TimeSpan ManifestTimeout(IConfiguration config) =>
+        TimeSpan.FromSeconds(Math.Clamp(
+            config.GetValue("Downloads:ManifestTimeoutSec", 120), 30, 600));
 
     private static string Tail(string s, int max = 500) =>
         s.Length <= max ? s : s[^max..];

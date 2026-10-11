@@ -106,7 +106,7 @@ describe('LyricsSheet search/replace', () => {
     const replaceButtons = screen.getAllByText('Replace')
     expect(replaceButtons).toHaveLength(2)
     fireEvent.click(replaceButtons[1])
-    await waitFor(() => expect(mockSave).toHaveBeenCalledWith('s.mp3', '[00:01.00] new words', null))
+    await waitFor(() => expect(mockSave).toHaveBeenCalledWith('s.mp3', '[00:01.00] new words', null, null))
   })
 
   it('removes saved lyrics', async () => {
@@ -115,6 +115,6 @@ describe('LyricsSheet search/replace', () => {
     renderSheet()
     fireEvent.click(await screen.findByText('Replace'))
     fireEvent.click(await screen.findByText('Remove saved'))
-    await waitFor(() => expect(mockDelete).toHaveBeenCalledWith('s.mp3'))
+    await waitFor(() => expect(mockDelete).toHaveBeenCalledWith('s.mp3', null))
   })
 })

@@ -70,9 +70,15 @@ export default function Podcasts() {
   }, [activeTag, tags])
 
   const refresh = () => {
-    // Episode metadata also appears under song-ish keys (history, recents):
-    // invalidate everything so edits show live on any view.
-    void queryClient.invalidateQueries()
+    // Targeted prefixes only — an unkeyed invalidate refetches every view
+    // at once, so keep it scoped to podcast/song keys.
+    void queryClient.invalidateQueries({ queryKey: ['songs'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcasts'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcast-tags'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcast-tag-map'] })
+    void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
+    void queryClient.invalidateQueries({ queryKey: ['playlists'] })
+    void queryClient.invalidateQueries({ queryKey: ['playlist-songs'] })
   }
 
   // Typo-tolerant client filter (same fuzzy rules as the song search),
@@ -108,7 +114,7 @@ export default function Podcasts() {
 
   return (
     <div className="flex flex-col w-full h-full">
-      <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4">
+      <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
         <ViewHeader
           icon="mic"
           compact
@@ -127,11 +133,13 @@ export default function Podcasts() {
         </div>
       </div>
 
-      <div className="sticky top-0 w-full z-10 backdrop-blur-2xl bg-zinc-900/20 rounded-2xl border-b border-white/5 px-6 sm:px-8 py-4 mt-4 flex justify-end items-center">
-        <SearchInput value={search} onChange={setSearch} placeholder="Search episodes..." id="pod_txt_search" />
+      <div className="sticky top-0 w-full z-10 backdrop-blur-2xl bg-zinc-900/20 rounded-2xl border-b border-white/5 px-6 sm:px-8 py-4 mt-4 flex justify-end items-center max-[700px]:justify-stretch max-[700px]:px-3">
+        <div className="max-[700px]:w-full max-[700px]:[&>div]:w-full max-[700px]:[&_input]:w-full">
+          <SearchInput value={search} onChange={setSearch} placeholder="Search episodes..." id="pod_txt_search" />
+        </div>
       </div>
 
-      <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6">
+      <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6 max-[700px]:px-2">
         <TagPills tags={tags ?? []} total={episodes?.length ?? 0} activeId={activeTag} onSelect={setActiveTag} />
         {isLoading ? (
           <LoadingState label="Loading your episodes…" />
@@ -153,7 +161,7 @@ export default function Podcasts() {
                     e.preventDefault()
                     openEpisodeMenu(song.file)
                   }}
-                  className={`grid grid-cols-[minmax(0,1fr)_auto_auto] gap-4 items-center p-3 px-4 rounded-xl hover:bg-white/5 transition-all duration-300 cursor-pointer group ${
+                  className={`grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:gap-4 items-center p-2.5 px-3 sm:p-3 sm:px-4 rounded-xl hover:bg-white/5 transition-all duration-300 cursor-pointer group min-h-[60px] sm:min-h-0 ${
                     currentFile === song.file ? 'bg-orange-500/[0.06] ring-1 ring-orange-500/40' : ''
                   }`}
                 >
@@ -245,7 +253,7 @@ export default function Podcasts() {
           onClose={() => setEditSong(null)}
           onSaved={() => {
             setEditSong(null)
-            refresh()
+            // EditSongModal already invalidated — no second fan-out here.
             void usePlayer.getState().refresh().catch(() => {})
           }}
         />

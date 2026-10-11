@@ -38,7 +38,12 @@ if (-not (Test-Path $dll)) {
 
 if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
     [Environment]::SetEnvironmentVariable('ASPNETCORE_ENVIRONMENT', 'Production', 'Machine')
-    [Environment]::SetEnvironmentVariable('ASPNETCORE_URLS', "http://0.0.0.0:$Port", 'Machine')
+
+    # NOTE: never write ASPNETCORE_URLS at Machine scope — it is inherited
+    # by EVERY .NET service on the box (it once hijacked Vroid Remote
+    # Control from :5050 to Hathor's port). The bind address lives on this
+    # service's own command line instead (--urls), refreshed below on every
+    # install.
 
     $jwt = [Environment]::GetEnvironmentVariable('JWT_KEY', 'User')
     if (-not $jwt) { $jwt = [Environment]::GetEnvironmentVariable('JWT_KEY', 'Process') }
@@ -59,13 +64,31 @@ if (-not (Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
         Write-Host "[warn] HATHOR_DB_PASSWORD not found - service may fail to reach Postgres"
     }
 
-    $binPath = "dotnet `"$dll`""
+    # Error sink (lab Postgres `logs` table): without this, Serilog Error/Fatal
+    # rows never leave the local log files. Same server/user as the app DB,
+    # so the DB password doubles when no dedicated logs password is set.
+    $logsPassword = [Environment]::GetEnvironmentVariable('HATHOR_LOGS_DB_PASSWORD', 'User')
+    if (-not $logsPassword) { $logsPassword = [Environment]::GetEnvironmentVariable('HATHOR_LOGS_DB_PASSWORD', 'Process') }
+    if (-not $logsPassword) { $logsPassword = $dbPassword }
+    if ($logsPassword) {
+        [Environment]::SetEnvironmentVariable('HATHOR_LOGS_DB_PASSWORD', $logsPassword, 'Machine')
+        Write-Host "[ok] logs DB password pinned as machine env (HATHOR_LOGS_DB_PASSWORD)"
+    }
+    else {
+        Write-Host "[warn] no logs DB password - Error rows stay in local log files only"
+    }
+
+    $binPath = "dotnet `"$dll`" --urls http://0.0.0.0:$Port"
     New-Service -Name $ServiceName -BinaryPathName $binPath -StartupType Automatic -DisplayName 'Hathor Music' | Out-Null
 
     Write-Host "[ok] service '$ServiceName' registered (http://localhost:$Port)"
 }
 else {
     Write-Host "[skip] service '$ServiceName' already registered"
+    # Refresh the bind address on every install (port moves without this).
+    $binPath = "dotnet `"$dll`" --urls http://0.0.0.0:$Port"
+    sc.exe config $ServiceName binPath= $binPath | Out-Null
+    Write-Host "[ok] service '$ServiceName' bind refreshed (http://localhost:$Port)"
 }
 
 # Library paths refresh on every install (not just first registration):

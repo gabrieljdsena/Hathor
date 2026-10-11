@@ -216,6 +216,35 @@ class DownloadManager:
                 )
         except Exception as db_err:
             print(f" [Python] DB error saving download: {db_err}")
+            return
+        # Loudness for normalization (songs only, web parity): analyze in the
+        # background — a full-file loudnorm pass must never block the queue.
+        if not is_podcast and result.get('filename'):
+            self._analyze_loudness_async(result.get('filename'))
+
+    def _analyze_loudness_async(self, filename):
+        """Daemon-thread loudnorm measure + persist. Never raises."""
+        def work():
+            try:
+                from services import startup_maintenance
+                found = startup_maintenance.find_ffmpeg()
+                if not found.get('found'):
+                    return
+                import settings as app_settings
+                path = os.path.join(app_settings.path, filename)
+                if not os.path.isfile(path):
+                    return
+                from services import loudness as loudness_mod
+                value = loudness_mod.analyze_file(found.get('exe'), path)
+                if value is None:
+                    return
+                self.api.db.set_song_loudness(filename, value)
+            except Exception as e:
+                print(f" [Python] Loudness analysis failed for {filename}: {str(e)}")
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception:
+            pass
 
     # ==========================
     # Job log (persistence)

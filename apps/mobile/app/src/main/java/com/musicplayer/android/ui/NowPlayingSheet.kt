@@ -402,6 +402,8 @@ private fun LyricsSheet(
     var searching by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf<String?>(null) }
     var saveMsg by remember { mutableStateOf<String?>(null) }
+    // Highlight-timing correction, ms ±20000 (desktop offset_ms / web parity).
+    var offsetMs by remember(file.absolutePath) { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(file.absolutePath) {
@@ -411,6 +413,7 @@ private fun LyricsSheet(
         editText = null
         saveMsg = null
         lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec)
+        offsetMs = lyrics.loadOffset(file.name)
     }
     // Icon mode switch: entering Edit prefills the editor with what's on
     // screen (or empty), same as the old text tab did.
@@ -447,10 +450,38 @@ private fun LyricsSheet(
                     Icon(Icons.Filled.Close, contentDescription = "Close lyrics", tint = HathorColors.TextHint)
                 }
             }
+            // Highlight-timing correction stepper (persists per song).
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Timing",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HathorColors.TextHint,
+                    modifier = Modifier.weight(1f)
+                )
+                for ((label, delta) in listOf("−1s" to -1000, "−.1" to -100, "+.1" to 100, "+1s" to 1000)) {
+                    TextButton(onClick = {
+                        scope.launch {
+                            val next = (offsetMs + delta).coerceIn(-20000, 20000)
+                            offsetMs = next
+                            offsetMs = lyrics.saveOffset(file.name, next)
+                        }
+                    }) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                }
+                Text(
+                    (if (offsetMs >= 0) "+" else "−") + kotlin.math.abs(offsetMs) + "ms",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (offsetMs != 0) HathorColors.AccentBright else HathorColors.TextHint
+                )
+            }
             when (mode) {
                 0 -> LyricsView(
                     state = state,
                     player = player,
+                    offsetMs = offsetMs,
                     onRetry = {
                         scope.launch { lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec) }
                     }
@@ -535,6 +566,7 @@ private fun LyricsModeButton(
 private fun LyricsView(
     state: LyricsRepository.LyricsState,
     player: PlayerManager,
+    offsetMs: Int,
     onRetry: () -> Unit
 ) {
     when (state) {
@@ -557,7 +589,11 @@ private fun LyricsView(
             }
             val synced = state.result.synced?.takeIf { it.isNotBlank() }
             if (synced != null) {
-                SyncedLyrics(lines = remember(synced) { parseLrc(synced) }, player = player)
+                SyncedLyrics(
+                    lines = remember(synced) { parseLrc(synced) },
+                    player = player,
+                    offsetMs = offsetMs
+                )
             } else {
                 Text(
                     state.result.plain ?: "(empty)",
@@ -619,13 +655,13 @@ private fun parseLrc(lrc: String): List<LrcLine> {
  * (progress_slider_click equivalent), active line highlighted + followed.
  */
 @Composable
-private fun SyncedLyrics(lines: List<LrcLine>, player: PlayerManager) {
+private fun SyncedLyrics(lines: List<LrcLine>, player: PlayerManager, offsetMs: Int) {
     val positionMs by player.positionMs.collectAsState()
     if (lines.isEmpty()) {
         Text("No synchronized lyrics found.", style = MaterialTheme.typography.bodyMedium)
         return
     }
-    val nowSec = positionMs / 1000.0
+    val nowSec = positionMs / 1000.0 + offsetMs / 1000.0
     var active = -1
     for (i in lines.indices) {
         if (nowSec >= lines[i].timeSec) active = i else break
@@ -653,7 +689,7 @@ private fun SyncedLyrics(lines: List<LrcLine>, player: PlayerManager) {
                     MaterialTheme.typography.headlineSmall.copy(color = HathorColors.TextHint)
                 },
                 modifier = Modifier.fillMaxWidth().clickable {
-                    player.seekTo((line.timeSec * 1000).toInt())
+                    player.seekTo((line.timeSec * 1000 - offsetMs).toInt())
                 }
             )
         }

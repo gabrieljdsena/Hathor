@@ -89,10 +89,20 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
   }, [pos, buttonMenu, close])
 
   const refresh = () => {
-    // Song metadata shows up under many keys (songs/all, artist-songs,
-    // album-songs, daily-mix, playlist-songs, podcasts, recents, history):
-    // invalidate everything so the edit is visible live on any view.
-    void queryClient.invalidateQueries()
+    // Song metadata shows up under many keys — invalidate just those
+    // prefixes. An unkeyed invalidate refetches every view at once
+    // (trending, download-jobs, settings…), so keep it targeted.
+    void queryClient.invalidateQueries({ queryKey: ['songs'] })
+    void queryClient.invalidateQueries({ queryKey: ['song-count'] })
+    void queryClient.invalidateQueries({ queryKey: ['songs-recent'] })
+    void queryClient.invalidateQueries({ queryKey: ['songs-recently-played'] })
+    void queryClient.invalidateQueries({ queryKey: ['artist-songs'] })
+    void queryClient.invalidateQueries({ queryKey: ['album-songs'] })
+    void queryClient.invalidateQueries({ queryKey: ['daily-mix'] })
+    void queryClient.invalidateQueries({ queryKey: ['playlist-songs'] })
+    void queryClient.invalidateQueries({ queryKey: ['playlists'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcasts'] })
+    void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
   }
 
   const playlistId = sourceType === 'playlist' && sourceId !== null ? Number(sourceId) : NaN
@@ -223,7 +233,8 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
           onClose={() => setEditOpen(false)}
           onSaved={() => {
             setEditOpen(false)
-            refresh()
+            // EditSongModal already ran the keyed invalidations — a second
+            // invalidateQueries here would double every save's refetch fan-out.
             // The edited file may be the current song — resync its display.
             void usePlayer.getState().refresh().catch(() => {})
           }}

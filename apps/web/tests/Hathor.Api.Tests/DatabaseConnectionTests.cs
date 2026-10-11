@@ -36,6 +36,30 @@ public sealed class DatabaseConnectionTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Resolve_EmptyPassword_FallsBackToEnvironment()
+    {
+        // Regression: appsettings.json ships "Password": "" — empty must
+        // count as unset so HATHOR_DB_PASSWORD still applies (?? alone only
+        // falls through on null, which silently dropped the env password
+        // and broke service startup after the baked-in default was removed).
+        var previous = Environment.GetEnvironmentVariable(DatabaseConnection.PasswordEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(DatabaseConnection.PasswordEnvVar, "env-secret");
+            var config = new StubConfig(new Dictionary<string, string?>
+            {
+                ["Database:ConnectionString"] = "Host=dbhost;Database=hathor;Username=postgres",
+                ["Database:Password"] = "",
+            });
+            DatabaseConnection.Resolve(config).Should().Contain("Password=env-secret");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(DatabaseConnection.PasswordEnvVar, previous);
+        }
+    }
+
+    [Fact]
     public void Resolve_PlaceholderPassword_KeepsConnectionString()
     {
         var config = new StubConfig(new Dictionary<string, string?>
@@ -44,15 +68,6 @@ public sealed class DatabaseConnectionTests : IAsyncLifetime
             ["Database:Password"] = "REPLACE_WITH_LOCAL_POSTGRES_PASSWORD",
         });
         DatabaseConnection.Resolve(config).Should().Contain("Password=old");
-    }
-
-    [Fact]
-    public void ApplyPassword_MySql_ReplacesPassword()
-    {
-        var resolved = DatabaseConnection.ApplyPassword(
-            "mysql", "server=db;database=hathor;user=root;password=old", "new-secret");
-        resolved.Should().Contain("Password=new-secret");
-        resolved.Should().Contain("Server=db");
     }
 
     [Fact]

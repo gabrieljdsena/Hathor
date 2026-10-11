@@ -14,7 +14,10 @@ namespace Hathor.Api.Controllers;
 [ApiController]
 [Route("api/v1/youtube")]
 [Authorize(Policy = ScopeAuthorization.LibraryRead)]
-public sealed class YoutubeController(IDownloadEngine engine) : ControllerBase
+public sealed class YoutubeController(
+    IDownloadEngine engine,
+    IHttpClientFactory httpFactory,
+    ILogger<YoutubeController> log) : ControllerBase
 {
     // Flat search, no download (desktop search_yt).
     [HttpGet("search")]
@@ -32,7 +35,52 @@ public sealed class YoutubeController(IDownloadEngine engine) : ControllerBase
             return BadRequest(new { message = $"Search failed: {ex.Message}" });
         }
     }
+
+    // Preview fallback for embedding-disabled videos (error 153 / "Watch on
+    // YouTube"): probes YouTube oEmbed, then resolves a direct audio stream
+    // URL for an <audio> element. embeddable=false → play audioUrl;
+    // audioUrl=null → neither works (show a watch link instead). Stream URLs
+    // expire and are loosely IP-bound: clients must use them immediately.
+    // resolveAudio forces the (slower) manifest lookup even for embeddable
+    // videos — the player uses it when the iframe itself reports an error
+    // after an optimistic oEmbed pass.
+    [HttpGet("preview")]
+    public async Task<ActionResult<PreviewDto>> Preview(
+        [FromQuery] string id, [FromQuery] bool resolveAudio, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 32 || !id.All(c =>
+                char.IsLetterOrDigit(c) || c is '-' or '_'))
+            return BadRequest(new { message = "A valid video id is required." });
+        var pageUrl = $"https://www.youtube.com/watch?v={id}";
+        var embeddable = await IsEmbeddableAsync(pageUrl, ct);
+        var audioUrl = !embeddable || resolveAudio
+            ? await engine.GetPreviewUrlAsync(pageUrl, ct)
+            : null;
+        return Ok(new PreviewDto(id, embeddable, audioUrl));
+    }
+
+    private async Task<bool> IsEmbeddableAsync(string pageUrl, CancellationToken ct)
+    {
+        // oEmbed answers 200 for embeddable videos, 401/404 for blocked ones.
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var http = httpFactory.CreateClient("metadata");
+            using var res = await http.GetAsync(
+                "https://www.youtube.com/oembed?url=" + Uri.EscapeDataString(pageUrl),
+                timeout.Token);
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "oEmbed probe failed, assuming embeddable");
+            return true;
+        }
+    }
 }
+
+public sealed record PreviewDto(string Id, bool Embeddable, string? AudioUrl);
 
 [ApiController]
 [Route("api/v1/metadata")]
@@ -111,35 +159,41 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
 {
     // Cached lyrics for one file, fetching + caching on miss.
     // refresh=true skips the cache and re-fetches (wrong cached lyrics).
+    // chapterId selects per-chapter podcast lyrics (track = chapter name,
+    // artist empty); unknown ids fall back to the file flow.
     [HttpGet]
     public async Task<ActionResult<LyricsDto>> Get(
         string file, [FromQuery] string track, [FromQuery] string artist,
         [FromQuery] string? album, [FromQuery] int? duration,
-        [FromQuery] bool refresh = false, CancellationToken ct = default)
+        [FromQuery] bool refresh = false, [FromQuery] long? chapterId = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(track))
             return BadRequest(new { message = "Track is required." });
         var dto = await mediator.Send(new GetLyricsQuery(
-            CurrentUserId(), file, track, artist ?? "", album, duration, refresh), ct);
+            CurrentUserId(), file, track, artist ?? "", album, duration, refresh, chapterId), ct);
         return dto is null ? NotFound() : Ok(dto);
     }
 
-    // Manual save (candidate pick from search results).
+    // Manual save (candidate pick from search results). chapterId stores
+    // under the chapter key so the chapter view reads back the pick.
     [HttpPut]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<IActionResult> Save(
-        string file, [FromBody] SaveLyricsRequest body, CancellationToken ct) =>
+        string file, [FromBody] SaveLyricsRequest body,
+        [FromQuery] long? chapterId, CancellationToken ct) =>
         await mediator.Send(new SaveLyricsCommand(
-            CurrentUserId(), file, body.Synced, body.Plain), ct)
+            CurrentUserId(), file, body.Synced, body.Plain, chapterId), ct)
             ? NoContent()
             : BadRequest(new { message = "Empty lyrics cannot be saved." });
 
-    // Manual removal (wrong lyrics): drops the cache row so the next read
+    // Manual removal (wrong lyrics): drops the cached row so the next read
     // re-fetches instead of serving the stale entry.
     [HttpDelete]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<IActionResult> Delete(string file, CancellationToken ct) =>
-        await mediator.Send(new DeleteLyricsCommand(CurrentUserId(), file), ct)
+    public async Task<IActionResult> Delete(
+        string file, [FromQuery] long? chapterId, CancellationToken ct) =>
+        await mediator.Send(new DeleteLyricsCommand(CurrentUserId(), file, chapterId), ct)
             ? NoContent()
             : NotFound();
 

@@ -16,6 +16,7 @@ namespace Hathor.Api.Controllers;
 public sealed class AuthController(IMediator mediator) : ControllerBase
 {
     [HttpPost("register")]
+    [AllowAnonymous]
     [EnableRateLimiting("Auth")]
     public async Task<ActionResult<AuthTokensDto>> Register(
         [FromBody] RegisterRequest body, CancellationToken ct)
@@ -32,6 +33,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     }
 
     [HttpPost("login")]
+    [AllowAnonymous]
     [EnableRateLimiting("Auth")]
     public async Task<ActionResult<AuthTokensDto>> Login(
         [FromBody] LoginRequest body, CancellationToken ct)
@@ -48,6 +50,8 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     }
 
     [HttpPost("refresh")]
+    [AllowAnonymous]
+    [EnableRateLimiting("AuthRefresh")]
     public async Task<ActionResult<AuthTokensDto>> Refresh(
         [FromBody] RefreshRequest body, CancellationToken ct)
     {
@@ -79,6 +83,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
 
     // Public registration gate for single-account mode (unauthenticated).
     [HttpGet("status")]
+    [AllowAnonymous]
     [EnableRateLimiting("Auth")]
     public async Task<ActionResult<AuthStatusDto>> Status(
         [FromServices] Domain.Repositories.IUserRepository users, CancellationToken ct) =>

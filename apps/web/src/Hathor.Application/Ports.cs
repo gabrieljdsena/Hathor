@@ -96,36 +96,26 @@ public interface IPodcastReadModel
     SongDto ReadLocalEpisode(Guid userId, string file);
 }
 
-// Remote-library pull port (desktop DatabaseManager.
-// sync_remote_to_local_and_download, split per library): read rows from the
-// desktop TiDB remote, merge them into this user's tables, enqueue
-// downloads for files missing on disk.
-public interface IRemotePullService
-{
-    Task<Application.Sync.RemotePullResult> PullSongsAsync(Guid userId,
-        CancellationToken ct = default);
-    Task<Application.Sync.RemotePullResult> PullPodcastsAsync(Guid userId,
-        CancellationToken ct = default);
-}
-
-// Remote-library push port (desktop DatabaseSync.sync_once/_run_sync,
-// split per library): write this user's rows into the desktop TiDB remote
-// (single global namespace — last writer wins, like desktop multi-device).
-public interface IRemotePushService
-{
-    Task<Application.Sync.RemotePushResult> PushSongsAsync(Guid userId,
-        CancellationToken ct = default);
-    Task<Application.Sync.RemotePushResult> PushPodcastsAsync(Guid userId,
-        CancellationToken ct = default);
-}
-
-// Snapshot exchange port (desktop sync.py pull/push semantics).
+// Snapshot exchange port (device sync semantics).
 public interface ISyncService
 {
     Task<Application.Sync.SyncSnapshot> ExportAsync(Guid userId, long sinceId,
         CancellationToken ct = default);
-    Task<Application.Sync.SyncSummary> ImportAsync(Guid userId,
-        Application.Sync.SyncSnapshot snapshot, CancellationToken ct = default);
+    // reconcileLinks (pull path only): drop local link rows absent from a
+    // full snapshot. Never true for /sync/import — partial snapshots must
+    // not wipe links.
+    Task<Application.Sync.ImportResult> ImportAsync(Guid userId,
+        Application.Sync.SyncSnapshot snapshot, CancellationToken ct = default,
+        bool reconcileLinks = false);
+    // Incremental delta for device sync: rows with UpdatedAtUtc >= the
+    // cursor time (overlap is idempotent client-side), append-only history
+    // by id, tombstones by DeletedAtUtc. Opaque cursor round-trips.
+    Task<Application.Sync.SyncDelta> GetDeltaAsync(Guid userId, string cursor,
+        CancellationToken ct = default);
+    // Persist raw MP3 bytes pushed by a device (PUT /sync/files/{file}):
+    // writes to the shared library folder and upserts the catalog row.
+    Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
+        CancellationToken ct = default);
 }
 
 // Startup-maintenance probe port (desktop startup_maintenance status
@@ -134,6 +124,8 @@ public interface ISyncService
 public interface ISystemProbe
 {
     FFmpegStatusDto GetFFmpegStatus();
+    // yt-dlp fallback binary (same shape as FFmpeg: found/exe/version-or-error).
+    FFmpegStatusDto GetYtDlpStatus();
     IReadOnlyList<LibraryStatusDto> GetLibraryStatus();
     MaintenanceResultDto RunChecks();
     // Live NuGet check for YoutubeExplode/TagLibSharp (latest stable +
@@ -172,8 +164,15 @@ public interface IDownloadEngine
     Task<VideoInfoDto> GetInfoAsync(string url, CancellationToken ct = default);
     // Downloads best audio, transcodes to 320k MP3 at destMp3Path.
     // Progress is 0..1 (scaled to 0..90 by the caller, desktop convention).
+    // onPhase reports transitions ("manifest", "download", "transcode",
+    // "ytdlp", …) so the caller can attribute stalls in job errors.
+    // Optional for source compatibility; the queue always passes one.
     Task DownloadAudioAsync(string url, string destMp3Path,
-        Action<double> progress, CancellationToken ct = default);
+        Action<double> progress, Action<string>? onPhase = null, CancellationToken ct = default);
+    // Best-effort direct audio stream URL for previews (no download, no
+    // transcode). Null when unresolvable (age-restricted/private/deleted).
+    // URLs expire (~6h) and are loosely IP-bound: resolve on demand.
+    Task<string?> GetPreviewUrlAsync(string url, CancellationToken ct = default);
 }
 
 public sealed record VideoInfoDto(

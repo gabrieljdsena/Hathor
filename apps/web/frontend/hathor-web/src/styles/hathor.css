@@ -254,3 +254,123 @@ input[type="range"]:hover::-moz-range-thumb {
     box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
 }
 .xf-switch[data-on="1"] .xf-knob { left: 21px; background: #fff; }
+
+/* ── Phone-only responsive pass (max-width: 700px) ──
+   Desktop is untouched: everything below sits inside this media query,
+   matching the Shell's `narrow` (<=700px) breakpoint. Unlayered author
+   CSS beats Tailwind's layered utilities, so these overrides win on
+   phones without !important and without changing any desktop class. */
+@media (max-width: 700px) {
+    /* Content column: the shell already pads p-4 on phones, so inner
+       views drop their desktop side padding to reclaim ~24px of width. */
+    #main .max-w-5xl,
+    #main .max-w-6xl,
+    #main .max-w-4xl,
+    #main .max-w-8xl,
+    #main .max-w-3xl,
+    #main .max-w-2xl {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+    #main .pt-8 { padding-top: 1rem; }
+    #main .pt-12 { padding-top: 1.25rem; }
+    #main .pb-24 { padding-bottom: 6rem; }
+
+    /* Section headers: smaller titles, wrapping subtitles, actions that
+       wrap below instead of squeezing the title off-screen. */
+    #main h1 { overflow-wrap: anywhere; }
+    #main h1.text-3xl { font-size: 1.5rem; line-height: 2rem; }
+    #main h1.text-2xl { font-size: 1.3rem; line-height: 1.75rem; }
+    #main h2.text-2xl { font-size: 1.25rem; line-height: 1.75rem; }
+    #main h2.text-xl { font-size: 1.1rem; line-height: 1.5rem; }
+    #main .text-sm { line-height: 1.4rem; }
+
+    /* Song table: tighter header + rows, full-width sticky search bar. */
+    #main .sticky.top-0 {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    #main .sticky.top-0 .relative.group,
+    #main .sticky.top-0 > div {
+        width: 100%;
+    }
+    #main input[id$="_txt_search"],
+    #main input[id$="_search"] {
+        width: 100%;
+    }
+    #main .relative.group input[type="text"] {
+        width: 100%;
+    }
+
+    /* ViewHeader rows with actions (search boxes, play buttons): stack
+       the actions under the title instead of overflowing sideways. */
+    #main .flex.items-center.gap-4.flex-wrap,
+    #main div:has(> h1) {
+        min-width: 0;
+    }
+
+    /* Artist/Album detail hero: smaller art, wrapping title. */
+    #main .max-w-5xl > .flex.items-center.gap-4 {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    /* Home cards: less padding, no tall fixed height on phones. */
+    #main a.min-h-\[260px\] {
+        min-height: 0;
+        padding: 1.25rem;
+        gap: 1rem;
+    }
+
+    /* Card grids: keep 2-up but tighten gaps for 360px screens. */
+    #main .grid.grid-cols-2 {
+        gap: 0.75rem;
+    }
+
+    /* Home strips: slightly narrower cards so >2 peek on a phone. */
+    #main .flex.gap-4.overflow-x-auto > div.w-36 {
+        width: 8.5rem;
+    }
+
+    /* Download view: heading + chunky buttons fit a phone width. */
+    #main h1.text-4xl { font-size: 1.75rem; line-height: 2.25rem; }
+    #main .text-lg { font-size: 1rem; line-height: 1.5rem; }
+
+    /* Player bar (stacked phone layout): keep the song title readable
+       and stop long titles pushing the transport buttons off-screen. */
+    #controls .grid {
+        gap: 0.25rem 0.5rem;
+    }
+    #controls .truncate {
+        max-width: 100%;
+    }
+
+    /* Sheets / modals: full-bleed on phones, no side gutters. */
+    #queue-sidebar { width: 100%; }
+    #lyrics-container-view .max-w-\[88rem\] {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    /* Two-column modal forms collapse to one column on phones. */
+    #main .grid.grid-cols-2.gap-4,
+    div[role="dialog"] .grid.grid-cols-2 {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    div[role="dialog"] {
+        max-width: calc(100vw - 2rem);
+    }
+
+    /* Podcast episode rows + timestamp chips: allow wrapping. */
+    #main .snap-start { min-width: 9rem; }
+
+    /* Never let a wide child force sideways scrolling of the view. */
+    #main img,
+    #main pre,
+    #main table {
+        max-width: 100%;
+    }
+    #main pre { white-space: pre-wrap; }
+}

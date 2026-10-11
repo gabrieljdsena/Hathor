@@ -118,7 +118,7 @@ fun PlaylistsScreen(
             }
         }
         if (playlists.isEmpty()) {
-            Text("No playlists yet. Create one, or sync to pull them from the remote DB.")
+            Text("No playlists yet. Create one, or sync to pull them from the server.")
         }
         // weight(1f) is what makes this list scrollable: without it the
         // LazyColumn has no bounded height inside the outer Column and the

@@ -1,5 +1,6 @@
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
+using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
 using MediatR;
 
@@ -23,24 +24,59 @@ public sealed class PodcastQueryHandlers(IPodcastReadModel podcasts) :
 
 public sealed record UpdatePodcastMetadataCommand(
     Guid UserId, string File, string? Title, string? Artist, string? CoverArt)
-    : IRequest<SongDto?>;
+    : IRequest<UpdatePodcastMetadataResult?>;
+
+public sealed record UpdatePodcastMetadataResult(SongDto Song, bool Pending = false);
 
 public sealed class UpdatePodcastMetadataHandler(
     ILibraryStorage storage,
     IMetadataWriter writer,
     IPodcastRecordRepository records,
-    IPodcastReadModel podcasts) : IRequestHandler<UpdatePodcastMetadataCommand, SongDto?>
+    IPodcastReadModel podcasts,
+    IPlaybackStateRepository playback,
+    IPendingEditRepository pending) : IRequestHandler<UpdatePodcastMetadataCommand, UpdatePodcastMetadataResult?>
 {
-    public async Task<SongDto?> Handle(UpdatePodcastMetadataCommand cmd, CancellationToken ct)
+    public async Task<UpdatePodcastMetadataResult?> Handle(UpdatePodcastMetadataCommand cmd, CancellationToken ct)
     {
         if (!storage.PodcastExists(cmd.UserId, cmd.File)) return null;
-        await writer.WritePathAsync(storage.PodcastPath(cmd.UserId, cmd.File),
-            cmd.Title, cmd.Artist, null, null, null, cmd.CoverArt, ct);
+        var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
+        if (string.Equals(state.CurrentFile, cmd.File, StringComparison.OrdinalIgnoreCase))
+        {
+            // Same gapless rule as songs: stash, applied on track change.
+            return await StashAsync(cmd, ct);
+        }
+        try
+        {
+            await writer.WritePathAsync(storage.PodcastPath(cmd.UserId, cmd.File),
+                cmd.Title, cmd.Artist, null, null, null, cmd.CoverArt, ct);
+        }
+        catch (IOException ex) when (ex is not FileNotFoundException)
+        {
+            // Same lock fallback as songs (desktop player, active stream).
+            return await StashAsync(cmd, ct);
+        }
         var updated = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
         if (updated is not null)
             await records.EnsureAsync(cmd.UserId, cmd.File, updated.Title, updated.Artist, null, ct);
         await records.SaveChangesAsync(ct);
-        return updated;
+        return updated is null ? null : new UpdatePodcastMetadataResult(updated);
+    }
+
+    private async Task<UpdatePodcastMetadataResult?> StashAsync(UpdatePodcastMetadataCommand cmd, CancellationToken ct)
+    {
+        await pending.UpsertAsync(new PendingMetadataEdit
+        {
+            UserId = cmd.UserId,
+            File = cmd.File,
+            IsPodcast = true,
+            Title = cmd.Title,
+            Artist = cmd.Artist,
+            CoverArt = cmd.CoverArt,
+            CreatedUtc = DateTime.UtcNow,
+        }, ct);
+        await pending.SaveChangesAsync(ct);
+        var current = await podcasts.GetByFileAsync(cmd.UserId, cmd.File, ct);
+        return current is null ? null : new UpdatePodcastMetadataResult(current, Pending: true);
     }
 }
 
@@ -51,6 +87,7 @@ public sealed record DeletePodcastCommand(Guid UserId, string File) : IRequest<b
 public sealed class DeletePodcastHandler(
     ILibraryStorage storage,
     IPodcastRecordRepository records,
+    ILyricsRepository lyrics,
     ITombstoneRepository tombstones,
     IPlaybackStateRepository playback,
     IPlaybackHub hub,
@@ -59,6 +96,7 @@ public sealed class DeletePodcastHandler(
     public async Task<bool> Handle(DeletePodcastCommand cmd, CancellationToken ct)
     {
         var onDisk = storage.PodcastExists(cmd.UserId, cmd.File);
+        var chapterKeys = await lyrics.ListChapterKeysAsync(cmd.UserId, cmd.File, ct);
         var removed = await records.DeleteCascadeAsync(cmd.UserId, cmd.File, ct);
         if (!onDisk && !removed) return false;
 
@@ -69,6 +107,11 @@ public sealed class DeletePodcastHandler(
         }
 
         await tombstones.RecordAsync(cmd.UserId, "podcasts", cmd.File, ct);
+        // Episode lyrics rows (previously leaked on episode delete) plus
+        // per-chapter cache rows, one tombstone each for exact-match remotes.
+        await tombstones.RecordAsync(cmd.UserId, "lyrics", cmd.File, ct);
+        foreach (var key in chapterKeys)
+            await tombstones.RecordAsync(cmd.UserId, "lyrics", key, ct);
 
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.NextFiles.RemoveAll(f => string.Equals(f, cmd.File, StringComparison.OrdinalIgnoreCase));

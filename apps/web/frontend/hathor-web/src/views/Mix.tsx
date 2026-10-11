@@ -47,7 +47,7 @@ export default function Mix() {
   return (
     <div className="flex flex-col w-full h-full">
       <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
           <ViewHeader
             icon="sparkles"
             compact
