@@ -139,7 +139,7 @@ describe('Discover view', () => {
       frame = document.querySelector('iframe')
       expect(frame).not.toBeNull()
     })
-    expect(frame!.getAttribute('src')).toContain('https://www.youtube.com/embed/vid123?autoplay=1')
+    expect(frame!.getAttribute('src')).toContain('https://www.youtube.com/embed/vid123?autoplay=0')
     expect(frame!.getAttribute('src')).toContain('enablejsapi=1')
   })
 

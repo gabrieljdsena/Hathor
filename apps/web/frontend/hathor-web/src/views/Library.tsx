@@ -75,12 +75,13 @@ export function Artists() {
       ) : filtering && visible.length === 0 ? (
         <EmptyState title="No artists match" hint="Try different spelling." />
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col p-2 sm:p-3 rounded-2xl bg-black/30 backdrop-blur-2xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] divide-y divide-white/[0.06]">
+          {/* Same windows-glass backing as the song tables (LibraryTable). */}
           {visible.map((name) => (
             <Link
               key={name}
               to={`/artists/${encodeURIComponent(name)}`}
-              className="p-3 px-4 rounded-xl hover:bg-white/5 transition-all text-sm font-medium text-zinc-100 hover:text-orange-400 truncate"
+              className="p-2.5 px-3 sm:p-3 sm:px-4 rounded-xl hover:bg-white/5 transition-all text-sm font-medium text-zinc-100 hover:text-orange-400 truncate"
             >
               {name}
             </Link>
@@ -158,12 +159,13 @@ export function Albums() {
       ) : filtering && visible.length === 0 ? (
         <EmptyState title="No albums match" hint="Try different spelling." />
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col p-2 sm:p-3 rounded-2xl bg-black/30 backdrop-blur-2xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] divide-y divide-white/[0.06]">
+          {/* Same windows-glass backing as the song tables (LibraryTable). */}
           {visible.map((title) => (
             <Link
               key={title}
               to={`/albums/${encodeURIComponent(title)}`}
-              className="p-3 px-4 rounded-xl hover:bg-white/5 transition-all text-sm font-medium text-zinc-100 hover:text-orange-400 truncate"
+              className="p-2.5 px-3 sm:p-3 sm:px-4 rounded-xl hover:bg-white/5 transition-all text-sm font-medium text-zinc-100 hover:text-orange-400 truncate"
             >
               {title}
             </Link>

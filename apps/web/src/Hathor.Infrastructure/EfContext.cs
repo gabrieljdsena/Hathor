@@ -29,6 +29,7 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<DiscoverCache> DiscoverCaches => Set<DiscoverCache>();
     public DbSet<UserSettings> Settings => Set<UserSettings>();
     public DbSet<PlaybackStateRow> PlaybackStates => Set<PlaybackStateRow>();
+    public DbSet<PlaybackSpotRow> PlaybackSpots => Set<PlaybackSpotRow>();
 
     // Delta-sync change feed: every insert/update stamps UpdatedAtUtc, so
     // GET /sync/delta needs no per-write-path bookkeeping. Server clock only.
@@ -199,7 +200,29 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.ToTable("Playback_State");
             e.HasKey(x => x.UserId);
         });
+        b.Entity<PlaybackSpotRow>(e =>
+        {
+            e.ToTable("Playback_Spots");
+            e.HasKey(x => new { x.UserId, x.DeviceId });
+            e.Property(x => x.DeviceId).HasMaxLength(64);
+            e.Property(x => x.File).HasMaxLength(255);
+            e.Property(x => x.DeviceLabel).HasMaxLength(128);
+            e.HasIndex(x => new { x.UserId, x.UpdatedUtc });
+        });
     }
+}
+
+// EF persistence shape for one device's resume spot (last write wins per
+// (user, device); readers exclude their own device id).
+public sealed class PlaybackSpotRow
+{
+    public Guid UserId { get; set; }
+    public string DeviceId { get; set; } = "";
+    public string File { get; set; } = "";
+    public double PositionSec { get; set; }
+    public bool IsPodcast { get; set; }
+    public string? DeviceLabel { get; set; }
+    public DateTime UpdatedUtc { get; set; }
 }
 
 // EF persistence shape for the PlaybackState aggregate (lists as JSON).

@@ -23,27 +23,21 @@ public sealed class PendingEditTests
         ISongRecordRepository SongRecords,
         ISongReadModel Songs,
         IPodcastRecordRepository PodcastRecords,
-        IPodcastReadModel Podcasts,
-        IPlaybackStateRepository Playback);
+        IPodcastReadModel Podcasts);
 
-    private static Deps Mocks(PlaybackState state)
-    {
-        var d = new Deps(
+    private static Deps Mocks() =>
+        new(
             Substitute.For<IPendingEditRepository>(),
             Substitute.For<IMetadataWriter>(),
             Substitute.For<ILibraryStorage>(),
             Substitute.For<ISongRecordRepository>(),
             Substitute.For<ISongReadModel>(),
             Substitute.For<IPodcastRecordRepository>(),
-            Substitute.For<IPodcastReadModel>(),
-            Substitute.For<IPlaybackStateRepository>());
-        d.Playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(state);
-        return d;
-    }
+            Substitute.For<IPodcastReadModel>());
 
     private static PendingMetadataApplier Applier(Deps d) =>
         new(d.Pending, d.Writer, d.Storage, d.SongRecords, d.Songs,
-            d.PodcastRecords, d.Podcasts, d.Playback,
+            d.PodcastRecords, d.Podcasts,
             Substitute.For<ILogger<PendingMetadataApplier>>());
 
     private static SongDto Song(string file) =>
@@ -52,7 +46,7 @@ public sealed class PendingEditTests
     [Fact]
     public async Task Apply_SongEdit_WritesTags_AndDropsRow()
     {
-        var d = Mocks(new PlaybackState { UserId = UserId, CurrentFile = "next.mp3" });
+        var d = Mocks();
         d.Storage.SongExists(UserId, "s.mp3").Returns(true);
         d.Pending.GetAsync(UserId, "s.mp3", Arg.Any<CancellationToken>())
             .Returns(new PendingMetadataEdit
@@ -63,7 +57,7 @@ public sealed class PendingEditTests
         d.Songs.GetByFileAsync(UserId, "s.mp3", true, Arg.Any<CancellationToken>())
             .Returns(Song("s.mp3"));
 
-        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", CancellationToken.None))
+        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", "next.mp3", CancellationToken.None))
             .Should().BeTrue();
         await d.Writer.Received(1).WriteSongAsync(
             UserId, "s.mp3", "New Title", null, null, null, null, null,
@@ -74,9 +68,9 @@ public sealed class PendingEditTests
     [Fact]
     public async Task Apply_StillCurrent_KeepsRow_WithoutWriting()
     {
-        var d = Mocks(new PlaybackState { UserId = UserId, CurrentFile = "s.mp3" });
+        var d = Mocks();
 
-        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", CancellationToken.None))
+        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", "s.mp3", CancellationToken.None))
             .Should().BeFalse();
         await d.Writer.DidNotReceiveWithAnyArgs().WriteSongAsync(
             default!, default!, default, default, default, default, default, default, default);
@@ -86,12 +80,12 @@ public sealed class PendingEditTests
     [Fact]
     public async Task Apply_MissingFile_DropsRow_WithoutWriting()
     {
-        var d = Mocks(new PlaybackState { UserId = UserId, CurrentFile = "next.mp3" });
+        var d = Mocks();
         d.Storage.SongExists(UserId, "s.mp3").Returns(false);
         d.Pending.GetAsync(UserId, "s.mp3", Arg.Any<CancellationToken>())
             .Returns(new PendingMetadataEdit { UserId = UserId, File = "s.mp3" });
 
-        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", CancellationToken.None))
+        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", "next.mp3", CancellationToken.None))
             .Should().BeFalse();
         await d.Writer.DidNotReceiveWithAnyArgs().WriteSongAsync(
             default!, default!, default, default, default, default, default, default, default);
@@ -101,7 +95,7 @@ public sealed class PendingEditTests
     [Fact]
     public async Task Apply_WriterFailure_KeepsRow_ForNextTrackChange()
     {
-        var d = Mocks(new PlaybackState { UserId = UserId, CurrentFile = "next.mp3" });
+        var d = Mocks();
         d.Storage.SongExists(UserId, "s.mp3").Returns(true);
         d.Pending.GetAsync(UserId, "s.mp3", Arg.Any<CancellationToken>())
             .Returns(new PendingMetadataEdit { UserId = UserId, File = "s.mp3", Title = "T" });
@@ -111,7 +105,7 @@ public sealed class PendingEditTests
                 Arg.Any<CancellationToken>())
             .Returns<Task>(_ => Task.FromException(new InvalidOperationException("locked")));
 
-        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", CancellationToken.None))
+        (await Applier(d).ApplyForFileAsync(UserId, "s.mp3", "next.mp3", CancellationToken.None))
             .Should().BeFalse();
         await d.Pending.DidNotReceiveWithAnyArgs().DeleteAsync(default!, default!, default);
     }
@@ -119,7 +113,7 @@ public sealed class PendingEditTests
     [Fact]
     public async Task Apply_PodcastEdit_WritesEpisodePath()
     {
-        var d = Mocks(new PlaybackState { UserId = UserId, CurrentFile = "next.mp3" });
+        var d = Mocks();
         d.Storage.PodcastExists(UserId, "e.mp3").Returns(true);
         d.Storage.PodcastPath(UserId, "e.mp3").Returns("/tmp/e.mp3");
         d.Pending.GetAsync(UserId, "e.mp3", Arg.Any<CancellationToken>())
@@ -131,7 +125,7 @@ public sealed class PendingEditTests
         d.Podcasts.GetByFileAsync(UserId, "e.mp3", Arg.Any<CancellationToken>())
             .Returns(new SongDto("e.mp3", "Host", "New Title", "", "", 60, null, null, true));
 
-        (await Applier(d).ApplyForFileAsync(UserId, "e.mp3", CancellationToken.None))
+        (await Applier(d).ApplyForFileAsync(UserId, "e.mp3", "next.mp3", CancellationToken.None))
             .Should().BeTrue();
         await d.Writer.Received(1).WritePathAsync(
             "/tmp/e.mp3", "New Title", "Host", null, null, null, null,

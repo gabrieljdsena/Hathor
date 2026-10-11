@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type PodcastTimestamp } from '../../api/client'
 import { clampSeekTarget, engine } from '../../audio/engine'
 import { subscribeAudioClock, useAudioClock } from '../../audio/clock'
-import { formatTime, usePlayer } from '../../store/player'
+import { formatTime, pushResumeSpot, usePlayer } from '../../store/player'
 import Icon from './icons'
 import Modal from './Modal'
 import ToggleSwitch from './ToggleSwitch'
@@ -43,7 +43,11 @@ function seekTo(secs: number) {
   const known = elDur > 0 ? elDur : meta
   const target = known > 0 ? clampSeekTarget(secs, known) : Math.max(0, secs)
   engine.seek(target)
-  void api.seek(target).catch(() => {})
+  // Paused chapter seeks move this browser's resume spot for other devices.
+  void api
+    .seek(target)
+    .then(() => pushResumeSpot())
+    .catch(() => {})
 }
 
 // Chapter-boundary transport for the current podcast episode. Returns true

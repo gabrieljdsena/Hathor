@@ -8,6 +8,7 @@ using NSubstitute;
 
 namespace Hathor.Application.Tests;
 
+[Collection("PlayerEventsSerial")]
 public sealed class PlayHandlerTests
 {
     // Track-change hook with no stashed edits: oldFile is null/unchanged in
@@ -21,7 +22,6 @@ public sealed class PlayHandlerTests
             Substitute.For<ISongReadModel>(),
             Substitute.For<IPodcastRecordRepository>(),
             Substitute.For<IPodcastReadModel>(),
-            Substitute.For<IPlaybackStateRepository>(),
             Substitute.For<Microsoft.Extensions.Logging.ILogger<PendingMetadataApplier>>());
     [Fact]
     public async Task Play_WithNoFileAndEmptyState_ReturnsStateWithoutPlaying()
@@ -33,7 +33,7 @@ public sealed class PlayHandlerTests
         playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
             .Returns(state);
 
-        var dto = await new PlayHandler(playback, songs, NoOpApplier(), Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(), hub)
+        var dto = await new PlayHandler(playback, songs, NoOpApplier(), hub)
             .Handle(new PlayCommand(state.UserId, null, null, null), CancellationToken.None);
 
         dto.IsPlaying.Should().BeFalse();
@@ -55,7 +55,7 @@ public sealed class PlayHandlerTests
         var raised = new List<(Guid, string, long?)>();
         PlayerEvents.SongPlayed += (u, f, p) => raised.Add((u, f, p));
 
-        var dto = await new PlayHandler(playback, songs, NoOpApplier(), Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(), hub)
+        var dto = await new PlayHandler(playback, songs, NoOpApplier(), hub)
             .Handle(new PlayCommand(userId, "song.mp3", false, null), CancellationToken.None);
 
         try
@@ -288,5 +288,65 @@ public sealed class ShuffleHandlerTests
         state.Shuffle.Should().BeFalse();
         state.UnshuffledFiles.Should().BeEmpty();
         state.NextFiles.Should().Equal("n2");
+    }
+}
+
+public sealed class ReplaceQueueBroadcastTests
+{
+    // Replace never changes the current track (a play/next always follows),
+    // so broadcasting its intermediate state echoes the OLD song into every
+    // subscriber — UI flicker plus an engine reload with autoplay — right
+    // before the real change lands. Queue only; the REST DTO stays full.
+    [Fact]
+    public async Task ReplaceQueue_BroadcastsQueueOnly_NotState()
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var userId = Guid.NewGuid();
+        var state = new PlaybackState { UserId = userId, CurrentFile = "old.mp3", IsPlaying = true };
+        playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(state);
+        songs.GetManyAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.SongDto>());
+        songs.GetByFileAsync(Arg.Any<Guid>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns((Dtos.SongDto?)null);
+
+        var dto = await new QueueHandler(playback, songs, hub).Handle(
+            new ReplaceQueueCommand(userId, "n1", ["n1", "n2"], null, null), CancellationToken.None);
+
+        // REST response stays full (the awaiting playSong needs it)...
+        dto.Should().NotBeNull();
+        state.NextFiles.Should().Equal("n2");
+        // ...but subscribers only get the queue, never the intermediate state.
+        await hub.DidNotReceive().BroadcastStateAsync(
+            Arg.Any<Guid>(), Arg.Any<Dtos.PlayerStateDto>(), Arg.Any<CancellationToken>());
+        await hub.Received(1).BroadcastQueueAsync(
+            userId, Arg.Any<IReadOnlyList<Dtos.SongDto>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OtherQueueOps_StillBroadcastState()
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var userId = Guid.NewGuid();
+        var state = new PlaybackState { UserId = userId, CurrentFile = "c.mp3" };
+        state.NextFiles = ["q1", "q2"];
+        playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(state);
+        songs.GetManyAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.SongDto>());
+        songs.GetByFileAsync(Arg.Any<Guid>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns((Dtos.SongDto?)null);
+
+        await new QueueHandler(playback, songs, hub).Handle(
+            new ReorderQueueCommand(userId, 0, 1), CancellationToken.None);
+
+        await hub.Received(1).BroadcastStateAsync(
+            userId, Arg.Any<Dtos.PlayerStateDto>(), Arg.Any<CancellationToken>());
     }
 }

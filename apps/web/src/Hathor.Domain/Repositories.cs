@@ -41,6 +41,16 @@ public interface IPlaybackStateRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
+// Cross-device resume spots (EF): one row per (user, device), last wins.
+public interface IPlaybackSpotRepository
+{
+    Task UpsertAsync(Entities.PlaybackSpot spot, CancellationToken ct = default);
+    Task<Entities.PlaybackSpot?> LatestForeignAsync(
+        Guid userId, string? excludeDeviceId, DateTime minUpdatedUtc,
+        CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
 public interface IUserSettingsRepository
 {
     Task<UserSettings> GetOrCreateAsync(Guid userId, CancellationToken ct = default);

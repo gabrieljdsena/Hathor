@@ -95,6 +95,7 @@ export default function EditSongModal({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (saving) return // double-click guard: one PATCH per save, not a burst
     setSaving(true)
     setError(null)
     try {
@@ -118,12 +119,30 @@ export default function EditSongModal({
             coverArt: coverRemoved ? 'REMOVE' : cover,
           })
       evictCoverCache(song.file)
+      // Keyed invalidations only: an unkeyed invalidate refetches every
+      // view at once (songs, trending, jobs, settings…). This is the single
+      // invalidation point — callers (SongMenu, Podcasts) must NOT
+      // invalidate again, only player.refresh().
       void queryClient.invalidateQueries({ queryKey: ['songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['song-count'] })
+      void queryClient.invalidateQueries({ queryKey: ['songs-recent'] })
+      void queryClient.invalidateQueries({ queryKey: ['songs-recently-played'] })
+      void queryClient.invalidateQueries({ queryKey: ['artist-songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['album-songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['daily-mix'] })
+      void queryClient.invalidateQueries({ queryKey: ['playlist-songs'] })
+      void queryClient.invalidateQueries({ queryKey: ['playlists'] })
       void queryClient.invalidateQueries({ queryKey: ['podcasts'] })
       void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
       onSaved(saved.song, saved.pending === true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save metadata.')
+      setError(
+        err instanceof Error && /429|Rate limited/i.test(err.message)
+          ? 'Too many requests — wait a few seconds and press Save again.'
+          : err instanceof Error
+            ? err.message
+            : 'Failed to save metadata.',
+      )
     } finally {
       setSaving(false)
     }

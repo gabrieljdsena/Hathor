@@ -35,5 +35,17 @@ Rules all apps follow:
   (server deletes by episode, like clients); pull upserts by id and never
   wipes local rows on empty snapshots. Wire section: `podcastChapters`
   (`Id`, `PodcastFile`, `Name`, `StartSecs`, `EndSecs`).
+- Resume spots (cross-device "resume where I paused"): server table
+  `Playback_Spots`, one row per (user, `device_id`), last write wins.
+  `POST /api/v1/sync/playback` `{deviceId, deviceLabel?, file, positionSec,
+  isPodcast}` upserts the caller's row (push on pause, tab-close beacon,
+  and seek-while-paused; never while playing — a live position would
+  clobber a genuine paused spot elsewhere). `GET /api/v1/sync/playback
+  ?excludeDevice={id}` returns the newest spot from a DIFFERENT device
+  (spots older than 30 days hidden); readers pass their own id so a device
+  never echoes itself. Device ids are client UUIDs: web keeps one per
+  browser (`hathor:device-id` in localStorage, shared by all tabs);
+  mobile/desktop send theirs when they implement push (until then they
+  simply get no spots). Nothing auto-plays — the pill is an explicit tap.
 
 Do not change the wire shape in one app without updating the other two in the same PR.

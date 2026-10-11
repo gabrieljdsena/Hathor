@@ -529,6 +529,14 @@ export class AudioEngine {
       if (slot === this.fading.out) this.finishFade()
       return
     }
+    // A paused element never resumes on `ended` — park inside even when
+    // the end looks spurious (seek+pause near EOF). Checked first so a
+    // seek-then-pause can't resurrect audio.
+    if (slot === this.active && this.readPaused(slot.el)) {
+      this.report(`paused ended ignored, parking inside ${this.describeSlot(slot)}`)
+      this.parkInside(slot)
+      return
+    }
     if (slot === this.active && this.isSpuriousEnd()) {
       // A seek just landed us here but the target was safely inside the
       // track (bad byte range past EOF on a huge file): re-seek the target
@@ -537,6 +545,7 @@ export class AudioEngine {
       // The guard grants one recovery per seek: if the target itself is
       // past a cut point, the next `ended` falls through to the cut-short
       // path below instead of re-seeking forever.
+      // (Paused case already returned above — reaching here means playing.)
       this.lastSeekAt = -Infinity
       this.report(
         `spurious ended ignored target=${this.lastSeekTarget} dur=${slot.el.duration} ${this.describeSlot(slot)}`,
@@ -551,17 +560,8 @@ export class AudioEngine {
       }
     }
     if (slot === this.active) {
-      // A paused element never finishes a track: it reached the edge via a
-      // seek (or a metadata-load clamp after one), not by playing through.
-      // The usual source is a correction target at/past the real end — a
-      // server estimate that outran a stalled element, or a chapter past
-      // EOF. Advancing here skips the user's track over nothing, so park
-      // just inside and stay paused instead.
-      if (this.readPaused(slot.el)) {
-        this.report(`paused ended ignored, parking inside ${this.describeSlot(slot)}`)
-        this.parkInside(slot)
-        return
-      }
+      // Paused case already handled above (early return covers both
+      // spurious and edge parks).
       // `ended` far from the known end (cut-short stream, truncated file):
       // the track didn't really finish. Recover like an element error
       // instead of advancing away mid-song. Bounded — a deterministically
@@ -856,6 +856,9 @@ export class AudioEngine {
   }
 
   private async startFade(next: EngineTrack) {
+    // Never start a fade from a paused element: pausing inside the fade
+    // window must stay silent instead of waking queue[0].
+    if (this.readPaused(this.active.el)) return
     const idle = this.idle
     const dur = this.active.el.duration
     const effective = Math.min(this.fadeSec, Math.max(1, dur - this.active.el.currentTime))
@@ -869,6 +872,17 @@ export class AudioEngine {
       await idle.el.play()
     } catch {
       return // incoming wouldn't start — stay on the current track
+    }
+    // The pause may have landed while `play()` was in flight: the tick
+    // froze the active slot but the incoming is now audible. Hold it and
+    // drop the fade instead of resurrecting playback after a pause.
+    if (this.readPaused(this.active.el)) {
+      try {
+        idle.el.pause()
+      } catch {
+        /* ignore */
+      }
+      return
     }
     if (this.fading || this.active.file === next.file) {
       idle.el.pause()
@@ -901,9 +915,12 @@ export class AudioEngine {
 
   // Queue changed under a fade (or advance failed): drop the fade and play
   // whatever was requested — or just stop the incoming on total failure.
+  // Never resumes paused audio: capture play state before tearing down,
+  // then swap silently when the user had it paused.
   private abortTo(actual: EngineTrack | null) {
     if (!this.fading) return
     const incoming = this.fading.incoming
+    const wasPlaying = !this.readPaused(this.active.el) || !this.readPaused(incoming.el)
     incoming.el.pause()
     this.setSlotGain(incoming, 0)
     this.fading = null
@@ -917,7 +934,14 @@ export class AudioEngine {
       this.active.recoveries = 0
       this.lastLoadAt = this.deps.now()
       this.setSlotGain(this.active, 1)
-      this.tryPlay(this.active.el, 'abortTo')
+      if (wasPlaying) this.tryPlay(this.active.el, 'abortTo')
+      else {
+        try {
+          this.active.el.pause()
+        } catch {
+          /* keep paused */
+        }
+      }
     } else {
       this.setSlotGain(this.active, 1)
     }

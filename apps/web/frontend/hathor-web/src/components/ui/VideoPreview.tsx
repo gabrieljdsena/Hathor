@@ -163,7 +163,7 @@ export default function VideoPreview({ id, title }: { id: string; title?: string
         <iframe
           ref={frameRef}
           className="absolute top-0 left-0 w-full h-full rounded-lg"
-          src={`https://www.youtube.com/embed/${id}?autoplay=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+          src={`https://www.youtube.com/embed/${id}?autoplay=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
           title={title ?? 'YouTube video player'}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
@@ -179,7 +179,9 @@ export default function VideoPreview({ id, title }: { id: string; title?: string
         This video can't be embedded here — playing audio directly instead.
       </p>
       {mode.kind === 'audio' ? (
-        <audio className="w-full" controls autoPlay src={mode.url} preload="none" />
+        // No autoPlay: an auto-starting preview under paused library audio
+        // sounds exactly like "another song not in the queue started".
+        <audio className="w-full" controls preload="none" src={mode.url} />
       ) : (
         <p className="text-sm text-zinc-400">No preview available for this video.</p>
       )}

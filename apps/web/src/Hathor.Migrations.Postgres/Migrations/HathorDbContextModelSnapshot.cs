@@ -671,6 +671,40 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.ToTable("User_Settings", (string)null);
                 });
 
+            modelBuilder.Entity("Hathor.Infrastructure.Ef.PlaybackSpotRow", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("DeviceLabel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("File")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<bool>("IsPodcast")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("PositionSec")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId", "DeviceId");
+
+                    b.HasIndex("UserId", "UpdatedUtc");
+
+                    b.ToTable("Playback_Spots", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Infrastructure.Ef.PlaybackStateRow", b =>
                 {
                     b.Property<Guid>("UserId")

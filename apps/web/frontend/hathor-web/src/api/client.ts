@@ -132,8 +132,43 @@ export interface PendingEdit {
   createdUtc: string
 }
 
+// Stable per-browser device id (one UUID in localStorage, shared by all
+// tabs): readers exclude their own id, so a browser never echoes its own
+// paused track back as a resume pill. crypto.randomUUID needs a secure
+// context (missing on plain-LAN http) — fall back to a random string.
+const DEVICE_KEY = 'hathor:device-id'
+export function deviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY)
+    if (!id) {
+      id =
+        globalThis.crypto?.randomUUID?.() ??
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+      localStorage.setItem(DEVICE_KEY, id)
+    }
+    return id
+  } catch {
+    return 'ephemeral'
+  }
+}
+
+// Short human label for the pill ("from Windows"); the server falls back
+// to the User-Agent substring when this is null.
+export function deviceLabel(): string | null {
+  try {
+    const nav = navigator as unknown as {
+      userAgentData?: { platform?: string }
+      platform?: string
+    }
+    return nav.userAgentData?.platform || nav.platform || null
+  } catch {
+    return null
+  }
+}
+
 // Resume-across-devices spot: another device's paused playback state.
-// Pull only surfaces it — tapping plays explicitly, nothing auto-plays.
+// userKey is the writer's device id. Pull only surfaces it — tapping plays
+// explicitly, nothing auto-plays.
 export interface PlaybackSpot {
   userKey: string
   file: string
@@ -288,6 +323,12 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   if (res.status === 401) {
     logoutLocal()
     throw new Error('Unauthorized')
+  }
+  if (res.status === 429) {
+    const retryAfter = res.headers.get('Retry-After')
+    const hint = retryAfter ? ` (retry in ${retryAfter}s)` : ' (too many requests — wait a few seconds and retry)'
+    const body = await res.text().catch(() => '')
+    throw new Error((body && `${body}${hint}`) || `Rate limited: 429${hint}`)
   }
   if (!res.ok) {
     const body = await res.text()
@@ -555,9 +596,27 @@ export const api = {
   pendingEdits: () => request<PendingEdit[]>('/pending-edits'),
   discardPendingEdit: (file: string) =>
     request<void>(`/pending-edits/${encodeURIComponent(file)}`, { method: 'DELETE' }),
-  // Resume across devices: snapshot this spot / read the latest foreign one.
-  pushPlayback: () => request<boolean>('/sync/playback', { method: 'POST' }),
-  latestPlayback: () => request<PlaybackSpot | null>('/sync/playback'),
+  // Resume across devices: snapshot this device's spot (pause/pagehide/
+  // paused-seek, fire-and-forget) / read the latest spot from ANOTHER
+  // device (excludeDevice = own id — never echo self).
+  pushPlayback: (
+    id: string,
+    spot: { file: string; positionSec: number; isPodcast: boolean; deviceLabel?: string | null },
+  ) =>
+    request<boolean>('/sync/playback', {
+      method: 'POST',
+      body: JSON.stringify({
+        deviceId: id,
+        deviceLabel: spot.deviceLabel ?? null,
+        file: spot.file,
+        positionSec: spot.positionSec,
+        isPodcast: spot.isPodcast,
+      }),
+    }),
+  latestPlayback: (excludeDevice?: string | null) =>
+    request<PlaybackSpot | null>(
+      `/sync/playback${excludeDevice ? `?excludeDevice=${encodeURIComponent(excludeDevice)}` : ''}`,
+    ),
 
   // artists / albums
   artists: () => request<string[]>('/artists'),

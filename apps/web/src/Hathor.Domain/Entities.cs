@@ -230,6 +230,20 @@ public sealed class DiscoverCache
     public DateTime CreatedAtUtc { get; set; }
 }
 
+// Cross-device resume spot: one row per (user, device), last write wins.
+// Readers exclude their own device id, so a browser never echoes its own
+// paused track back as a "resume" pill (the single-user echo bug).
+public sealed class PlaybackSpot
+{
+    public Guid UserId { get; set; }
+    public string DeviceId { get; set; } = ""; // PK with UserId; client UUID (hathor:device-id)
+    public string File { get; set; } = "";
+    public double PositionSec { get; set; }
+    public bool IsPodcast { get; set; }
+    public string? DeviceLabel { get; set; } // human label, e.g. UA substring
+    public DateTime UpdatedUtc { get; set; }
+}
+
 // Persisted prefs (desktop Settings row id=1 → per-user).
 public sealed class UserSettings
 {

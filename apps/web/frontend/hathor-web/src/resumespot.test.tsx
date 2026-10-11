@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import ResumeSpot from './components/ui/ResumeSpot'
+import ResumeSpot, { useResumeSpot } from './components/ui/ResumeSpot'
 import { usePlayer } from './store/player'
 import type { PlaybackSpot, Song } from './api/client'
 
@@ -54,11 +54,11 @@ const song: Song = {
 }
 
 const spot: PlaybackSpot = {
-  userKey: 'desktop',
+  userKey: 'phone-9',
   file: 's.mp3',
   positionSec: 95,
   isPodcast: false,
-  device: 'Desktop',
+  device: 'Android',
   updatedUtc: '2026-10-08T00:00:00Z',
 }
 
@@ -73,6 +73,8 @@ function renderSpot(s: PlaybackSpot) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
+  localStorage.setItem('hathor:device-id', 'browser-1')
   usePlayer.setState({ currentSong: null, isPlaying: false })
   usePlayer.setState({ playSong: mockPlaySong } as Partial<ReturnType<typeof usePlayer.getState>>)
   mockPlaySong.mockResolvedValue(undefined)
@@ -81,9 +83,9 @@ beforeEach(() => {
 })
 
 describe('ResumeSpot', () => {
-  it('tapping plays the file at the foreign position, then dismisses', async () => {
+  it('tapping plays the resolved title at the foreign position, then dismisses', async () => {
     renderSpot(spot)
-    const label = 'Resume s.mp3 at 1:35 from Desktop'
+    const label = 'Resume Title — Artist at 1:35 from Android'
     expect(await screen.findByText(label)).toBeInTheDocument()
 
     fireEvent.click(screen.getByText(label))
@@ -95,9 +97,32 @@ describe('ResumeSpot', () => {
     await waitFor(() => expect(screen.queryByText(label)).toBeNull())
   })
 
+  it('falls back to the raw file key when the library lookup fails', async () => {
+    mockSong.mockRejectedValue(new Error('gone'))
+    renderSpot(spot)
+    expect(await screen.findByText('Resume s.mp3 at 1:35 from Android')).toBeInTheDocument()
+  })
+
   it('stays hidden when the spot names what is already playing', () => {
     usePlayer.setState({ currentSong: song })
     const { container } = renderSpot(spot)
     expect(container.firstChild).toBeNull()
+    expect(mockSong).not.toHaveBeenCalled()
+  })
+
+  it('polls with its own device id excluded', async () => {
+    mockLatest.mockResolvedValue(null)
+    function Probe() {
+      const found = useResumeSpot()
+      return <div>{found ? found.file : 'none'}</div>
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <Probe />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(mockLatest).toHaveBeenCalledWith('browser-1'))
+    expect(await screen.findByText('none')).toBeInTheDocument()
   })
 })

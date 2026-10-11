@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, type PlayerState, type QueueSource, type Song } from '../api/client'
+import { api, deviceId, deviceLabel, type PlayerState, type QueueSource, type Song } from '../api/client'
 import { DRIFT_EDGE_MARGIN_SEC, engine, type EngineTrack } from '../audio/engine'
 
 // Client playback store. Server PlaybackState is the source of truth
@@ -7,6 +7,28 @@ import { DRIFT_EDGE_MARGIN_SEC, engine, type EngineTrack } from '../audio/engine
 // equal-power crossfade. Fades never move server state except at the fade
 // start, when the engine asks the store to advance (api.next) exactly as
 // the new audio starts — server position and new track stay aligned.
+// Snapshot this browser's paused spot for other devices (fire-and-forget,
+// never blocks playback). Only when paused with a track loaded — playing
+// states are never pushed (a live position would clobber a genuine paused
+// spot elsewhere). engine.time() is the media-clock truth at push moment.
+export function pushResumeSpot(): void {
+  try {
+    const s = usePlayer.getState()
+    const song = s.currentSong
+    if (!song || s.isPlaying) return
+    void api
+      .pushPlayback(deviceId(), {
+        file: song.file,
+        positionSec: engine.time(),
+        isPodcast: !!song.isPodcast,
+        deviceLabel: deviceLabel(),
+      })
+      .catch(() => {})
+  } catch {
+    /* resume sync must never break playback */
+  }
+}
+
 interface PlayerStore extends PlayerState {
   refresh: () => Promise<void>
   boot: () => Promise<void>
@@ -53,6 +75,35 @@ function toTrack(song: Song) {
         ? null
         : -14 - song.loudnessDb,
   }
+}
+
+// Transport generation: every mutating call (playSong, toggle) claims a
+// number up front; each awaited response applies only while still current.
+// Rapid clicks otherwise interleave (a cover burst can stall fetches for
+// seconds behind the 6-connection pool) and a STALE response reloads an old
+// track over the new one — or resumes audio right after a pause. Fresh
+// reads (refresh, boot) always apply: they pull latest server truth, so the
+// UI can never stick on a dropped generation.
+//
+// Hub broadcasts are the exception with the opposite rule (see playerHub):
+// while OUR OWN flight is in progress they are skipped — a sibling click's
+// server state landing mid-flight would revert us just like a stale REST
+// response. Our flight's own responses decide the outcome instead.
+let transportGen = 0
+let inflightTransports = 0
+function claimTransport(): number {
+  transportGen += 1
+  inflightTransports += 1
+  return transportGen
+}
+function releaseTransport(): void {
+  inflightTransports = Math.max(0, inflightTransports - 1)
+}
+export function hasInflightTransport(): boolean {
+  return inflightTransports > 0
+}
+function isCurrentTransport(gen: number): boolean {
+  return gen === transportGen
 }
 
 // The engine renders whatever the server says is current (used after every
@@ -241,17 +292,36 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     // diverged, then rethrow so callers see the failure as before.
     engine.ensureContext()
     engine.load(toTrack(song), true)
+    // Optimistic: the UI (player bar, row highlight, lyrics) names the
+    // clicked song instantly instead of flashing the old one through both
+    // server round trips. The responses below confirm or correct it; a
+    // failure reconverges via refresh in the catch.
+    set({ currentSong: song, isPlaying: true })
+    const gen = claimTransport()
     try {
-      const queued = await api.setQueue(song.file, context, source)
-      set(queued)
+      // The queue response is awaited for server ordering but NEVER applied:
+      // queue-replace doesn't change the current track, so its state still
+      // names the OLD song — applying it flips the UI back mid-flight and
+      // is the back-and-forth on every song click (next-track clicks have
+      // no intermediate response, which is why they never flickered). The
+      // play response below delivers the full confirmed state instead.
+      await api.setQueue(song.file, context, source)
+      // A newer click already moved on: anything below names a stale track
+      // and must never overwrite the store or reload the engine (that is
+      // what kept resurrecting old songs between every new one).
+      if (!isCurrentTransport(gen)) return
       const state = await api.play(song.file, song.isPodcast)
+      if (!isCurrentTransport(gen)) return
       set(state)
       syncEngine(state)
     } catch (e) {
+      if (!isCurrentTransport(gen)) return
       await get()
         .refresh()
         .catch(() => {})
       throw e
+    } finally {
+      releaseTransport()
     }
   },
 
@@ -275,13 +345,26 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       else engine.play()
       set({ isPlaying: !before.isPlaying })
     }
+    const gen = claimTransport()
     try {
       const state = await api.toggle()
+      // A newer transport already moved on (rapid pause/play): a stale
+      // toggle response must not flip the store or reload the engine —
+      // that is what restarted audio right after pausing.
+      if (!isCurrentTransport(gen)) return
       set(state)
       syncEngine(state)
+      // Landing paused snapshots this browser's spot so other devices can
+      // offer it (resuming never pushes — only pauses do).
+      if (!state.isPlaying && state.currentSong) pushResumeSpot()
     } catch {
+      if (!isCurrentTransport(gen)) return
       // Server unreachable — resync to whatever it actually has.
-      void before.refresh().catch(() => {})
+      void get()
+        .refresh()
+        .catch(() => {})
+    } finally {
+      releaseTransport()
     }
   },
 

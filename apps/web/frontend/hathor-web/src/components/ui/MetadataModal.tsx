@@ -41,6 +41,7 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
   }, [song.file, song.title, song.artist])
 
   const apply = (hit: ITunesHit) => {
+    if (applying) return // one PATCH per click — no burst on double-apply
     setApplying(true)
     setError(null)
     setQueued(false)
@@ -55,7 +56,11 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
       })
       .then((saved) => {
         evictCoverCache(song.file)
-        void queryClient.invalidateQueries()
+        // Keyed only (see EditSongModal): avoid refetching every view on
+        // each Apply.
+        void queryClient.invalidateQueries({ queryKey: ['songs'] })
+        void queryClient.invalidateQueries({ queryKey: ['podcasts'] })
+        void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
         void usePlayer.getState().refresh().catch(() => {})
         // Playing file: the tags are stashed, not written — say so instead
         // of closing as if they applied (the player-bar chip tracks it).
@@ -67,7 +72,13 @@ export default function MetadataModal({ song, onClose }: { song: Song; onClose: 
         onClose()
       })
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : 'Failed to apply metadata.')
+        setError(
+          e instanceof Error && /429|Rate limited/i.test(e.message)
+            ? 'Too many requests — wait a few seconds and press Apply again.'
+            : e instanceof Error
+              ? e.message
+              : 'Failed to apply metadata.',
+        )
         setApplying(false)
       })
   }

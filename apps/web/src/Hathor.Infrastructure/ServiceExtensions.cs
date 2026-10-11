@@ -107,6 +107,7 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Domain.Repositories.ISessionRepository, Repositories.EfSessionRepository>();
         services.AddScoped<Domain.Repositories.IApiKeyRepository, Repositories.EfApiKeyRepository>();
         services.AddScoped<Domain.Repositories.IPlaybackStateRepository, Repositories.EfPlaybackStateRepository>();
+        services.AddScoped<Domain.Repositories.IPlaybackSpotRepository, Repositories.EfPlaybackSpotRepository>();
         services.AddScoped<Domain.Repositories.IUserSettingsRepository, Repositories.EfUserSettingsRepository>();
         services.AddScoped<Domain.Repositories.ITombstoneRepository, Repositories.EfTombstoneRepository>();
         services.AddScoped<Domain.Repositories.IPlaylistRepository, Repositories.EfPlaylistRepository>();

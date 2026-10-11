@@ -1,11 +1,9 @@
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
-using Hathor.Application.Sync;
 using Hathor.Domain.Playback;
 using Hathor.Domain.Repositories;
 using Hathor.Application.Metadata;
 using MediatR;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Hathor.Application.Player;
 
@@ -33,7 +31,6 @@ public sealed class PlayHandler(
     IPlaybackStateRepository playback,
     ISongReadModel songs,
     PendingMetadataApplier pendingEdits,
-    IServiceScopeFactory scopes,
     IPlaybackHub hub) : IRequestHandler<PlayCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(PlayCommand cmd, CancellationToken ct)
@@ -84,7 +81,6 @@ public sealed class PlayHandler(
         // duration edge and auto-advance away.
         if (!state.IsPlaying)
             await PlaybackPositionClamp.ClampStoredAsync(state, songs, cmd.UserId, ct);
-        PlaybackPushHooks.PushOnPause(scopes, cmd.UserId, state);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -94,11 +90,11 @@ public sealed class PlayHandler(
 
 public sealed record ToggleCommand(Guid UserId) : IRequest<PlayerStateDto>;
 
-public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IServiceScopeFactory scopes, IPlaybackHub hub)
+public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadModel songs, PendingMetadataApplier pendingEdits, IPlaybackHub hub)
     : IRequestHandler<ToggleCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(ToggleCommand cmd, CancellationToken ct)
-        => await new PlayHandler(playback, songs, pendingEdits, scopes, hub)
+        => await new PlayHandler(playback, songs, pendingEdits, hub)
             .Handle(new PlayCommand(cmd.UserId, null, null, null), ct);
 }
 
@@ -106,7 +102,7 @@ public sealed record PauseCommand(Guid UserId) : IRequest<PlayerStateDto>;
 public sealed record NextCommand(Guid UserId, bool Auto = false, string? IdempotencyKey = null, string? ExpectedFile = null) : IRequest<PlayerStateDto>;
 public sealed record PrevCommand(Guid UserId, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
 
-public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadModel songs, IServiceScopeFactory scopes, IPlaybackHub hub)
+public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
     : IRequestHandler<PauseCommand, PlayerStateDto>
 {
     public async Task<PlayerStateDto> Handle(PauseCommand cmd, CancellationToken ct)
@@ -114,7 +110,6 @@ public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadMod
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.Pause(DateTime.UtcNow);
         await PlaybackPositionClamp.ClampStoredAsync(state, songs, cmd.UserId, ct);
-        PlaybackPushHooks.PushOnPause(scopes, cmd.UserId, state);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
@@ -386,36 +381,7 @@ internal static class PendingEditHooks
         CancellationToken ct) =>
         string.Equals(oldFile, newFile, StringComparison.OrdinalIgnoreCase)
             ? Task.CompletedTask
-            : applier.ApplyForFileAsync(userId, oldFile, ct);
-}
-
-// Resume-state push (never blocks the response): snapshot this user's spot
-// into the shared remote table whenever playback pauses with a loaded track
-// (manual toggle-pause, pause endpoint, tab-close/unload beacon, boot pause
-// of a stale session). 10s budget, all failures swallowed; no remote
-// configured → instant false inside the handler. Playing states are never
-// pushed (a live position would clobber a genuine paused spot elsewhere).
-internal static class PlaybackPushHooks
-{
-    internal static void PushOnPause(
-        IServiceScopeFactory scopes, Guid userId, PlaybackState state)
-    {
-        if (state.IsPlaying || state.CurrentFile is null || state.FirstPlay) return;
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                using var scope = scopes.CreateScope();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await scope.ServiceProvider.GetRequiredService<IMediator>()
-                    .Send(new PushPlaybackStateCommand(userId), cts.Token);
-            }
-            catch
-            {
-                // Resume sync must never break playback.
-            }
-        }, CancellationToken.None);
-    }
+            : applier.ApplyForFileAsync(userId, oldFile, newFile, ct);
 }
 
 public sealed class QueueHandler(
@@ -445,7 +411,12 @@ public sealed class QueueHandler(
             fallback: cmd.Source is null,
             playlistId: cmd.PlaylistId,
             rng: Random.Shared);
-        return await SaveAndBroadcast(cmd.UserId, state, ct);
+        // Replace never changes the current track or play state — it is
+        // always followed by a play/next that does. Broadcasting the
+        // intermediate state would echo the OLD song into every subscriber
+        // (UI flicker + engine reload with autoplay) right before the real
+        // change lands, so broadcast the queue only.
+        return await SaveAndBroadcast(cmd.UserId, state, ct, broadcastState: false, broadcastQueue: true);
     }
 
     public async Task<PlayerStateDto> Handle(AddToQueueCommand cmd, CancellationToken ct)
@@ -490,12 +461,13 @@ public sealed class QueueHandler(
         return await SaveAndBroadcast(cmd.UserId, state, ct);
     }
 
-    private async Task<PlayerStateDto> SaveAndBroadcast(Guid userId, PlaybackState state, CancellationToken ct)
+    private async Task<PlayerStateDto> SaveAndBroadcast(Guid userId, PlaybackState state, CancellationToken ct, bool broadcastState = true, bool broadcastQueue = false)
     {
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, userId, ct);
-        await hub.BroadcastStateAsync(userId, dto, ct);
-        await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
+        if (broadcastState)
+            await hub.BroadcastStateAsync(userId, dto, ct);
+        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
         return dto;
     }
 }

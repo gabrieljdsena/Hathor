@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, deviceId, deviceLabel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { usePlayer } from '../store/player'
+import { pushResumeSpot, usePlayer } from '../store/player'
 import { engine } from '../audio/engine'
 import { handleShortcutKey } from '../utils/shortcuts'
 import { createUnloadPause } from '../utils/unloadPause'
+import { usePlayerHub } from '../playerHub'
 import PlayerBar from './PlayerBar'
 import LyricsSheet from './LyricsSheet'
 import NowPlaying from './NowPlaying'
@@ -62,7 +63,10 @@ function NavItem({
 // Sidebar + bottom player bar shell. Classes cloned from Music Player/ui/index.html
 // (desktop titlebar/resize zones intentionally dropped — responsive web only).
 export default function Shell() {
-  const { logout } = useAuth()
+  const { logout, username } = useAuth()
+  // Converge this tab on every control mutation from anywhere (other tabs,
+  // phone, headless clients) — no-op until logged in.
+  usePlayerHub(username)
   const [queueOpen, setQueueOpen] = useState(false)
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false)
@@ -118,13 +122,22 @@ export default function Shell() {
   }, [])
 
   // Pause-on-unload: closing the tab otherwise leaves a ghost "playing"
-  // on the server (nothing tells it). keepalive POST with Bearer auth.
+  // on the server (nothing tells it). keepalive POST with Bearer auth,
+  // plus a resume-spot snapshot so other devices keep the pause position.
   useEffect(
     () =>
       createUnloadPause(
         () => {
           const s = usePlayer.getState()
-          return { isPlaying: s.isPlaying, hasTrack: s.currentSong !== null }
+          return {
+            isPlaying: s.isPlaying,
+            hasTrack: s.currentSong !== null,
+            file: s.currentSong?.file ?? null,
+            positionSec: engine.time(),
+            isPodcast: !!s.currentSong?.isPodcast,
+            deviceId: deviceId(),
+            deviceLabel: deviceLabel(),
+          }
         },
         () => {
           try {
@@ -165,6 +178,8 @@ export default function Shell() {
           void api.seekBy(d).then((s) => {
             usePlayer.setState(s)
             usePlayer.getState().syncAudio()
+            // Arrow-key seek-while-paused moves this browser's resume spot.
+            pushResumeSpot()
           }),
         nudgeVolume: (d) => {
           const v = Math.min(1, Math.max(0, usePlayer.getState().volume + d))

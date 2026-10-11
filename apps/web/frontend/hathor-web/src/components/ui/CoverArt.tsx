@@ -25,15 +25,41 @@ function cacheSet(file: string, src: string | null) {
   coverCache.set(file, src)
 }
 
+// Shared concurrency cap: a fresh list render fans out one detail fetch
+// per row (each carrying a base64 cover), which saturated the browser's
+// ~6-connection pool and stalled transport fetches (play/toggle/seek)
+// behind it for seconds — stale responses then resurrected old tracks.
+// Four at a time keeps covers flowing without starving playback.
+const MAX_COVER_FETCHES = 4
+let activeCoverFetches = 0
+const coverQueue: Array<() => void> = []
+
+function pumpCoverQueue() {
+  while (activeCoverFetches < MAX_COVER_FETCHES && coverQueue.length > 0) {
+    const run = coverQueue.shift()
+    run?.()
+  }
+}
+
 function fetchCover(file: string, isPodcast: boolean): Promise<string | null> {
   const hit = inflight.get(file)
   if (hit) return hit
-  const p = (isPodcast ? api.podcastDetails(file) : api.song(file, true))
-    .then((song) => song.coverArt)
-    .catch(() => null)
-    .finally(() => {
-      inflight.delete(file)
-    })
+  const p = new Promise<string | null>((resolve) => {
+    const run = () => {
+      activeCoverFetches += 1
+      ;(isPodcast ? api.podcastDetails(file) : api.song(file, true))
+        .then((song) => song.coverArt)
+        .catch(() => null)
+        .then((cover) => {
+          activeCoverFetches -= 1
+          inflight.delete(file)
+          pumpCoverQueue()
+          resolve(cover)
+        })
+    }
+    coverQueue.push(run)
+    pumpCoverQueue()
+  })
   inflight.set(file, p)
   return p
 }

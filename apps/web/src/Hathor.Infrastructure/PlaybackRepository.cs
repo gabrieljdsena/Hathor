@@ -11,6 +11,13 @@ public sealed class EfPlaybackStateRepository(HathorDbContext db) : IPlaybackSta
 {
     public async Task<PlaybackState> GetOrCreateAsync(Guid userId, CancellationToken ct = default)
     {
+        // Identity map: one tracked copy per user per scope. Without this, a
+        // second load in the same request (e.g. the deferred-metadata hook
+        // after a track change) wraps a STALE copy of the same row, and
+        // SaveChanges maps it over the mutated one last — silently reverting
+        // every track change to the previous song in the database.
+        var existing = _tracked.FirstOrDefault(t => t.UserId == userId);
+        if (existing is not null) return existing;
         var row = await db.PlaybackStates.FindAsync([userId], ct);
         if (row is null)
         {

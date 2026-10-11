@@ -34,7 +34,8 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   // Chapter-aware arrows (same rule as the player bar): podcasts jump
   // chapter boundaries, everything else changes track.
   const chapterJump = useChapterJump()
-  // Another device's paused spot (resume affordance, never auto-plays).
+  // Another browser's paused spot (server excludes this browser's own
+  // device id — a pause here never echoes back). Explicit tap only.
   const resumeSpot = useResumeSpot()
 
   const step = (which: 'prev' | 'next') => () => {
@@ -84,7 +85,7 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
       </div>
 
       {resumeSpot && resumeSpot.file !== song.file && (
-        <div className="w-full flex justify-center px-4 pt-1 flex-shrink-0">
+        <div className="w-full flex justify-center px-4 pt-1 flex-shrink-0 min-w-0">
           <ResumeSpot key={resumeSpot.file + resumeSpot.updatedUtc} spot={resumeSpot} />
         </div>
       )}

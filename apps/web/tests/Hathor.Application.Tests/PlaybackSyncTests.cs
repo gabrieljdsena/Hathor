@@ -1,81 +1,119 @@
 using FluentAssertions;
 using Hathor.Application.Sync;
-using Hathor.Domain.Playback;
+using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
 using NSubstitute;
 
 namespace Hathor.Application.Tests;
 
-// Resume-state snapshot (DB-free substitutes): the player's persisted state
-// IS the spot (no remote). Push reports whether a spot exists; latest
-// surfaces it fresh-only (30-day rule), null otherwise.
+// Device-aware resume spots (one row per user+device, last wins): push
+// upserts the caller's row; latest surfaces the newest spot from a
+// DIFFERENT device (own device excluded), fresh-only (30-day rule).
 public sealed class PlaybackSyncTests
 {
     private static readonly Guid UserId = Guid.NewGuid();
 
     [Fact]
-    public async Task PushPlayback_PlayingTrack_ReportsSpot()
+    public async Task PushPlayback_UpsertsCallerRow_ReportsTrue()
     {
-        var playback = Substitute.For<IPlaybackStateRepository>();
-        playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(
-            new PlaybackState
-            {
-                UserId = UserId, CurrentFile = "s.mp3", CurrentIsPodcast = false,
-                IsPlaying = true, FirstPlay = false,
-                PositionOffsetSec = 42, LastPlayUtc = DateTime.UtcNow,
-            });
+        var spots = Substitute.For<IPlaybackSpotRepository>();
 
-        (await new PushPlaybackStateHandler(playback)
-            .Handle(new PushPlaybackStateCommand(UserId), CancellationToken.None))
+        (await new PushPlaybackStateHandler(spots).Handle(
+            new PushPlaybackStateCommand(UserId, "browser-1", "Chrome", "s.mp3", 42.5, false),
+            CancellationToken.None))
             .Should().BeTrue();
+
+        await spots.Received(1).UpsertAsync(
+            Arg.Is<PlaybackSpot>(s =>
+                s.UserId == UserId && s.DeviceId == "browser-1" &&
+                s.File == "s.mp3" && s.PositionSec == 42.5 &&
+                s.IsPodcast == false && s.DeviceLabel == "Chrome"),
+            Arg.Any<CancellationToken>());
+        await spots.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task PushPlayback_NothingLoaded_ReportsNoSpot()
+    public async Task PushPlayback_BlankDeviceOrFile_WritesNothing()
     {
-        var playback = Substitute.For<IPlaybackStateRepository>();
-        playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(
-            new PlaybackState { UserId = UserId, FirstPlay = true });
+        var spots = Substitute.For<IPlaybackSpotRepository>();
 
-        (await new PushPlaybackStateHandler(playback)
-            .Handle(new PushPlaybackStateCommand(UserId), CancellationToken.None))
+        (await new PushPlaybackStateHandler(spots).Handle(
+            new PushPlaybackStateCommand(UserId, "  ", null, "s.mp3", 1, false),
+            CancellationToken.None))
             .Should().BeFalse();
+        (await new PushPlaybackStateHandler(spots).Handle(
+            new PushPlaybackStateCommand(UserId, "browser-1", null, "", 1, false),
+            CancellationToken.None))
+            .Should().BeFalse();
+
+        await spots.DidNotReceive().UpsertAsync(
+            Arg.Any<PlaybackSpot>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task LatestPlayback_FreshSpot_SurfacesIt()
+    public async Task PushPlayback_NegativePosition_ClampedToZero()
     {
-        var playback = Substitute.For<IPlaybackStateRepository>();
-        playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(
-            new PlaybackState
+        var spots = Substitute.For<IPlaybackSpotRepository>();
+
+        await new PushPlaybackStateHandler(spots).Handle(
+            new PushPlaybackStateCommand(UserId, "browser-1", null, "s.mp3", -5, false),
+            CancellationToken.None);
+
+        await spots.Received(1).UpsertAsync(
+            Arg.Is<PlaybackSpot>(s => s.PositionSec == 0),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LatestPlayback_ForeignSpot_SurfacesIt()
+    {
+        var spots = Substitute.For<IPlaybackSpotRepository>();
+        spots.LatestForeignAsync(
+                UserId, "browser-1", Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
+            .Returns(new PlaybackSpot
             {
-                UserId = UserId, CurrentFile = "e.mp3", CurrentIsPodcast = true,
-                FirstPlay = false, PausePositionSec = 95, LastPlayUtc = DateTime.UtcNow,
+                UserId = UserId, DeviceId = "phone-9", File = "e.mp3",
+                PositionSec = 95, IsPodcast = true, DeviceLabel = "Android",
+                UpdatedUtc = DateTime.UtcNow,
             });
 
-        var spot = await new GetLatestPlaybackHandler(playback)
-            .Handle(new GetLatestPlaybackQuery(UserId), CancellationToken.None);
+        var spot = await new GetLatestPlaybackHandler(spots)
+            .Handle(new GetLatestPlaybackQuery(UserId, "browser-1"), CancellationToken.None);
 
         spot.Should().NotBeNull();
         spot!.File.Should().Be("e.mp3");
         spot.PositionSec.Should().Be(95);
         spot.IsPodcast.Should().BeTrue();
+        spot.UserKey.Should().Be("phone-9");
+        spot.Device.Should().Be("Android");
     }
 
     [Fact]
-    public async Task LatestPlayback_StaleSpot_Hidden()
+    public async Task LatestPlayback_OnlyOwnSpot_ReturnsNull()
     {
-        var playback = Substitute.For<IPlaybackStateRepository>();
-        playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(
-            new PlaybackState
-            {
-                UserId = UserId, CurrentFile = "old.mp3", CurrentIsPodcast = false,
-                FirstPlay = false, PausePositionSec = 10,
-                LastPlayUtc = DateTime.UtcNow - TimeSpan.FromDays(31),
-            });
+        var spots = Substitute.For<IPlaybackSpotRepository>();
+        spots.LatestForeignAsync(
+                UserId, "browser-1", Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
+            .Returns((PlaybackSpot?)null);
 
-        (await new GetLatestPlaybackHandler(playback)
-            .Handle(new GetLatestPlaybackQuery(UserId), CancellationToken.None))
+        (await new GetLatestPlaybackHandler(spots)
+            .Handle(new GetLatestPlaybackQuery(UserId, "browser-1"), CancellationToken.None))
             .Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LatestPlayback_UsesThirtyDayFreshnessCutoff()
+    {
+        var spots = Substitute.For<IPlaybackSpotRepository>();
+
+        await new GetLatestPlaybackHandler(spots)
+            .Handle(new GetLatestPlaybackQuery(UserId, null), CancellationToken.None);
+
+        await spots.Received(1).LatestForeignAsync(
+            UserId, null,
+            Arg.Is<DateTime>(d =>
+                d <= DateTime.UtcNow - TimeSpan.FromDays(29) &&
+                d >= DateTime.UtcNow - TimeSpan.FromDays(31)),
+            Arg.Any<CancellationToken>());
     }
 }

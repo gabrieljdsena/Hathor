@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { clampSeekTarget, engine } from '../audio/engine'
 import { subscribeAudioClock } from '../audio/clock'
-import { formatTime, usePlayer } from '../store/player'
+import { formatTime, pushResumeSpot, usePlayer } from '../store/player'
 import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
@@ -55,9 +55,13 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
     const slider = sliderRef.current
     if (!slider) return
     // Same clamp as the engine's live scrub: server and element agree, so
-    // no drift snap yanks playback back afterwards.
+    // no drift snap yanks playback back afterwards. A seek-while-paused
+    // also moves this browser's resume spot for other devices.
     const raw = Number.parseFloat(slider.value) || 0
-    void api.seek(clampSeekTarget(raw, effDuration())).catch(() => {})
+    void api
+      .seek(clampSeekTarget(raw, effDuration()))
+      .then(() => pushResumeSpot())
+      .catch(() => {})
   }
 
   return (
@@ -190,7 +194,8 @@ export default function PlayerBar({
   // Podcast chapters: auto-skip pump + chapter-aware transport arrows.
   useChapterAutoSkip()
   const chapterJump = useChapterJump()
-  // Another device's paused spot (resume affordance, never auto-plays).
+  // Another browser's paused spot (server excludes this browser's own
+  // device id — a pause here never echoes back). Explicit tap only.
   const resumeSpot = useResumeSpot()
   const songMenuRef = useRef<SongMenuHandle | null>(null)
   const openSongMenu = (x: number, y: number) => songMenuRef.current?.openAt(x, y)
@@ -227,15 +232,21 @@ export default function PlayerBar({
     if (!('mediaSession' in navigator)) return
     const toggle = () => void usePlayer.getState().toggle()
     const next = () =>
-      void api.next().then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio()
-      })
+      void api
+        .next()
+        .then((s) => {
+          usePlayer.setState(s)
+          usePlayer.getState().syncAudio()
+        })
+        .catch(() => {})
     const prev = () =>
-      void api.prev().then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio()
-      })
+      void api
+        .prev()
+        .then((s) => {
+          usePlayer.setState(s)
+          usePlayer.getState().syncAudio()
+        })
+        .catch(() => {})
     try {
       navigator.mediaSession.setActionHandler('play', toggle)
       navigator.mediaSession.setActionHandler('pause', toggle)
@@ -262,18 +273,24 @@ export default function PlayerBar({
     // (chapter seek, not a track change) — even with auto-skip off. Past
     // the last chapter it falls through to the next track.
     if (chapterJump.next()) return
-    void api.next().then((s) => {
-      usePlayer.setState(s)
-      usePlayer.getState().syncAudio() // hard switch; cancels any fade
-    })
+    void api
+      .next()
+      .then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio() // hard switch; cancels any fade
+      })
+      .catch(() => {})
   }
   const doPrev = () => {
     // Same deal backwards (restarts the chapter when well inside it).
     if (chapterJump.prev()) return
-    void api.prev().then((s) => {
-      usePlayer.setState(s)
-      usePlayer.getState().syncAudio() // hard switch; cancels any fade
-    })
+    void api
+      .prev()
+      .then((s) => {
+        usePlayer.setState(s)
+        usePlayer.getState().syncAudio() // hard switch; cancels any fade
+      })
+      .catch(() => {})
   }
   const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
   const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))

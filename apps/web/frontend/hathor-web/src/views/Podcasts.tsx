@@ -70,9 +70,15 @@ export default function Podcasts() {
   }, [activeTag, tags])
 
   const refresh = () => {
-    // Episode metadata also appears under song-ish keys (history, recents):
-    // invalidate everything so edits show live on any view.
-    void queryClient.invalidateQueries()
+    // Targeted prefixes only — an unkeyed invalidate refetches every view
+    // at once, so keep it scoped to podcast/song keys.
+    void queryClient.invalidateQueries({ queryKey: ['songs'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcasts'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcast-tags'] })
+    void queryClient.invalidateQueries({ queryKey: ['podcast-tag-map'] })
+    void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
+    void queryClient.invalidateQueries({ queryKey: ['playlists'] })
+    void queryClient.invalidateQueries({ queryKey: ['playlist-songs'] })
   }
 
   // Typo-tolerant client filter (same fuzzy rules as the song search),
@@ -247,7 +253,7 @@ export default function Podcasts() {
           onClose={() => setEditSong(null)}
           onSaved={() => {
             setEditSong(null)
-            refresh()
+            // EditSongModal already invalidated — no second fan-out here.
             void usePlayer.getState().refresh().catch(() => {})
           }}
         />

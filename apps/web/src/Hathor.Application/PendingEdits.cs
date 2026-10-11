@@ -19,16 +19,19 @@ public sealed class PendingMetadataApplier(
     ISongReadModel songs,
     IPodcastRecordRepository podcastRecords,
     IPodcastReadModel podcasts,
-    IPlaybackStateRepository playback,
     ILogger<PendingMetadataApplier> log)
 {
-    public async Task<bool> ApplyForFileAsync(Guid userId, string? oldFile, CancellationToken ct)
+    public async Task<bool> ApplyForFileAsync(Guid userId, string? oldFile, string? currentFile, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(oldFile)) return false;
         try
         {
-            var state = await playback.GetOrCreateAsync(userId, ct);
-            if (string.Equals(state.CurrentFile, oldFile, StringComparison.OrdinalIgnoreCase))
+            // The left file is current again (a concurrent request moved it
+            // back meanwhile): keep the stashed edit for the next change.
+            // currentFile arrives as an argument so this never loads playback
+            // state itself — a second tracked copy in the same scope used to
+            // silently revert the track change being processed.
+            if (string.Equals(currentFile, oldFile, StringComparison.OrdinalIgnoreCase))
                 return false;
             var edit = await pending.GetAsync(userId, oldFile, ct);
             if (edit is null) return false;

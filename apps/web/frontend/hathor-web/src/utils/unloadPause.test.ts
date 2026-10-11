@@ -28,6 +28,39 @@ describe('createUnloadPause', () => {
     stop()
   })
 
+  it('snapshots the resume spot when file and device are known', () => {
+    localStorage.setItem('hathor:token', 'tok123')
+    const post = vi.fn()
+    const stop = createUnloadPause(
+      () => ({
+        isPlaying: true,
+        hasTrack: true,
+        file: 's.mp3',
+        positionSec: 95.5,
+        isPodcast: false,
+        deviceId: 'browser-1',
+        deviceLabel: 'Windows',
+      }),
+      () => 'tok123',
+      post,
+    )
+    firePageHide()
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post).toHaveBeenNthCalledWith(2, '/api/v1/sync/playback', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer tok123', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'browser-1',
+        deviceLabel: 'Windows',
+        file: 's.mp3',
+        positionSec: 95.5,
+        isPodcast: false,
+      }),
+      keepalive: true,
+    })
+    stop()
+  })
+
   it('stays silent when paused, trackless, or logged out', () => {
     const post = vi.fn()
     const stop1 = createUnloadPause(() => ({ isPlaying: false, hasTrack: true }), () => 'tok', post)

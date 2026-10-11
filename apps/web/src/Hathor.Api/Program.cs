@@ -115,6 +115,10 @@ builder.Services
 
 builder.Services.AddScopePolicies();
 
+// LAN app: no general API throttling. Library/player/metadata endpoints
+// are unthrottled — a few tabs polling on a home network must never 429.
+// Only auth stays throttled (password-guessing protection, still meaningful
+// on LAN where any device can reach the login endpoints).
 builder.Services.AddRateLimiter(options =>
 {
     options.AddFixedWindowLimiter("Auth", opt =>
@@ -129,12 +133,6 @@ builder.Services.AddRateLimiter(options =>
     options.AddFixedWindowLimiter("AuthRefresh", opt =>
     {
         opt.PermitLimit = 30;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-    options.AddFixedWindowLimiter("Api", opt =>
-    {
-        opt.PermitLimit = 300;
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });
@@ -219,7 +217,7 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers().RequireRateLimiting("Api");
+app.MapControllers();
 app.MapHub<PlayerHub>("/hubs/player").RequireAuthorization();
 app.MapHub<DownloadsHub>("/hubs/downloads").RequireAuthorization();
 // SPA fallback serves the public shell (login page) — explicit opt-out of

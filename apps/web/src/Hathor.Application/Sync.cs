@@ -25,17 +25,15 @@ public sealed record PodcastChapterRowDto(
     long Id, string PodcastFile, string Name, double StartSecs, double? EndSecs);
 public sealed record DeletionRowDto(string TableName, string RowKey);
 
-// Resume-across-devices spot: latest foreign playback state. user_key is
-// per writer (web:{userId} / desktop) because the remote is one global
-// namespace with last-writer-wins. Rows older than 30 days are ignored.
+// Resume-across-devices spot: latest foreign playback state. UserKey is
+// the writer's device id (one row per device, last-writer-wins). Rows
+// older than 30 days are ignored.
 public sealed record PlaybackSpotDto(
     string UserKey, string File, double PositionSec, bool IsPodcast,
     string? Device, DateTime UpdatedUtc);
 
 public static class PlaybackKeys
 {
-    public static string ForWeb(Guid userId) => $"web:{userId:D}";
-    public const string Desktop = "desktop";
     public static readonly TimeSpan MaxAge = TimeSpan.FromDays(30);
 }
 
@@ -69,40 +67,55 @@ public sealed record ImportResult(SyncSummary Summary, List<string> MissingFiles
 // ride in Deletions filtered by DeletedAtUtc.
 public sealed record SyncDelta(string Cursor, SyncSnapshot Snapshot);
 
-// Resume spot: the player's persisted state IS the spot now (the shared
-// remote playback_state table is gone with the remote DB). Push is a
-// no-op success — the local row is always current; latest surfaces it
-// (fresh only) so the UI resume pill keeps working single-user.
-// Pushes happen fire-and-forget on pause (never blocking playback);
-// latest only surfaces an affordance — nothing auto-plays.
-public sealed record PushPlaybackStateCommand(Guid UserId) : IRequest<bool>;
+// Resume spot: one row per (user, device) in Playback_Spots, last write
+// wins. Pushes happen fire-and-forget on pause (never blocking playback);
+// latest surfaces the newest spot from a DIFFERENT device so a browser
+// never echoes its own paused track back as a resume pill. Nothing
+// auto-plays — the pill is an explicit tap.
+public sealed record PushPlaybackStateCommand(
+    Guid UserId, string DeviceId, string? DeviceLabel, string? File,
+    double PositionSec, bool IsPodcast) : IRequest<bool>;
 
 public sealed class PushPlaybackStateHandler(
-    Domain.Repositories.IPlaybackStateRepository playback)
+    Domain.Repositories.IPlaybackSpotRepository spots)
     : IRequestHandler<PushPlaybackStateCommand, bool>
 {
     public async Task<bool> Handle(PushPlaybackStateCommand cmd, CancellationToken ct)
     {
-        var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
-        return state.CurrentFile is not null && !state.FirstPlay;
+        if (string.IsNullOrWhiteSpace(cmd.DeviceId) || string.IsNullOrWhiteSpace(cmd.File))
+            return false;
+        await spots.UpsertAsync(new Domain.Entities.PlaybackSpot
+        {
+            UserId = cmd.UserId,
+            DeviceId = cmd.DeviceId.Trim(),
+            File = cmd.File,
+            PositionSec = Math.Max(0, cmd.PositionSec),
+            IsPodcast = cmd.IsPodcast,
+            DeviceLabel = string.IsNullOrWhiteSpace(cmd.DeviceLabel)
+                ? null
+                : cmd.DeviceLabel.Trim(),
+            UpdatedUtc = DateTime.UtcNow,
+        }, ct);
+        await spots.SaveChangesAsync(ct);
+        return true;
     }
 }
 
-public sealed record GetLatestPlaybackQuery(Guid UserId) : IRequest<PlaybackSpotDto?>;
+public sealed record GetLatestPlaybackQuery(Guid UserId, string? ExcludeDeviceId)
+    : IRequest<PlaybackSpotDto?>;
 
 public sealed class GetLatestPlaybackHandler(
-    Domain.Repositories.IPlaybackStateRepository playback)
+    Domain.Repositories.IPlaybackSpotRepository spots)
     : IRequestHandler<GetLatestPlaybackQuery, PlaybackSpotDto?>
 {
     public async Task<PlaybackSpotDto?> Handle(GetLatestPlaybackQuery q, CancellationToken ct)
     {
-        var state = await playback.GetOrCreateAsync(q.UserId, ct);
-        if (state.CurrentFile is null || state.FirstPlay) return null;
-        // Stale spots (older than the old 30-day remote rule) stay hidden.
-        if (DateTime.UtcNow - state.LastPlayUtc > PlaybackKeys.MaxAge) return null;
-        return new PlaybackSpotDto(PlaybackKeys.ForWeb(q.UserId), state.CurrentFile,
-            state.EstimatedPositionSec(DateTime.UtcNow), state.CurrentIsPodcast,
-            "Web", state.LastPlayUtc);
+        var spot = await spots.LatestForeignAsync(
+            q.UserId, q.ExcludeDeviceId, DateTime.UtcNow - PlaybackKeys.MaxAge, ct);
+        return spot is null
+            ? null
+            : new PlaybackSpotDto(spot.DeviceId, spot.File, spot.PositionSec,
+                spot.IsPodcast, spot.DeviceLabel, spot.UpdatedUtc);
     }
 }
 

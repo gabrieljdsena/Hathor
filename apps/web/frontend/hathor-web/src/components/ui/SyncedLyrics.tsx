@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { engine } from '../../audio/engine'
+import { pushResumeSpot } from '../../store/player'
 import { useAudioClock } from '../../audio/clock'
 import { activeLrcIndex, parseLrc } from '../../lyrics'
 
@@ -129,7 +130,11 @@ export default function SyncedLyrics({
               onClick={() => {
                 const at = chapterStartSecs + line.timeSec
                 engine.seek(at)
-                void api.seek(at).catch(() => {})
+                // Paused lyric seeks move this browser's resume spot.
+                void api
+                  .seek(at)
+                  .then(() => pushResumeSpot())
+                  .catch(() => {})
               }}
               className={`lyric-line font-bold cursor-pointer transition-all duration-300 text-4xl sm:text-5xl lg:text-6xl xl:text-7xl ${
                 i === activeIdx ? 'text-white scale-105' : 'text-zinc-600 hover:text-zinc-400'

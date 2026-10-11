@@ -631,6 +631,22 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     expect(s.els[0].paused).toBe(true)
   })
 
+  it('stays paused on ended right after seek+pause (no spurious resurrect)', async () => {
+    // Regression: the spurious-end branch used to run before the paused
+    // check, so seek-then-pause near EOF resumed the same track.
+    const s = playingThreeHourTrack()
+    const ended: string[] = []
+    s.engine.onEnded(() => ended.push('ended'))
+    await s.advance(250)
+    s.engine.seek(5000)
+    s.engine.pause()
+    await s.advance(200) // still inside the spurious-end window
+    s.els[0].fireEnded()
+    expect(ended).toEqual([])
+    expect(s.els[0].paused).toBe(true)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
+  })
+
   it('keeps the legacy advance for tiny or unknown durations', async () => {
     const s = setup()
     const ended: string[] = []

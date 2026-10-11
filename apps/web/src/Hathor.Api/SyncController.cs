@@ -82,19 +82,32 @@ public sealed class SyncController(IMediator mediator, ILibraryStorage storage) 
         return Ok(new { file });
     }
 
-    // Resume spot: the player's persisted state (push is a no-op success;
-    // latest surfaces it fresh-only) as a resume affordance (nothing
-    // auto-plays).
+    // Resume spots (one row per user+device, last wins): push upserts the
+    // caller's row; latest surfaces the newest spot from a different device
+    // (excludeDevice) so browsers never echo their own pause back as a
+    // resume pill. Nothing auto-plays — the pill is an explicit tap.
     [HttpPost("playback")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
-    public async Task<ActionResult<bool>> PushPlayback(CancellationToken ct) =>
-        Ok(await mediator.Send(new PushPlaybackStateCommand(CurrentUserId()), ct));
+    public async Task<ActionResult<bool>> PushPlayback(
+        [FromBody] PushPlaybackRequest body, CancellationToken ct)
+    {
+        if (body is null || string.IsNullOrWhiteSpace(body.DeviceId))
+            return BadRequest(new { message = "deviceId is required." });
+        return Ok(await mediator.Send(new PushPlaybackStateCommand(
+            CurrentUserId(), body.DeviceId.Trim(),
+            string.IsNullOrWhiteSpace(body.DeviceLabel) ? null : body.DeviceLabel.Trim(),
+            body.File, body.PositionSec, body.IsPodcast), ct));
+    }
 
     [HttpGet("playback")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
-    public async Task<ActionResult<PlaybackSpotDto?>> LatestPlayback(CancellationToken ct) =>
-        Ok(await mediator.Send(new GetLatestPlaybackQuery(CurrentUserId()), ct));
+    public async Task<ActionResult<PlaybackSpotDto?>> LatestPlayback(
+        [FromQuery] string? excludeDevice, CancellationToken ct) =>
+        Ok(await mediator.Send(new GetLatestPlaybackQuery(CurrentUserId(), excludeDevice), ct));
 
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 }
+
+public sealed record PushPlaybackRequest(
+    string? DeviceId, string? DeviceLabel, string? File, double PositionSec, bool IsPodcast);

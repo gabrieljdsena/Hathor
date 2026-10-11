@@ -21,6 +21,8 @@ describe('VideoPreview', () => {
       expect(frame).not.toBeNull()
       expect(frame?.getAttribute('src')).toContain('https://www.youtube.com/embed/abc')
     })
+    // Must not autoplay over paused library audio (pause-then-mystery-track).
+    expect(document.querySelector('iframe')?.getAttribute('src')).toContain('autoplay=0')
     expect(document.querySelector('audio')).toBeNull()
   })
 
@@ -32,6 +34,9 @@ describe('VideoPreview', () => {
       expect(audio).not.toBeNull()
       expect(audio?.getAttribute('src')).toBe('https://r1---googlevideo.com/v')
     })
+    // No autoPlay: a preview starting on its own reads as an
+    // out-of-queue track after pausing the library.
+    expect(document.querySelector('audio')?.hasAttribute('autoplay')).toBe(false)
     expect(document.querySelector('iframe')).toBeNull()
     expect(screen.getByText('Watch on YouTube ↗')).toHaveAttribute(
       'href',
