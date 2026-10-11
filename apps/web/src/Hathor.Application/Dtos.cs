@@ -66,6 +66,14 @@ public sealed record LibraryStatusDto(string Package, string? Current, string? L
 // FFmpeg self-install progress (Settings → Download FFmpeg).
 // State: idle|downloading|extracting|ready|failed. Progress 0..1 (-1 unknown).
 public sealed record FfmpegDownloadDto(string State, double Progress, string? Exe, string? Error);
+// YouTube bot-check protection (PO-token provider): provision progress
+// reuses the installer states plus building|starting; the runtime half
+// reports whether the local provider answers on its loopback port.
+public sealed record YoutubeProtectionStatusDto(
+    bool Enabled, string ProvisionState, double ProvisionProgress,
+    bool NodeFound, string? NodeVersion, bool PluginReady,
+    bool ProviderRunning, int ProviderPort, string? Version,
+    bool PluginVerified, string? Error);
 public sealed record MaintenanceResultDto(FFmpegStatusDto FFmpeg, IReadOnlyList<LibraryStatusDto> Libraries, bool AllOk);
 
 public sealed record PlaylistDto(long Id, string Title, string? Description, string? Thumbnail);

@@ -22,7 +22,7 @@ public sealed class DapperSongReadModel(
         string File, string Title, string? Artist, string? Album, string? Year,
         string? Genre, double DurationSecs, double? LoudnessDb, DateTime DateDownloadUtc);
 
-    private static string Iso(DateTime dt) => dt.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+    private static string Iso(DateTime dt) => Domain.UtcIso.Format(dt);
 
     private static SongDto ToDto(SongRow r) => new(
         r.File,
@@ -430,7 +430,7 @@ public sealed class DapperSongReadModel(
                 cancellationToken: ct));
         var lookup = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows)
-            lookup[r.File] = r.DateDownloadUtc.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+            lookup[r.File] = Domain.UtcIso.Format(r.DateDownloadUtc);
         return lookup;
     }
 
@@ -445,7 +445,7 @@ public sealed class DapperSongReadModel(
                 cancellationToken: ct));
         var lookup = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows)
-            lookup[r.File] = r.DateDownloadUtc.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+            lookup[r.File] = Domain.UtcIso.Format(r.DateDownloadUtc);
         return lookup;
     }
 

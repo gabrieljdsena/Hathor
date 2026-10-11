@@ -96,6 +96,22 @@ export interface FfmpegDownloadStatus {
   error: string | null
 }
 
+// YouTube bot-check protection: provisionState reuses the installer
+// vocabulary plus building|starting while the token provider is set up.
+export interface YoutubeProtectionStatus {
+  enabled: boolean
+  provisionState: string
+  provisionProgress: number
+  nodeFound: boolean
+  nodeVersion: string | null
+  pluginReady: boolean
+  providerRunning: boolean
+  providerPort: number
+  version: string | null
+  pluginVerified: boolean
+  error: string | null
+}
+
 export interface ApiKey {
   id: string
   name: string
@@ -168,7 +184,9 @@ export function deviceLabel(): string | null {
 
 // Resume-across-devices spot: another device's paused playback state.
 // userKey is the writer's device id. Pull only surfaces it — tapping plays
-// explicitly, nothing auto-plays.
+// explicitly, nothing auto-plays. queueFiles is the writer's Up Next
+// snapshot (current track first); queueSource preserves its context.
+// Older spots omit both — resume falls back to the single file.
 export interface PlaybackSpot {
   userKey: string
   file: string
@@ -176,6 +194,8 @@ export interface PlaybackSpot {
   isPodcast: boolean
   device: string | null
   updatedUtc: string
+  queueFiles?: string[] | null
+  queueSource?: QueueSource | null
 }
 
 export interface HistoryItem {
@@ -598,10 +618,19 @@ export const api = {
     request<void>(`/pending-edits/${encodeURIComponent(file)}`, { method: 'DELETE' }),
   // Resume across devices: snapshot this device's spot (pause/pagehide/
   // paused-seek, fire-and-forget) / read the latest spot from ANOTHER
-  // device (excludeDevice = own id — never echo self).
+  // device (excludeDevice = own id — never echo self). queueFiles carries
+  // this device's Up Next (current first, capped) so the other side can
+  // restore the full queue on tap.
   pushPlayback: (
     id: string,
-    spot: { file: string; positionSec: number; isPodcast: boolean; deviceLabel?: string | null },
+    spot: {
+      file: string
+      positionSec: number
+      isPodcast: boolean
+      deviceLabel?: string | null
+      queueFiles?: string[] | null
+      queueSource?: QueueSource | null
+    },
   ) =>
     request<boolean>('/sync/playback', {
       method: 'POST',
@@ -611,6 +640,10 @@ export const api = {
         file: spot.file,
         positionSec: spot.positionSec,
         isPodcast: spot.isPodcast,
+        queueFiles: spot.queueFiles ?? null,
+        queueSource: spot.queueSource
+          ? { type: spot.queueSource.type, id: spot.queueSource.id ?? null }
+          : null,
       }),
     }),
   latestPlayback: (excludeDevice?: string | null) =>
@@ -788,6 +821,18 @@ export const api = {
   // Live NuGet check for YoutubeExplode/TagLibSharp (Settings → YouTube
   // downloader). An update means "update the package and redeploy".
   checkLibraryUpdates: () => request<LibraryInfo[]>('/system/libraries/check', { method: 'POST' }),
+  // YouTube bot-check protection (Settings → System): one-click PO-token
+  // provider — no logins, no manual cookies. startProtection provisions
+  // in the background (poll protectionStatus until ready/failed);
+  // force=true re-provisions even when already enabled (update).
+  protectionStatus: () => request<YoutubeProtectionStatus>('/system/youtube-protection'),
+  startProtection: (force = false) =>
+    request<YoutubeProtectionStatus>(
+      `/system/youtube-protection${force ? '?force=true' : ''}`,
+      { method: 'POST' },
+    ),
+  disableProtection: () =>
+    request<YoutubeProtectionStatus>('/system/youtube-protection', { method: 'DELETE' }),
   logClient: (message: string, route?: string, stack?: string) =>
     request<void>('/logs/client', {
       method: 'POST',

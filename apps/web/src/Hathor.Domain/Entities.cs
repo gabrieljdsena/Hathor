@@ -232,7 +232,9 @@ public sealed class DiscoverCache
 
 // Cross-device resume spot: one row per (user, device), last write wins.
 // Readers exclude their own device id, so a browser never echoes its own
-// paused track back as a "resume" pill (the single-user echo bug).
+// paused track back as a resume bento (the single-user echo bug).
+// QueueFiles carries the writer's Up Next snapshot (file keys, current
+// track first) so a tap can restore the foreign queue, not just the file.
 public sealed class PlaybackSpot
 {
     public Guid UserId { get; set; }
@@ -242,6 +244,8 @@ public sealed class PlaybackSpot
     public bool IsPodcast { get; set; }
     public string? DeviceLabel { get; set; } // human label, e.g. UA substring
     public DateTime UpdatedUtc { get; set; }
+    public List<string> QueueFiles { get; set; } = [];
+    public string? QueueSourceJson { get; set; } // serialized QueueSource (type+id), null = unknown
 }
 
 // Persisted prefs (desktop Settings row id=1 → per-user).

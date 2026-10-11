@@ -6,6 +6,7 @@ import Modal from '../components/ui/Modal'
 import ViewHeader from '../components/ui/ViewHeader'
 import { GhostButton, PrimaryButton } from '../components/ui/fields'
 import { EmptyState, LoadingState } from '../components/ui/states'
+import { parseServerDate } from '../utils/dates'
 
 // API keys page: mint headless tokens (Stream Deck, Home Assistant, curl)
 // with a scope subset. The raw token is shown exactly once — copy it now.
@@ -19,10 +20,10 @@ const ALL_SCOPES = [
 ] as const
 
 function formatDate(iso: string): string {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime())
-    ? iso
-    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const d = parseServerDate(iso)
+  return d
+    ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : iso
 }
 
 export default function ApiKeys() {

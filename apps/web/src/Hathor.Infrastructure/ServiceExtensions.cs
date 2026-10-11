@@ -161,6 +161,11 @@ public static class InfrastructureServiceExtensions
                 sp.GetRequiredService<Ingest.YtDlpDownloader>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ingest.FallbackDownloadEngine>>()));
         services.AddSingleton<Maintenance.IYtDlpInstaller, Maintenance.YtDlpInstaller>();
+        // YouTube bot-check protection (PO-token provider): provisioned via
+        // Settings, runs as a loopback node child process, resumed at boot.
+        services.AddSingleton<Maintenance.IPotProtection, Maintenance.PotProtectionService>();
+        services.AddHostedService(sp =>
+            (Maintenance.PotProtectionService)sp.GetRequiredService<Maintenance.IPotProtection>());
         services.AddSingleton<Application.Ports.ILoudnessAnalyzer, Enrichment.LoudnessAnalyzer>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();

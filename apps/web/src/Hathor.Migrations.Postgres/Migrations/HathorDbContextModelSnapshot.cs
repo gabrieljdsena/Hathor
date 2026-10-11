@@ -695,6 +695,13 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.Property<double>("PositionSec")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("QueueFilesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("QueueSourceJson")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
 

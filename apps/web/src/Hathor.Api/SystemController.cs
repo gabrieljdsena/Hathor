@@ -13,7 +13,8 @@ namespace Hathor.Api.Controllers;
 public sealed class SystemController(
     ISystemProbe probe,
     Hathor.Infrastructure.Maintenance.IFfmpegInstaller ffmpegInstaller,
-    Hathor.Infrastructure.Maintenance.IYtDlpInstaller ytdlpInstaller) : ControllerBase
+    Hathor.Infrastructure.Maintenance.IYtDlpInstaller ytdlpInstaller,
+    Hathor.Infrastructure.Maintenance.IPotProtection potProtection) : ControllerBase
 {
     [HttpGet("ffmpeg")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
@@ -84,6 +85,32 @@ public sealed class SystemController(
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
     public async Task<ActionResult<IReadOnlyList<LibraryStatusDto>>> CheckLibraryUpdates(
         CancellationToken ct) => Ok(await probe.CheckLibraryUpdatesAsync(ct));
+
+    // YouTube bot-check protection (PO-token provider, no logins/cookies):
+    // status, one-click enable/provision, disable. 409 while provisioning.
+    [HttpGet("youtube-protection")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public ActionResult<YoutubeProtectionStatusDto> ProtectionStatus() =>
+        Ok(potProtection.Status());
+
+    [HttpPost("youtube-protection")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public ActionResult<YoutubeProtectionStatusDto> StartProtection([FromQuery] bool force = false)
+    {
+        try
+        {
+            return Accepted(potProtection.StartEnable(force));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpDelete("youtube-protection")]
+    [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
+    public ActionResult<YoutubeProtectionStatusDto> DisableProtection() =>
+        Ok(potProtection.Disable());
 }
 
 [ApiController]

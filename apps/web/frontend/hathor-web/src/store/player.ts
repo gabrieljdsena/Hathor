@@ -11,17 +11,29 @@ import { DRIFT_EDGE_MARGIN_SEC, engine, type EngineTrack } from '../audio/engine
 // never blocks playback). Only when paused with a track loaded — playing
 // states are never pushed (a live position would clobber a genuine paused
 // spot elsewhere). engine.time() is the media-clock truth at push moment.
+// The snapshot carries this device's Up Next (current track first, capped
+// at 200) plus its source so the other side restores the foreign queue.
 export function pushResumeSpot(): void {
   try {
     const s = usePlayer.getState()
     const song = s.currentSong
     if (!song || s.isPlaying) return
+    const seen = new Set<string>()
+    const queueFiles: string[] = []
+    for (const f of [song.file, ...s.queue.map((q) => q.file)]) {
+      if (!f || seen.has(f.toLowerCase())) continue
+      seen.add(f.toLowerCase())
+      queueFiles.push(f)
+      if (queueFiles.length >= 200) break
+    }
     void api
       .pushPlayback(deviceId(), {
         file: song.file,
         positionSec: engine.time(),
         isPodcast: !!song.isPodcast,
         deviceLabel: deviceLabel(),
+        queueFiles,
+        queueSource: s.source,
       })
       .catch(() => {})
   } catch {

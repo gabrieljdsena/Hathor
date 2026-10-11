@@ -41,7 +41,7 @@ public sealed class PlaylistQueryHandlers(
         {
             var song = await songs.GetByFileAsync(q.UserId, file, includeCover: false, ct);
             if (song is null) continue; // file deleted from disk — skip like desktop
-            result.Add(song with { DateDownload = added.ToString("yyyy-MM-ddTHH:mm:ss") + "Z" });
+            result.Add(song with { DateDownload = Domain.UtcIso.Format(added) });
         }
         return result;
     }

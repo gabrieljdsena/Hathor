@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
 using MediatR;
 
@@ -27,10 +29,14 @@ public sealed record DeletionRowDto(string TableName, string RowKey);
 
 // Resume-across-devices spot: latest foreign playback state. UserKey is
 // the writer's device id (one row per device, last-writer-wins). Rows
-// older than 30 days are ignored.
+// older than 30 days are ignored. QueueFiles is the writer's Up Next
+// snapshot (current track first, capped) so a tap restores the foreign
+// queue instead of collapsing it to a single song.
 public sealed record PlaybackSpotDto(
     string UserKey, string File, double PositionSec, bool IsPodcast,
-    string? Device, DateTime UpdatedUtc);
+    string? Device, DateTime UpdatedUtc,
+    List<string> QueueFiles,
+    QueueSourceDto? QueueSource);
 
 public static class PlaybackKeys
 {
@@ -70,31 +76,56 @@ public sealed record SyncDelta(string Cursor, SyncSnapshot Snapshot);
 // Resume spot: one row per (user, device) in Playback_Spots, last write
 // wins. Pushes happen fire-and-forget on pause (never blocking playback);
 // latest surfaces the newest spot from a DIFFERENT device so a browser
-// never echoes its own paused track back as a resume pill. Nothing
-// auto-plays — the pill is an explicit tap.
+// never echoes its own paused track back as a resume bento. Nothing
+// auto-plays — the bento is an explicit tap.
 public sealed record PushPlaybackStateCommand(
     Guid UserId, string DeviceId, string? DeviceLabel, string? File,
-    double PositionSec, bool IsPodcast) : IRequest<bool>;
+    double PositionSec, bool IsPodcast,
+    List<string>? QueueFiles = null,
+    QueueSourceDto? QueueSource = null) : IRequest<bool>;
 
 public sealed class PushPlaybackStateHandler(
     Domain.Repositories.IPlaybackSpotRepository spots)
     : IRequestHandler<PushPlaybackStateCommand, bool>
 {
+    internal const int MaxQueueFiles = 200;
+
     public async Task<bool> Handle(PushPlaybackStateCommand cmd, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(cmd.DeviceId) || string.IsNullOrWhiteSpace(cmd.File))
             return false;
+        var file = cmd.File.Trim();
+        var files = (cmd.QueueFiles ?? [])
+            .Where(f => !string.IsNullOrWhiteSpace(f))
+            .Select(f => f.Trim())
+            .Where(f => f.Length <= 255)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxQueueFiles)
+            .ToList();
+        // Current track leads the snapshot so ReplaceQueue splits correctly.
+        files.RemoveAll(f => string.Equals(f, file, StringComparison.OrdinalIgnoreCase));
+        files.Insert(0, file);
+        string? sourceJson = null;
+        if (cmd.QueueSource is not null && !string.IsNullOrWhiteSpace(cmd.QueueSource.Type))
+        {
+            var type = cmd.QueueSource.Type.Trim();
+            if (type.Length is > 0 and <= 64)
+                sourceJson = JsonSerializer.Serialize(
+                    new QueueSourceDto(type, cmd.QueueSource.Id?.Trim()));
+        }
         await spots.UpsertAsync(new Domain.Entities.PlaybackSpot
         {
             UserId = cmd.UserId,
             DeviceId = cmd.DeviceId.Trim(),
-            File = cmd.File,
+            File = file,
             PositionSec = Math.Max(0, cmd.PositionSec),
             IsPodcast = cmd.IsPodcast,
             DeviceLabel = string.IsNullOrWhiteSpace(cmd.DeviceLabel)
                 ? null
                 : cmd.DeviceLabel.Trim(),
             UpdatedUtc = DateTime.UtcNow,
+            QueueFiles = files,
+            QueueSourceJson = sourceJson,
         }, ct);
         await spots.SaveChangesAsync(ct);
         return true;
@@ -112,10 +143,22 @@ public sealed class GetLatestPlaybackHandler(
     {
         var spot = await spots.LatestForeignAsync(
             q.UserId, q.ExcludeDeviceId, DateTime.UtcNow - PlaybackKeys.MaxAge, ct);
-        return spot is null
-            ? null
-            : new PlaybackSpotDto(spot.DeviceId, spot.File, spot.PositionSec,
-                spot.IsPodcast, spot.DeviceLabel, spot.UpdatedUtc);
+        if (spot is null) return null;
+        QueueSourceDto? source = null;
+        if (!string.IsNullOrWhiteSpace(spot.QueueSourceJson))
+        {
+            try
+            {
+                source = JsonSerializer.Deserialize<QueueSourceDto>(spot.QueueSourceJson);
+            }
+            catch (JsonException)
+            {
+                source = null;
+            }
+        }
+        return new PlaybackSpotDto(spot.DeviceId, spot.File, spot.PositionSec,
+            spot.IsPodcast, spot.DeviceLabel, Domain.UtcIso.EnsureUtc(spot.UpdatedUtc),
+            spot.QueueFiles ?? [], source);
     }
 }
 

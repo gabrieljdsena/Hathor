@@ -228,7 +228,8 @@ public sealed class ListSessionsHandler(ISessionRepository sessions)
     public async Task<IReadOnlyList<SessionDto>> Handle(ListSessionsQuery q, CancellationToken ct) =>
         (await sessions.ListActiveAsync(q.UserId, ct))
             .Select(s => new SessionDto(s.Id, s.RememberMe, s.DeviceLabel, s.IpAddress,
-                s.CreatedAtUtc, s.ExpiresAtUtc, s.LastUsedAtUtc, s.Id == q.CurrentSessionId))
+                Domain.UtcIso.EnsureUtc(s.CreatedAtUtc), Domain.UtcIso.EnsureUtc(s.ExpiresAtUtc),
+                Domain.UtcIso.EnsureUtc(s.LastUsedAtUtc), s.Id == q.CurrentSessionId))
             .ToList();
 }
 

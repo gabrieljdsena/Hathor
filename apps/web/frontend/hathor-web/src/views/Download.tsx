@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { api, type DownloadJob, type VideoHit } from '../api/client'
 import Icon from '../components/ui/icons'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Modal from '../components/ui/Modal'
 import VideoPreview from '../components/ui/VideoPreview'
 import { formatDuration } from '../lyrics'
+import { isBotCheckError } from '../utils/youtube'
 
 // Download view cloned from ui/views/download_songs.html:
 // search card + Songs/Podcast toggle + trending + results + batch + jobs.
@@ -335,6 +337,15 @@ function JobsPanel({ jobs }: { jobs: import('../api/client').DownloadJob[] }) {
               </div>
               {job.artist && <div className="text-xs text-zinc-500 truncate">{job.artist}</div>}
               {job.error && <div className="text-xs text-red-400/80 truncate">{job.error}</div>}
+              {job.status === 'failed' && isBotCheckError(job.error) && (
+                <div className="text-xs text-orange-300/90 mt-1">
+                  YouTube asked for a sign-in — enable{' '}
+                  <Link to="/settings" className="underline hover:text-orange-200">
+                    bot-check protection
+                  </Link>{' '}
+                  instead of pasting cookies, then retry.
+                </div>
+              )}
               {active && (
                 <>
                   <div className="h-1.5 bg-white/10 rounded-full mt-2 overflow-hidden">

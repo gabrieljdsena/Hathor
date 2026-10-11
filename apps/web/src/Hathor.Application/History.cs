@@ -94,6 +94,5 @@ public sealed class HistoryHandlers(
         return new PagedResult<T>(items, totalPages, current);
     }
 
-    private static string Iso(DateTime dt) =>
-        dt.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+    private static string Iso(DateTime dt) => Domain.UtcIso.Format(dt);
 }

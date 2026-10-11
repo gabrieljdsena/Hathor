@@ -28,6 +28,20 @@ Open `http://localhost:5051` (API + UI same origin).
 
 ## Notes
 
+- YouTube bot-check protection: when downloads fail with "Sign in to
+  confirm you're not a bot", open Settings → System → "YouTube bot-check
+  protection" → Enable. One click downloads a proof-of-origin token
+  provider (bgutil, pinned version via `YtDlp:PotProviderVersion`), builds
+  it with Node.js, and starts it as a loopback-only child process of the
+  API — no Google login, no manual cookies.txt. Requirements: Node.js 22+
+  on the machine PATH (the service runs as LocalSystem, so install Node
+  machine-wide) and outbound access to github.com (one-time download) plus
+  youtube.com. The provider auto-resumes on service restarts; Disable stops
+  it. Explicit `YtDlp:CookiesFile` / `YtDlp:CookiesFromBrowser` config still
+  takes precedence when set. Upstream caveat: PO tokens make traffic look
+  legitimate but don't guarantee every video passes — keep yt-dlp updated
+  (Settings → yt-dlp → Update) when failures return.
+
 - Lyrics romanization (fugashi + UniDic) is optional: `pip install fugashi
   unidic-lite` where the API runs (Windows service / dev machine) for
   full-quality kanji readings; without it the endpoint falls back to the

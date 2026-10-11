@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
 using Microsoft.Extensions.Caching.Memory;
@@ -106,7 +107,7 @@ public sealed class YoutubeExplodeEngine(
                 audio, container, new Progress<double>(progress), ct);
             progress(1.0);
             Phase("transcode");
-            await TranscodeAsync(container, destMp3Path, ct);
+            await TranscodeAsync(container, destMp3Path, progress, ct);
         }
         catch (Exception ex)
         {
@@ -141,7 +142,12 @@ public sealed class YoutubeExplodeEngine(
         }
     }
 
-    private async Task TranscodeAsync(string sourcePath, string destMp3Path, CancellationToken ct)
+    // Bound for the MP3 transcode (stays well under the job's 30-minute
+    // budget while dwarfing any realistic encode of a song or podcast).
+    private static readonly TimeSpan TranscodeTimeout = TimeSpan.FromMinutes(15);
+
+    private async Task TranscodeAsync(
+        string sourcePath, string destMp3Path, Action<double> progress, CancellationToken ct)
     {
         var ffmpeg = LocateFFmpeg();
         using var proc = new Process
@@ -149,13 +155,17 @@ public sealed class YoutubeExplodeEngine(
             StartInfo = new ProcessStartInfo
             {
                 FileName = ffmpeg,
-                ArgumentList = { "-y", "-i", sourcePath, "-codec:a", "libmp3lame", "-b:a", "320k", destMp3Path },
+                // -nostdin: without it ffmpeg can block forever reading
+                // interactive commands when stdin is left attached.
+                ArgumentList = { "-y", "-nostdin", "-hide_banner", "-i", sourcePath, "-codec:a", "libmp3lame", "-b:a", "320k", destMp3Path },
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             },
         };
-        using var reg = ct.Register(() => { try { proc.Kill(entireProcessTree: true); } catch { } });
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TranscodeTimeout);
+        using var reg = timeoutCts.Token.Register(() => { try { proc.Kill(entireProcessTree: true); } catch { } });
         try
         {
             proc.Start();
@@ -169,12 +179,102 @@ public sealed class YoutubeExplodeEngine(
             throw new InvalidOperationException(
                 $"{FFmpegMissing().Message} (tried '{ffmpeg}': {ex.Message})");
         }
-        await proc.WaitForExitAsync(ct);
+        // Drain stderr CONCURRENTLY: ffmpeg chatters progress lines there
+        // for the whole run, and a filled pipe (~4KB, seconds on long
+        // files) blocks it forever with a 0-byte output. The same drain
+        // feeds transcode progress (0.9..0.99 of the job) from time= lines
+        // against the Duration: header, so the UI moves instead of sitting
+        // at 0% — which also feeds the queue's silence watchdog.
+        var tail = new List<string>();
+        TimeSpan? duration = null;
+        void OnLine(string? line)
+        {
+            if (line is null) return;
+            lock (tail)
+            {
+                tail.Add(line);
+                if (tail.Count > 30) tail.RemoveAt(0);
+            }
+            duration ??= TryParseDuration(line);
+            var frac = duration is not null ? TranscodeFraction(line, duration.Value) : null;
+            if (frac is not null)
+            {
+                try { progress(0.9 + 0.09 * frac.Value); } catch { }
+            }
+        }
+        var drain = ConsumeAsync(proc.StandardError, OnLine, timeoutCts.Token);
+        try
+        {
+            await proc.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            string err;
+            lock (tail) err = string.Join(Environment.NewLine, tail);
+            throw new InvalidOperationException(
+                $"FFmpeg transcode timed out after {TranscodeTimeout.TotalMinutes:0} minutes: {Tail(err)}");
+        }
+        await drain;
+        ct.ThrowIfCancellationRequested();
         if (proc.ExitCode != 0)
         {
-            var err = await proc.StandardError.ReadToEndAsync(ct);
+            string err;
+            lock (tail) err = string.Join(Environment.NewLine, tail);
             throw new InvalidOperationException($"FFmpeg transcode failed (exit {proc.ExitCode}): {Tail(err)}");
         }
+    }
+
+    private static async Task ConsumeAsync(StreamReader reader, Action<string?> onLine, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct);
+                if (line is null) break;
+                onLine(line);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    // ffmpeg stderr header: "Duration: 00:17:42.63, start: 0.000000, ...".
+    internal static TimeSpan? TryParseDuration(string line)
+    {
+        var token = TokenAfter(line, "Duration: ");
+        return token is null ? null : TryParseClock(token);
+    }
+
+    // ffmpeg stderr progress: "size= 5120KiB time=00:02:31.04 bitrate= ...".
+    internal static double? TranscodeFraction(string line, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero) return null;
+        var token = TokenAfter(line, "time=");
+        if (token is null) return null;
+        var elapsed = TryParseClock(token);
+        if (elapsed is null) return null;
+        return Math.Clamp(elapsed.Value.TotalSeconds / duration.TotalSeconds, 0, 1);
+    }
+
+    private static string? TokenAfter(string line, string marker)
+    {
+        var i = line.IndexOf(marker, StringComparison.Ordinal);
+        if (i < 0) return null;
+        var s = line[(i + marker.Length)..].Trim();
+        var end = s.IndexOfAny([' ', ',']);
+        return end < 0 ? s : s[..end];
+    }
+
+    private static TimeSpan? TryParseClock(string token)
+    {
+        var parts = token.Split(':');
+        if (parts.Length != 3) return null;
+        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var h)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var m)
+            || !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var s))
+            return null;
+        if (h < 0 || m < 0 || s < 0) return null;
+        return new TimeSpan(0, h, m, 0) + TimeSpan.FromSeconds(s);
     }
 
     private string LocateFFmpeg()

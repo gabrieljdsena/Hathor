@@ -9,7 +9,8 @@ import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { useChapterAutoSkip, useChapterJump } from './ui/PodcastTimestamps'
-import ResumeSpot, { useResumeSpot } from './ui/ResumeSpot'
+import { useResumeSpot } from './ui/ResumeSpot'
+import ResumeBento from './ui/ResumeBento'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Self-ticking progress row (engine media time; display-only).
@@ -162,10 +163,11 @@ export function PendingEditChip({ file }: { file: string }) {
 }
 
 // Bottom player bar cloned from Music Player/ui/index.html #controls
-// (h-28, orange top border, glass). Audio renders server state; crossfade
+// (orange top border, glass). Audio renders server state; crossfade
 // and gapless arrive in a later phase — manual next/prev stay instant.
-// Mobile stacks a compact transport row over a full-width progress slider
-// (repeat/shuffle/volume stay on sm+ where they fit).
+// Mobile is a compact 2-row stack: song + full transport (shuffle, prev,
+// play, next, repeat) + bento/lyrics/queue actions over a full-width
+// progress slider. Volume lives on desktop + the Now Playing overlay.
 export default function PlayerBar({
   onToggleQueue,
   onToggleLyrics,
@@ -342,21 +344,22 @@ export default function PlayerBar({
               <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
             )}
             {song && <PendingEditChip file={song.file} />}
-            {song && resumeSpot && resumeSpot.file !== song.file && (
-              <ResumeSpot
-                key={resumeSpot.file + resumeSpot.updatedUtc}
-                spot={resumeSpot}
-                compact
-              />
-            )}
           </div>
         </div>
-        <div className="flex items-center justify-center gap-1">
+        <div className="flex items-center justify-center gap-0.5 sm:gap-1">
+          <ControlButton icon="shuffle" title="Toggle Shuffle" active={shuffle} iconClass="w-5 h-5" onClick={doShuffle} />
           <ControlButton icon="prev" title="Previous Song" iconClass="w-5 h-5" onClick={doPrev} />
           <PlayPauseButton playing={isPlaying} id="playPauseBtn-mobile" small onClick={() => void toggle()} />
           <ControlButton icon="next" title="Next Song" iconClass="w-5 h-5" onClick={doNext} />
+          <ControlButton icon="repeat" title="Toggle Repeat" active={repeat} iconClass="w-5 h-5" onClick={doRepeat} />
         </div>
         <div className="flex items-center justify-end">
+          {resumeSpot && (
+            <ResumeBento
+              key={resumeSpot.file + resumeSpot.updatedUtc}
+              spot={resumeSpot}
+            />
+          )}
           <button
             onClick={onToggleLyrics}
             title="Toggle Lyrics"
@@ -377,25 +380,10 @@ export default function PlayerBar({
           </button>
         </div>
       </div>
-      {/* Compact stacked layout (below 1100px): full-width progress + volume */}
+      {/* Compact stacked layout (below 1100px): full-width progress.
+          Volume lives on desktop + the Now Playing overlay. */}
       <div className="flex min-[1100px]:hidden w-full items-center gap-2">
         <ProgressSlider idPrefix="m" />
-      </div>
-      <div className="flex min-[1100px]:hidden w-full items-center gap-2">
-        <button
-          onClick={doMute}
-          title="Mute / unmute"
-          className="cursor-pointer text-zinc-400 active:text-white transition-colors p-1 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0"
-        >
-          <Icon
-            name={volume === 0 ? 'volumeMuted' : volume < 0.5 ? 'volumeLow' : 'volume'}
-            className="w-4 h-4"
-          />
-        </button>
-        <VolumeSlider
-          volume={volume}
-          className="flex-1 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
-        />
       </div>
 
       {/* Desktop: song card */}
@@ -428,13 +416,6 @@ export default function PlayerBar({
             <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
           )}
           {song && <PendingEditChip file={song.file} />}
-          {song && resumeSpot && resumeSpot.file !== song.file && (
-            <ResumeSpot
-              key={resumeSpot.file + resumeSpot.updatedUtc}
-              spot={resumeSpot}
-              compact
-            />
-          )}
         </div>
       </div>
       {song && (
@@ -473,8 +454,14 @@ export default function PlayerBar({
         </div>
       </div>
 
-      {/* Desktop: lyrics / queue / volume */}
+      {/* Desktop: resume bento / lyrics / queue / volume */}
       <div className="hidden min-[1100px]:flex flex-1 items-center justify-end gap-2 min-w-0">
+        {resumeSpot && (
+          <ResumeBento
+            key={resumeSpot.file + resumeSpot.updatedUtc}
+            spot={resumeSpot}
+          />
+        )}
         <button
           onClick={onToggleLyrics}
           title="Toggle Lyrics"

@@ -213,7 +213,8 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
 }
 
 // EF persistence shape for one device's resume spot (last write wins per
-// (user, device); readers exclude their own device id).
+// (user, device); readers exclude their own device id). Queue snapshot
+// columns let a tap restore the writer's Up Next, not just the file.
 public sealed class PlaybackSpotRow
 {
     public Guid UserId { get; set; }
@@ -223,6 +224,8 @@ public sealed class PlaybackSpotRow
     public bool IsPodcast { get; set; }
     public string? DeviceLabel { get; set; }
     public DateTime UpdatedUtc { get; set; }
+    public string QueueFilesJson { get; set; } = "[]";
+    public string? QueueSourceJson { get; set; }
 }
 
 // EF persistence shape for the PlaybackState aggregate (lists as JSON).

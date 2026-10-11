@@ -85,7 +85,9 @@ public sealed class SyncController(IMediator mediator, ILibraryStorage storage) 
     // Resume spots (one row per user+device, last wins): push upserts the
     // caller's row; latest surfaces the newest spot from a different device
     // (excludeDevice) so browsers never echo their own pause back as a
-    // resume pill. Nothing auto-plays — the pill is an explicit tap.
+    // resume bento. Nothing auto-plays — the bento is an explicit tap.
+    // QueueFiles/QueueSource carry the writer's Up Next snapshot so the tap
+    // restores the foreign queue; older clients omit them and resume single-song.
     [HttpPost("playback")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<ActionResult<bool>> PushPlayback(
@@ -96,7 +98,10 @@ public sealed class SyncController(IMediator mediator, ILibraryStorage storage) 
         return Ok(await mediator.Send(new PushPlaybackStateCommand(
             CurrentUserId(), body.DeviceId.Trim(),
             string.IsNullOrWhiteSpace(body.DeviceLabel) ? null : body.DeviceLabel.Trim(),
-            body.File, body.PositionSec, body.IsPodcast), ct));
+            body.File, body.PositionSec, body.IsPodcast,
+            body.QueueFiles,
+            body.QueueSource is null ? null : new Hathor.Application.Dtos.QueueSourceDto(
+                body.QueueSource.Type, body.QueueSource.Id)), ct));
     }
 
     [HttpGet("playback")]
@@ -110,4 +115,5 @@ public sealed class SyncController(IMediator mediator, ILibraryStorage storage) 
 }
 
 public sealed record PushPlaybackRequest(
-    string? DeviceId, string? DeviceLabel, string? File, double PositionSec, bool IsPodcast);
+    string? DeviceId, string? DeviceLabel, string? File, double PositionSec, bool IsPodcast,
+    List<string>? QueueFiles = null, QueueSourceRequest? QueueSource = null);

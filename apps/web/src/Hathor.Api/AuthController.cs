@@ -166,7 +166,8 @@ public sealed class ApiKeysController(
     {
         var userId = CurrentUserId();
         var list = await keys.ListForUserAsync(userId, ct);
-        return Ok(list.Select(k => new ApiKeyDto(k.Id, k.Name, k.Prefix, k.Scopes, k.CreatedAtUtc)).ToList());
+        return Ok(list.Select(k => new ApiKeyDto(k.Id, k.Name, k.Prefix,
+            k.Scopes, Hathor.Domain.UtcIso.EnsureUtc(k.CreatedAtUtc))).ToList());
     }
 
     [HttpPost]

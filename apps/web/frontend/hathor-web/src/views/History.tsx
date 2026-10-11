@@ -9,15 +9,15 @@ import Pagination from '../components/ui/Pagination'
 import SongMenu, { type SongMenuHandle } from '../components/ui/SongMenu'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
+import { parseServerDate } from '../utils/dates'
 
 // History cloned from ui/views/history.html: Download / Played tabs,
 // paginated rows (cover + title + artist + date + play action).
 type Tab = 'download' | 'played'
 
 function formatDate(iso: string | null) {
-  if (!iso) return 'Unknown date'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? 'Unknown date' : d.toLocaleString()
+  const d = parseServerDate(iso)
+  return d ? d.toLocaleString() : 'Unknown date'
 }
 
 export default function History() {
