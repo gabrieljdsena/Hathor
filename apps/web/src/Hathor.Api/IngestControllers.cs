@@ -185,7 +185,7 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
         await mediator.Send(new SaveLyricsCommand(
             CurrentUserId(), file, body.Synced, body.Plain, chapterId), ct)
             ? NoContent()
-            : BadRequest(new { message = "Empty lyrics cannot be saved." });
+            : BadRequest(new { message = "Lyrics could not be saved (empty, or the chapter no longer exists)." });
 
     // Manual removal (wrong lyrics): drops the cached row so the next read
     // re-fetches instead of serving the stale entry.

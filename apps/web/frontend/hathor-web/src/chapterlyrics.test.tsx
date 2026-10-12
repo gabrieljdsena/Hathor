@@ -170,7 +170,7 @@ describe('LyricsSheet chapter save flow', () => {
 
     // No chapter lyrics yet: search affordance shows; the panel's
     // initial search (chapter title, empty artist) finds the candidate.
-    expect(await screen.findByText('No lyrics found.')).toBeInTheDocument()
+    expect(await screen.findByText('No lyrics saved for “Intro” yet.')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Search candidates'))
     expect(mockSearchLyrics).toHaveBeenCalledWith('Intro', '')
     fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
@@ -180,8 +180,7 @@ describe('LyricsSheet chapter save flow', () => {
     })
   })
 
-  it('prefills manual search with the split chapter title and artist', async () => {
-    // Dashed chapters must not go out as track="Beggin - Frankie Valli":
+  it('prefills manual search with the split chapter title and artist', async () => {    // Dashed chapters must not go out as track="Beggin - Frankie Valli":
     // the backend would read the halves backwards.
     mockList.mockResolvedValue([
       { id: 3, podcastFile: 'ep.mp3', name: 'Beggin - Frankie Valli', startSecs: 0, endSecs: null },
@@ -191,8 +190,112 @@ describe('LyricsSheet chapter save flow', () => {
     mockEngineTime.mockReturnValue(10)
     renderSheet()
 
-    expect(await screen.findByText('No lyrics found.')).toBeInTheDocument()
+    expect(await screen.findByText('No lyrics saved for “Beggin - Frankie Valli” yet.')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Search candidates'))
     expect(mockSearchLyrics).toHaveBeenCalledWith('Beggin', 'Frankie Valli')
+  })
+
+  it('saves under the picked chapter instead of the active one', async () => {
+    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
+    mockSearchLyrics.mockResolvedValue([
+      {
+        id: 1, trackName: 'Intro', artistName: '', albumName: null,
+        duration: null, syncedLyrics: '[00:01.00] hi', plainLyrics: null,
+      },
+    ])
+    mockSaveLyrics.mockResolvedValue(undefined)
+    mockEngineTime.mockReturnValue(10) // Intro (id 1) is active
+    renderSheet()
+
+    fireEvent.click(await screen.findByText('Search candidates'))
+    // Picker defaults to the active chapter…
+    const select = screen.getByLabelText('Save lyrics to chapter') as HTMLSelectElement
+    expect(select.value).toBe('1')
+    // …but the lyrics are for Main: pick it (prefill follows the pick).
+    fireEvent.change(select, { target: { value: '2' } })
+    expect(screen.getByPlaceholderText('Track name')).toHaveValue('Main')
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockSaveLyrics).toHaveBeenCalledWith('ep.mp3', '[00:01.00] hi', null, 2)
+    })
+    // The banner offers the chapter; jumping seeks to its start and closes.
+    fireEvent.click(await screen.findByText('Jump to chapter'))
+    expect(mockApiSeek).toHaveBeenCalledWith(60)
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Save lyrics to chapter')).toBeNull()
+    })
+  })
+
+    it('omits the picker for songs without chapters', async () => {
+    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
+    mockSearchLyrics.mockResolvedValue([])
+    usePlayer.setState({
+      currentSong: {
+        file: 's.mp3', artist: 'Artist', title: 'Title', album: 'Album',
+        year: '2020', duration: 180, coverArt: null, dateDownload: null,
+      },
+    })
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <LyricsSheet open onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(await screen.findByText('Search candidates'))
+    expect(await screen.findByPlaceholderText('Track name')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Save lyrics to chapter')).toBeNull()
+  })
+
+  it('closes the panel when saving for the active chapter', async () => {
+    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
+    mockSearchLyrics.mockResolvedValue([
+      {
+        id: 1, trackName: 'Intro', artistName: '', albumName: null,
+        duration: null, syncedLyrics: '[00:01.00] hi', plainLyrics: null,
+      },
+    ])
+    mockSaveLyrics.mockResolvedValue(undefined)
+    mockEngineTime.mockReturnValue(10) // Intro (id 1) is active
+    renderSheet()
+
+    fireEvent.click(await screen.findByText('Search candidates'))
+    // Picker defaults to the active chapter: saving closes the panel so
+    // the fresh lyrics show instead of a bare "Saved" notice.
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(mockSaveLyrics).toHaveBeenCalledWith('ep.mp3', '[00:01.00] hi', null, 1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Save lyrics to chapter')).toBeNull()
+    })
+  })
+
+  it('shows the saved lyrics even when the fetch keeps failing', async () => {
+    // The fetch never succeeds (stale 404 / flaky network): the save seeds
+    // the view cache, so the lyrics still show after jumping to them.
+    mockSongLyrics.mockRejectedValue(new Error('Not found'))
+    mockSearchLyrics.mockResolvedValue([
+      {
+        id: 1, trackName: 'Main', artistName: '', albumName: null,
+        duration: null, syncedLyrics: '[00:01.00] saved words', plainLyrics: null,
+      },
+    ])
+    mockSaveLyrics.mockResolvedValue(undefined)
+    mockEngineTime.mockReturnValue(10) // Intro (id 1) is active
+    renderSheet()
+
+    expect(await screen.findByText('No lyrics saved for “Intro” yet.')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Search candidates'))
+    const select = screen.getByLabelText('Save lyrics to chapter') as HTMLSelectElement
+    fireEvent.change(select, { target: { value: '2' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(mockSaveLyrics).toHaveBeenCalledWith('ep.mp3', '[00:01.00] saved words', null, 2)
+    })
+    // Jump to Main: the clock follows, the view reads the seeded cache —
+    // no successful fetch ever happened.
+    mockEngineTime.mockReturnValue(70)
+    fireEvent.click(await screen.findByText('Jump to chapter'))
+    expect(await screen.findByText('saved words')).toBeInTheDocument()
   })
 })

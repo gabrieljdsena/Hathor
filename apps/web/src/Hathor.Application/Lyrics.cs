@@ -166,8 +166,12 @@ public sealed class SaveLyricsHandler(
         if (cmd.Synced is null && cmd.Plain is null) return false;
         // Chapter context saves under the chapter key so the chapter view
         // reads back exactly what was picked (it never looks at the file row).
-        var (key, _) = await ChapterLyrics.ResolveAsync(
+        var (key, chapterName) = await ChapterLyrics.ResolveAsync(
             timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+        // An explicit chapter that no longer resolves (deleted/renamed,
+        // wrong file) must fail loudly — silently writing the file row
+        // would store lyrics no view ever reads back.
+        if (cmd.ChapterId.HasValue && chapterName is null) return false;
         await cache.UpsertAsync(cmd.UserId, key,
             System.Text.Json.JsonSerializer.Serialize(new LyricsDto(cmd.Synced, cmd.Plain)), ct);
         await cache.SaveChangesAsync(ct);
@@ -211,8 +215,11 @@ public sealed class DeleteLyricsHandler(
 {
     public async Task<bool> Handle(DeleteLyricsCommand cmd, CancellationToken ct)
     {
-        var (key, _) = await ChapterLyrics.ResolveAsync(
+        var (key, chapterName) = await ChapterLyrics.ResolveAsync(
             timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+        // Same guard as save: a stale chapter id must never wipe the file
+        // row (which every non-chapter view reads).
+        if (cmd.ChapterId.HasValue && chapterName is null) return false;
         if (!await cache.DeleteAsync(cmd.UserId, key, ct)) return false;
         await cache.SaveChangesAsync(ct);
         return true;
