@@ -577,10 +577,12 @@ export const api = {
       `/songs/${encodeURIComponent(file)}/lyrics${chapterId != null ? `?chapterId=${chapterId}` : ''}`,
       { method: 'DELETE' },
     ),
-  lyricsOffset: (file: string) =>
-    request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset`),
-  setLyricsOffset: (file: string, offsetMs: number) =>
-    request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset`, {
+  lyricsOffset: (file: string, chapterId?: number | null) =>
+    request<{ offsetMs: number }>(
+      `/songs/${encodeURIComponent(file)}/lyrics/offset${chapterId != null ? `?chapterId=${chapterId}` : ''}`,
+    ),
+  setLyricsOffset: (file: string, offsetMs: number, chapterId?: number | null) =>
+    request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset${chapterId != null ? `?chapterId=${chapterId}` : ''}`, {
       method: 'PUT',
       body: JSON.stringify({ OffsetMs: offsetMs }),
     }),

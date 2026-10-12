@@ -18,8 +18,8 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   const volume = usePlayer((s) => s.volume)
   const toggle = usePlayer((s) => s.toggle)
   const syncAudio = usePlayer((s) => s.syncAudio)
-  const { offsetMs } = useLyricsOffset(song?.file)
   const chapter = useActiveChapter(song?.file, song?.isPodcast)
+  const { offsetMs } = useLyricsOffset(song?.file, chapter?.id ?? null)
   const { data: lyrics, isLoading: lyricsLoading } = useSongLyrics(
     song?.file,
     chapter?.name ?? song?.title ?? '',

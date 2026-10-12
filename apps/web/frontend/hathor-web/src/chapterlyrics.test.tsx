@@ -7,7 +7,7 @@ import { useActiveChapter } from './components/ui/PodcastTimestamps'
 import { usePlayer } from './store/player'
 import type { PodcastTimestamp, Song } from './api/client'
 
-const { mockList, mockEngineTime, mockEngineSeek, mockApiSeek, mockSongLyrics, mockSearchLyrics, mockSaveLyrics } = vi.hoisted(() => ({
+const { mockList, mockEngineTime, mockEngineSeek, mockApiSeek, mockSongLyrics, mockSearchLyrics, mockSaveLyrics, mockSetOffset } = vi.hoisted(() => ({
   mockList: vi.fn(),
   mockEngineTime: vi.fn(),
   mockEngineSeek: vi.fn(),
@@ -16,6 +16,7 @@ const { mockList, mockEngineTime, mockEngineSeek, mockApiSeek, mockSongLyrics, m
   mockSearchLyrics: vi.fn(),
   mockSaveLyrics: vi.fn(),
   mockLyricsOffset: vi.fn(),
+  mockSetOffset: vi.fn(async (_f: string, ms: number, _c?: number | null) => ({ offsetMs: ms })),
 }))
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -30,6 +31,7 @@ vi.mock('./api/client', async (importOriginal) => {
       searchLyrics: (...args: unknown[]) => mockSearchLyrics(...args),
       saveLyrics: (...args: unknown[]) => mockSaveLyrics(...args),
       lyricsOffset: async () => ({ offsetMs: 0 }),
+      setLyricsOffset: (f: string, ms: number, c?: number | null) => mockSetOffset(f, ms, c),
     },
   }
 })
@@ -246,8 +248,7 @@ describe('LyricsSheet chapter save flow', () => {
     expect(screen.queryByLabelText('Save lyrics to chapter')).toBeNull()
   })
 
-  it('closes the panel when saving for the active chapter', async () => {
-    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
+  it('closes the panel when saving for the active chapter', async () => {    mockSongLyrics.mockResolvedValue({ synced: null, plain: null })
     mockSearchLyrics.mockResolvedValue([
       {
         id: 1, trackName: 'Intro', artistName: '', albumName: null,
@@ -297,5 +298,23 @@ describe('LyricsSheet chapter save flow', () => {
     mockEngineTime.mockReturnValue(70)
     fireEvent.click(await screen.findByText('Jump to chapter'))
     expect(await screen.findByText('saved words')).toBeInTheDocument()
+  })
+
+  it('scopes the timing offset to the active chapter', async () => {
+    // Lyrics only for chapter 1: 'hi' on screen proves the view (and the
+    // offset hook beside it) resolved Intro, so the step below must carry
+    // chapter id 1 — never the file scope.
+    mockSongLyrics.mockImplementation(async (...args: unknown[]) => {
+      const chapterId = args[5] as number | null | undefined
+      return chapterId === 1 ? { synced: '[00:01.00] hi', plain: null } : { synced: null, plain: null }
+    })
+    mockEngineTime.mockReturnValue(10) // Intro (id 1) is active
+    renderSheet()
+
+    expect(await screen.findByText('hi')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Forward lyrics by 250 milliseconds'))
+    await waitFor(() => {
+      expect(mockSetOffset).toHaveBeenCalledWith('ep.mp3', 250, 1)
+    })
   })
 })

@@ -321,8 +321,10 @@ public sealed class Phase4HandlerTests
     }
 
     [Fact]
-    public async Task SaveLyrics_ForeignChapterId_FallsBackToFileKey()
+    public async Task SaveLyrics_ForeignChapterId_ReturnsFalse_WithoutWriting()
     {
+        // A chapter id that resolves nowhere must fail loudly instead of
+        // silently writing the file row no view ever reads back.
         var cache = Substitute.For<ILyricsRepository>();
         var timestamps = Substitute.For<IPodcastTimestampRepository>();
         timestamps.GetAsync(UserId, "ep.mp3", 99, Arg.Any<CancellationToken>())
@@ -331,9 +333,10 @@ public sealed class Phase4HandlerTests
         (await new SaveLyricsHandler(cache, timestamps).Handle(
             new SaveLyricsCommand(UserId, "ep.mp3", null, "x", ChapterId: 99),
             CancellationToken.None))
-            .Should().BeTrue();
-        await cache.Received(1).UpsertAsync(
-            UserId, "ep.mp3", Arg.Any<string>(), Arg.Any<CancellationToken>());
+            .Should().BeFalse();
+        await cache.DidNotReceiveWithAnyArgs().UpsertAsync(
+            default, default!, default!, default);
+        await cache.DidNotReceiveWithAnyArgs().SaveChangesAsync(default);
     }
 
     [Fact]
@@ -400,7 +403,7 @@ public sealed class Phase4HandlerTests
     {
         var cache = Substitute.For<ILyricsRepository>();
         cache.GetOffsetAsync(UserId, "s.mp3", Arg.Any<CancellationToken>()).Returns(250);
-        (await new GetLyricsOffsetHandler(cache).Handle(
+        (await new GetLyricsOffsetHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new GetLyricsOffsetQuery(UserId, "s.mp3"), CancellationToken.None))
             .Should().Be(250);
     }
@@ -409,7 +412,7 @@ public sealed class Phase4HandlerTests
     public async Task SetLyricsOffset_Clamps_Saves_ReturnsClamped()
     {
         var cache = Substitute.For<ILyricsRepository>();
-        var result = await new SetLyricsOffsetHandler(cache).Handle(
+        var result = await new SetLyricsOffsetHandler(cache, Substitute.For<IPodcastTimestampRepository>()).Handle(
             new SetLyricsOffsetCommand(UserId, "s.mp3", 99999), CancellationToken.None);
         result.Should().Be(20000);
         await cache.Received(1).SetOffsetAsync(UserId, "s.mp3", 20000, Arg.Any<CancellationToken>());

@@ -94,4 +94,77 @@ public sealed class LyricsChapterTests
         await cache.Received(1).DeleteAsync(UserId, "ep.mp3::chapter:7",
             Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task GetOffset_ChapterValue_WinsOverFile()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetOffsetAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>())
+            .Returns(250);
+        cache.GetOffsetAsync(UserId, "ep.mp3", Arg.Any<CancellationToken>())
+            .Returns(500);
+
+        var offset = await new GetLyricsOffsetHandler(cache, Timestamps(Chapter("Main")))
+            .Handle(new GetLyricsOffsetQuery(UserId, "ep.mp3", 7), CancellationToken.None);
+
+        offset.Should().Be(250);
+    }
+
+    [Fact]
+    public async Task GetOffset_UntunedChapter_FallsBackToFile()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetOffsetAsync(UserId, "ep.mp3::chapter:7", Arg.Any<CancellationToken>())
+            .Returns(0);
+        cache.GetOffsetAsync(UserId, "ep.mp3", Arg.Any<CancellationToken>())
+            .Returns(500);
+
+        var offset = await new GetLyricsOffsetHandler(cache, Timestamps(Chapter("Main")))
+            .Handle(new GetLyricsOffsetQuery(UserId, "ep.mp3", 7), CancellationToken.None);
+
+        offset.Should().Be(500);
+    }
+
+    [Fact]
+    public async Task GetOffset_UnknownChapter_FallsBackToFile()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetOffsetAsync(UserId, "ep.mp3", Arg.Any<CancellationToken>())
+            .Returns(500);
+
+        var offset = await new GetLyricsOffsetHandler(cache, Timestamps(null))
+            .Handle(new GetLyricsOffsetQuery(UserId, "ep.mp3", 7), CancellationToken.None);
+
+        offset.Should().Be(500);
+        await cache.DidNotReceive().GetOffsetAsync(
+            Arg.Any<Guid>(), "ep.mp3::chapter:7", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetOffset_ChapterId_WritesChapterKey_Clamped()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+
+        var result = await new SetLyricsOffsetHandler(cache, Timestamps(Chapter("Main")))
+            .Handle(new SetLyricsOffsetCommand(UserId, "ep.mp3", 99999, 7), CancellationToken.None);
+
+        result.Should().Be(20000);
+        await cache.Received(1).SetOffsetAsync(UserId, "ep.mp3::chapter:7", 20000,
+            Arg.Any<CancellationToken>());
+        await cache.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetOffset_UnknownChapter_WritesNothing_ReturnsFileOffset()
+    {
+        var cache = Substitute.For<ILyricsRepository>();
+        cache.GetOffsetAsync(UserId, "ep.mp3", Arg.Any<CancellationToken>())
+            .Returns(500);
+
+        var result = await new SetLyricsOffsetHandler(cache, Timestamps(null))
+            .Handle(new SetLyricsOffsetCommand(UserId, "ep.mp3", 250, 7), CancellationToken.None);
+
+        result.Should().Be(500);
+        await cache.DidNotReceiveWithAnyArgs().SetOffsetAsync(default, default!, default, default);
+    }
 }

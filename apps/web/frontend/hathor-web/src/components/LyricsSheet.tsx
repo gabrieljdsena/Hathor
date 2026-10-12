@@ -128,7 +128,7 @@ export default function LyricsSheet({
   const synced = romaji && romanized?.synced ? romanized.synced : lyrics?.synced
   const plain = romaji && romanized?.plain ? romanized.plain : lyrics?.plain
   const hasLyrics = !!synced || !!plain
-  const { offsetMs, setOffset } = useLyricsOffset(song?.file)
+  const { offsetMs, setOffset } = useLyricsOffset(song?.file, chapter?.id ?? null)
 
   if (!open) return null
   return (
