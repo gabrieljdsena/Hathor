@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Song } from '../api/client'
 import { usePlayer } from '../store/player'
 import CoverArt, { evictCoverCache } from '../components/ui/CoverArt'
@@ -10,17 +10,19 @@ import Modal from '../components/ui/Modal'
 import { AssignTagsModal, TagManagerModal, TagPills } from '../components/ui/PodcastTags'
 import { TimestampManagerModal } from '../components/ui/PodcastTimestamps'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
-import { fuzzyFields } from '../utils/fuzzy'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
 import { GhostButton, PrimaryButton } from '../components/ui/fields'
 import { PlayCircleButton } from '../components/ui/buttons'
+import { SONGS_PAGE_SIZE } from './Songs'
 
 // Podcasts view cloned from ui/views/podcasts.html: header + search +
 // tag chips + episode rows + bento menu + tag modals.
+// Server-paged infinite scroll (search + tag filter server-side); the queue
+// resolves via /podcasts/files so the full episode list is never held.
 export default function Podcasts() {
   const queryClient = useQueryClient()
-  const playSong = usePlayer((s) => s.playSong)
+  const playSongByFiles = usePlayer((s) => s.playSongByFiles)
   const currentFile = usePlayer((s) => s.currentSong?.file)
   const [search, setSearch] = useState('')
   const debounced = useDebouncedValue(search)
@@ -59,7 +61,39 @@ export default function Podcasts() {
     [],
   )
 
-  const { data: episodes, isLoading } = useQuery({ queryKey: ['podcasts'], queryFn: api.podcasts })
+  const { data: total } = useQuery({
+    queryKey: ['podcasts', 'count', debounced, activeTag],
+    queryFn: () => api.podcastCount(debounced || undefined, activeTag),
+  })
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+    fetchNextPage,
+    fetchPreviousPage,
+  } = useInfiniteQuery({
+    queryKey: ['podcasts', 'inf', debounced, activeTag],
+    queryFn: ({ pageParam }) =>
+      api.podcasts({
+        search: debounced || undefined,
+        tagId: activeTag,
+        page: pageParam,
+        pageSize: SONGS_PAGE_SIZE,
+      }),
+    initialPageParam: 1,
+    // RAM: retain at most 3 pages (see Songs.tsx). Page numbers come from
+    // params (maxPages drops old entries, so array length lies).
+    maxPages: 3,
+    getNextPageParam: (lastPage, _allPages, lastParam) =>
+      lastPage.length < SONGS_PAGE_SIZE ? undefined : lastParam + 1,
+    getPreviousPageParam: (_firstPage, _allPages, firstParam) =>
+      firstParam > 1 ? firstParam - 1 : undefined,
+  })
+  const pages = data?.pages
+  const episodes = useMemo(() => (pages ?? []).flat(), [pages])
   const { data: tags } = useQuery({ queryKey: ['podcast-tags'], queryFn: api.podcastTags })
   const { data: tagMap } = useQuery({ queryKey: ['podcast-tag-map'], queryFn: api.podcastTagMap })
 
@@ -81,30 +115,111 @@ export default function Podcasts() {
     void queryClient.invalidateQueries({ queryKey: ['playlist-songs'] })
   }
 
-  // Typo-tolerant client filter (same fuzzy rules as the song search),
-  // memoized: tag lookups + fuzzy pass rerun only when inputs change.
+  // RAM windowing over the loaded pages: only the first `renderLimit` rows
+  // mount; the bottom sentinel grows the window, then fetches the next
+  // page. The top sentinel refetches older pages dropped by maxPages,
+  // anchoring the viewport so the list doesn't jump.
+  const PAGE = 100
+  const [renderLimit, setRenderLimit] = useState(PAGE)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const topSentinelRef = useRef<HTMLDivElement | null>(null)
+  const anchorRef = useRef<number | null>(null)
+  const prevLenRef = useRef(0)
+  useEffect(() => {
+    setRenderLimit(PAGE)
+  }, [debounced, activeTag])
+  const rendered = episodes.slice(0, renderLimit)
+  useEffect(() => {
+    if (rendered.length >= episodes.length && !hasNextPage) return
+    const el = sentinelRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          if (rendered.length < episodes.length) {
+            setRenderLimit((n) => Math.min(n + PAGE, episodes.length))
+          } else if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage()
+          }
+        }
+      },
+      { rootMargin: '800px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [rendered.length, episodes.length, hasNextPage, isFetchingNextPage, fetchNextPage])
+  useEffect(() => {
+    if (!hasPreviousPage) return
+    const el = topSentinelRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          if (hasPreviousPage && !isFetchingPreviousPage) {
+            anchorRef.current = el.getBoundingClientRect().top
+            void fetchPreviousPage()
+          }
+        }
+      },
+      { rootMargin: '800px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasPreviousPage, isFetchingPreviousPage, fetchPreviousPage, episodes.length])
+  useLayoutEffect(() => {
+    const grown = episodes.length - prevLenRef.current
+    prevLenRef.current = episodes.length
+    const anchor = anchorRef.current
+    anchorRef.current = null
+    if (anchor === null || grown <= 0) return
+    if (grown >= episodes.length) return // fresh filter, not a prepend
+    setRenderLimit((n) => n + grown)
+    const el = topSentinelRef.current
+    const scroller = document.getElementById('main')
+    if (!el || !scroller) return
+    const dx = el.getBoundingClientRect().top - anchor
+    if (dx !== 0) scroller.scrollTop += dx
+  }, [episodes])
+
   const tagById = useMemo(() => new Map((tags ?? []).map((t) => [t.id, t.name])), [tags])
-  const visible = useMemo(
-    () =>
-      (episodes ?? []).filter((s) => {
-        const qOk = debounced.trim().length === 0 || fuzzyFields([s.title, s.artist], debounced)
-        const tOk = activeTag === null || (tagMap?.[s.file] ?? []).includes(activeTag)
-        return qOk && tOk
-      }),
-    [episodes, debounced, activeTag, tagMap],
-  )
+  const getFiles = () => api.podcastFiles(debounced || undefined, activeTag)
+
+  const resolveEpisode = async (file: string): Promise<Song> => {
+    const hit = episodes.find((s) => s.file === file)
+    if (hit) return { ...hit, isPodcast: true }
+    return api.podcastDetails(file)
+  }
 
   const playEpisode = (song: Song) => {
     const ep = { ...song, isPodcast: true }
-    void playSong(ep, visible.map((s) => ({ ...s, isPodcast: true })), {
-      type: 'podcast',
-      id: song.file,
-    })
+    void (async () => {
+      try {
+        await playSongByFiles(ep, await getFiles(), {
+          type: 'podcast',
+          id: song.file,
+        })
+      } catch {
+        // reconverges via refresh inside the store
+      }
+    })()
   }
 
   const playAll = () => {
-    const first = visible[0]
-    if (first) playEpisode(first)
+    void (async () => {
+      try {
+        const files = await getFiles()
+        const first = files[0]
+        if (!first) return
+        await playSongByFiles(await resolveEpisode(first), files, {
+          type: 'podcast',
+          id: first,
+        })
+      } catch {
+        // reconverges via refresh inside the store
+      }
+    })()
   }
 
   const tagNames = (file: string) => {
@@ -119,7 +234,7 @@ export default function Podcasts() {
           icon="mic"
           compact
           title="Podcasts"
-          subtitle={isLoading ? 'Loading…' : `${episodes?.length ?? 0} episodes`}
+          subtitle={isLoading ? 'Loading…' : `${total ?? 0} episodes`}
         />
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -140,10 +255,15 @@ export default function Podcasts() {
       </div>
 
       <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6 max-[700px]:px-2">
-        <TagPills tags={tags ?? []} total={episodes?.length ?? 0} activeId={activeTag} onSelect={setActiveTag} />
+        <TagPills tags={tags ?? []} total={total ?? 0} activeId={activeTag} onSelect={setActiveTag} />
+        {hasPreviousPage && !isLoading && (
+          <div ref={topSentinelRef} className="py-3 text-center text-xs text-zinc-600">
+            {isFetchingPreviousPage ? 'Loading older…' : 'Scroll up for older episodes…'}
+          </div>
+        )}
         {isLoading ? (
           <LoadingState label="Loading your episodes…" />
-        ) : visible.length === 0 ? (
+        ) : episodes.length === 0 ? (
           <EmptyState
             title="No episodes yet"
             hint="Download something and mark it as podcast / audio to build this library."
@@ -151,7 +271,7 @@ export default function Podcasts() {
         ) : (
           /* Glass backing so rows stay readable over custom backgrounds */
           <div className="flex flex-col p-2 sm:p-3 rounded-2xl bg-black/20 backdrop-blur-2xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] divide-y divide-white/[0.06]">
-            {visible.map((song) => {
+            {rendered.map((song) => {
               const names = tagNames(song.file)
               return (
                 <div
@@ -215,6 +335,13 @@ export default function Podcasts() {
                 </div>
               )
             })}
+            {(rendered.length < episodes.length || hasNextPage) && (
+              <div ref={sentinelRef} className="py-4 text-center text-xs text-zinc-600">
+                {isFetchingNextPage
+                  ? 'Loading more…'
+                  : `Showing ${rendered.length} of ${total ?? episodes.length} — scroll for more…`}
+              </div>
+            )}
           </div>
         )}
       </div>

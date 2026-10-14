@@ -244,8 +244,8 @@ export default function PlayerBar({
   }, [])
 
   // OS media integration (desktop SMTC overlay): lock-screen / headset
-  // metadata + play/pause/next/prev handlers. Cover falls back to the
-  // embedded art the server already attached to the current song.
+  // metadata + play/pause/next/prev handlers. Artwork uses the cached
+  // /cover URL (current-song payloads no longer carry base64 art).
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const song = usePlayer.getState().currentSong
@@ -255,7 +255,7 @@ export default function PlayerBar({
             title: song.title,
             artist: song.artist,
             album: song.album !== 'Unknown' ? song.album : undefined,
-            artwork: song.coverArt ? [{ src: song.coverArt }] : undefined,
+            artwork: [{ src: song.coverArt ?? api.coverUrl(song.file, null, song.isPodcast) }],
           })
         : null
     } catch {

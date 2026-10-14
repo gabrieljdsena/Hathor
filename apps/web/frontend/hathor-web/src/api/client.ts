@@ -286,6 +286,9 @@ export interface PlayerState {
   isCustomQueue: boolean
   firstPlay: boolean
   queueTotal: number
+  // Monotonic per user, bumped on every queue-structure change. Tabs skip
+  // re-retaining the queue array when it matches the held version.
+  queueVersion: number
 }
 
 function authHeaders(): HeadersInit {
@@ -411,18 +414,27 @@ export const api = {
     }),
   revokeApiKey: (id: string) => request<void>(`/ApiKeys/${id}`, { method: 'DELETE' }),
 
-  // library
+  // library (paged: omit page/pageSize for the legacy whole list)
   songs: (params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.search) q.set('search', params.search)
     if (params.sort) q.set('sort', params.sort)
     if (params.dir) q.set('dir', params.dir)
-    q.set('page', String(params.page ?? 1))
-    q.set('pageSize', String(params.pageSize ?? 100))
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
     return request<Song[]>(`/songs?${q}`)
   },
   songCount: (search?: string) =>
     request<number>(`/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  // Ordered file names for queue building (same search/sort as songs,
+  // capped server-side): play-all without holding full Song[] lists.
+  songsFiles: (params: { search?: string; sort?: string; dir?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    return request<string[]>(`/songs/files?${q}`)
+  },
 
   // player state + headless controls (plan §4 — same surface external clients use)
   playerState: () => request<PlayerState>('/player/state'),
@@ -437,6 +449,18 @@ export const api = {
       body: JSON.stringify({
         currentFile,
         files: files.map((s) => s.file),
+        playlistId,
+        source,
+      }),
+    }),
+  // Same queue replace with bare file names (infinite-scroll play flow:
+  // the full Song[] list is never materialized client-side).
+  setQueueFiles: (currentFile: string | null, files: string[], source: QueueSource | null, playlistId: number | null = null) =>
+    request<PlayerState>('/player/queue', {
+      method: 'PUT',
+      body: JSON.stringify({
+        currentFile,
+        files,
         playlistId,
         source,
       }),
@@ -597,6 +621,16 @@ export const api = {
       localStorage.getItem('hathor:token') ?? '',
     )}`,
 
+  // Embedded art as a cacheable URL (browser HTTP cache owns the bytes —
+  // no base64 in JS state). <img> cannot set headers, so the token rides
+  // along like streamUrl. `version` busts the cache after metadata edits.
+  coverUrl: (file: string, version?: string | null, isPodcast = false) => {
+    const q = new URLSearchParams()
+    if (version) q.set('v', version)
+    q.set('token', localStorage.getItem('hathor:token') ?? '')
+    return `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/cover?${q}`
+  },
+
   // library metadata + delete
   song: (file: string, includeCover = false) =>
     request<Song>(`/songs/${encodeURIComponent(file)}?includeCover=${includeCover}`),
@@ -653,13 +687,59 @@ export const api = {
       `/sync/playback${excludeDevice ? `?excludeDevice=${encodeURIComponent(excludeDevice)}` : ''}`,
     ),
 
-  // artists / albums
+  // artists / albums (paged: omit page/pageSize for the legacy whole list)
   artists: () => request<string[]>('/artists'),
-  artistSongs: (name: string) => request<Song[]>(`/artists/${encodeURIComponent(name)}/songs`),
+  artistSongs: (name: string, params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/artists/${encodeURIComponent(name)}/songs${qs ? `?${qs}` : ''}`)
+  },
+  artistSongCount: (name: string, search?: string) =>
+    request<number>(
+      `/artists/${encodeURIComponent(name)}/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ),
+  artistFiles: (name: string, search?: string, sort?: string, dir?: string) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (sort) q.set('sort', sort)
+    if (dir) q.set('dir', dir)
+    const qs = q.toString()
+    return request<string[]>(
+      `/artists/${encodeURIComponent(name)}/files${qs ? `?${qs}` : ''}`,
+    )
+  },
   artistImage: (name: string) =>
     request<Artwork>(`/artists/${encodeURIComponent(name)}/image`).catch(() => null),
   albums: () => request<string[]>('/albums'),
-  albumSongs: (title: string) => request<Song[]>(`/albums/${encodeURIComponent(title)}/songs`),
+  albumSongs: (title: string, params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/albums/${encodeURIComponent(title)}/songs${qs ? `?${qs}` : ''}`)
+  },
+  albumSongCount: (title: string, search?: string) =>
+    request<number>(
+      `/albums/${encodeURIComponent(title)}/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ),
+  albumFiles: (title: string, search?: string, sort?: string, dir?: string) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (sort) q.set('sort', sort)
+    if (dir) q.set('dir', dir)
+    const qs = q.toString()
+    return request<string[]>(
+      `/albums/${encodeURIComponent(title)}/files${qs ? `?${qs}` : ''}`,
+    )
+  },
   albumImage: (title: string, artist?: string) =>
     request<Artwork>(
       `/albums/${encodeURIComponent(title)}/image${artist ? `?artist=${encodeURIComponent(artist)}` : ''}`,
@@ -683,7 +763,26 @@ export const api = {
       }),
     }),
   deletePlaylist: (id: number) => request<void>(`/playlists/${id}`, { method: 'DELETE' }),
-  playlistSongs: (id: number) => request<Song[]>(`/playlists/${id}/songs`),
+  playlistSongs: (id: number, params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/playlists/${id}/songs${qs ? `?${qs}` : ''}`)
+  },
+  playlistSongsCount: (id: number, search?: string) =>
+    request<number>(`/playlists/${id}/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  playlistFiles: (id: number, search?: string, sort?: string, dir?: string) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (sort) q.set('sort', sort)
+    if (dir) q.set('dir', dir)
+    const qs = q.toString()
+    return request<string[]>(`/playlists/${id}/files${qs ? `?${qs}` : ''}`)
+  },
   addSongToPlaylist: (id: number, file: string) =>
     request<void>(`/playlists/${id}/songs`, { method: 'POST', body: JSON.stringify({ File: file }) }),
   removeSongFromPlaylist: (id: number, file: string) =>
@@ -709,8 +808,30 @@ export const api = {
   unassignPodcastTag: (id: number, file: string) =>
     request<void>(`/podcasttags/${id}/episodes/${encodeURIComponent(file)}`, { method: 'DELETE' }),
 
-  // podcasts
-  podcasts: () => request<Song[]>('/podcasts'),
+  // podcasts (paged: omit page/pageSize for the legacy whole list)
+  podcasts: (params: { search?: string; tagId?: number | null; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.tagId !== undefined && params.tagId !== null) q.set('tagId', String(params.tagId))
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/podcasts${qs ? `?${qs}` : ''}`)
+  },
+  podcastCount: (search?: string, tagId?: number | null) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (tagId !== undefined && tagId !== null) q.set('tagId', String(tagId))
+    const qs = q.toString()
+    return request<number>(`/podcasts/count${qs ? `?${qs}` : ''}`)
+  },
+  podcastFiles: (search?: string, tagId?: number | null) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (tagId !== undefined && tagId !== null) q.set('tagId', String(tagId))
+    const qs = q.toString()
+    return request<string[]>(`/podcasts/files${qs ? `?${qs}` : ''}`)
+  },
   podcastDetails: (file: string) => request<Song>(`/podcasts/${encodeURIComponent(file)}`),
   // Episode chapter marks ("timestamps"): media offsets in seconds.
   podcastTimestamps: (file: string) =>

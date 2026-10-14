@@ -13,8 +13,32 @@ namespace Hathor.Application.Playlists;
 public sealed record ListPlaylistsQuery(Guid UserId) : IRequest<IReadOnlyList<PlaylistDto>>;
 public sealed record ListPlaylistsWithCountsQuery(Guid UserId) : IRequest<IReadOnlyList<PlaylistWithCountDto>>;
 public sealed record GetPlaylistQuery(Guid UserId, long Id) : IRequest<PlaylistDto?>;
-public sealed record GetPlaylistSongsQuery(Guid UserId, long PlaylistId) : IRequest<IReadOnlyList<SongDto>>;
+// Paging is opt-in (null = whole list, legacy callers); search filters
+// title/artist/album with the same fuzzy rules as the library.
+public sealed record GetPlaylistSongsQuery(Guid UserId, long PlaylistId, string? Search = null,
+    string? Sort = null, string? Dir = null,
+    int? Page = null, int? PageSize = null) : IRequest<IReadOnlyList<SongDto>>;
+public sealed record GetPlaylistSongsCountQuery(Guid UserId, long PlaylistId, string? Search = null)
+    : IRequest<int>;
+public sealed record GetPlaylistFilesQuery(Guid UserId, long PlaylistId, string? Search = null,
+    string? Sort = null, string? Dir = null)
+    : IRequest<IReadOnlyList<string>>;
 public sealed record GetSongPlaylistsQuery(Guid UserId, string File) : IRequest<IReadOnlyList<long>>;
+
+public sealed class GetPlaylistSongsValidator : AbstractValidator<GetPlaylistSongsQuery>
+{
+    private static readonly string[] Sorts = ["Title", "Album", "Duration", "DateDownload"];
+    public GetPlaylistSongsValidator()
+    {
+        RuleFor(x => x.Page).Must(p => p is null || p >= 1).WithMessage("Page must be >= 1.");
+        RuleFor(x => x.PageSize).Must(p => p is null || (p >= 1 && p <= 5000))
+            .WithMessage("PageSize must be 1..5000.");
+        RuleFor(x => x.Sort).Must(s => s is null || Sorts.Contains(s))
+            .WithMessage("Sort must be Title, Album, Duration or DateDownload.");
+        RuleFor(x => x.Dir).Must(d => d is null || d is "asc" or "desc")
+            .WithMessage("Dir must be asc or desc.");
+    }
+}
 
 public sealed class PlaylistQueryHandlers(
     IPlaylistReadModel reads,
@@ -24,6 +48,8 @@ public sealed class PlaylistQueryHandlers(
     IRequestHandler<ListPlaylistsWithCountsQuery, IReadOnlyList<PlaylistWithCountDto>>,
     IRequestHandler<GetPlaylistQuery, PlaylistDto?>,
     IRequestHandler<GetPlaylistSongsQuery, IReadOnlyList<SongDto>>,
+    IRequestHandler<GetPlaylistSongsCountQuery, int>,
+    IRequestHandler<GetPlaylistFilesQuery, IReadOnlyList<string>>,
     IRequestHandler<GetSongPlaylistsQuery, IReadOnlyList<long>>
 {
     public Task<IReadOnlyList<PlaylistDto>> Handle(ListPlaylistsQuery q, CancellationToken ct) =>
@@ -33,18 +59,73 @@ public sealed class PlaylistQueryHandlers(
     public Task<PlaylistDto?> Handle(GetPlaylistQuery q, CancellationToken ct) =>
         reads.GetAsync(q.UserId, q.Id, ct);
 
+    // Link order (DateAddedUtc) is the playlist order — filter/search/page
+    // over it, resolving DTOs in one batched read (no per-file TagLib for
+    // catalogued rows).
     public async Task<IReadOnlyList<SongDto>> Handle(GetPlaylistSongsQuery q, CancellationToken ct)
     {
-        var files = await playlists.GetSongFilesAsync(q.UserId, q.PlaylistId, ct);
-        var result = new List<SongDto>();
+        var ordered = await OrderedPlaylistSongsAsync(q.UserId, q.PlaylistId, q.Search, q.Sort, q.Dir, ct);
+        if (q.Page is null || q.PageSize is null) return ordered.Select(x => x.Song).ToList();
+        return ordered.Select(x => x.Song)
+            .Skip((Math.Max(q.Page.Value, 1) - 1) * Math.Max(q.PageSize.Value, 1))
+            .Take(Math.Max(q.PageSize.Value, 1))
+            .ToList();
+    }
+
+    public async Task<int> Handle(GetPlaylistSongsCountQuery q, CancellationToken ct) =>
+        (await OrderedPlaylistSongsAsync(q.UserId, q.PlaylistId, q.Search, null, null, ct)).Count;
+
+    public async Task<IReadOnlyList<string>> Handle(GetPlaylistFilesQuery q, CancellationToken ct)
+    {
+        var files = (await OrderedPlaylistSongsAsync(q.UserId, q.PlaylistId, q.Search, q.Sort, q.Dir, ct))
+            .Select(x => x.Song.File).ToList();
+        if (files.Count > Library.LibraryLimits.MaxFiles)
+            throw new ValidationException($"Too many files ({files.Count}, max {Library.LibraryLimits.MaxFiles}).");
+        return files;
+    }
+
+    private async Task<List<(SongDto Song, DateTime Added)>> OrderedPlaylistSongsAsync(
+        Guid userId, long playlistId, string? search, string? sort, string? dir, CancellationToken ct)
+    {
+        var files = await playlists.GetSongFilesAsync(userId, playlistId, ct);
+        var dtos = await songs.GetManyAsync(userId, files.Select(f => f.File),
+            includeCover: false, ct);
+        var byFile = dtos.ToDictionary(s => s.File, StringComparer.OrdinalIgnoreCase);
+        var result = new List<(SongDto Song, DateTime Added)>();
         foreach (var (file, added) in files)
         {
-            var song = await songs.GetByFileAsync(q.UserId, file, includeCover: false, ct);
-            if (song is null) continue; // file deleted from disk — skip like desktop
-            result.Add(song with { DateDownload = Domain.UtcIso.Format(added) });
+            if (!byFile.TryGetValue(file, out var song)) continue; // deleted from disk — skip like desktop
+            song = song with { DateDownload = Domain.UtcIso.Format(added) };
+            if (!MatchesSearch(song, search)) continue;
+            result.Add((song, added));
         }
-        return result;
+        // Default is link order (DateAddedUtc); explicit sorts mirror the
+        // library table (a re-query per sort is slower than RAM sort but
+        // keeps tab memory flat — the requested tradeoff).
+        var desc = string.Equals(dir, "desc", StringComparison.OrdinalIgnoreCase);
+        var ordered = (sort switch
+        {
+            "Title" => desc
+                ? result.OrderByDescending(x => x.Song.Title)
+                : result.OrderBy(x => x.Song.Title),
+            "Album" => desc
+                ? result.OrderByDescending(x => x.Song.Album).ThenByDescending(x => x.Song.Title)
+                : result.OrderBy(x => x.Song.Album).ThenBy(x => x.Song.Title),
+            "Duration" => desc
+                ? result.OrderByDescending(x => x.Song.Duration)
+                : result.OrderBy(x => x.Song.Duration),
+            "DateDownload" => desc
+                ? result.OrderByDescending(x => x.Added)
+                : result.OrderBy(x => x.Added),
+            _ => desc
+                ? result.OrderByDescending(x => x.Added)
+                : result.OrderBy(x => x.Added),
+        }).ToList();
+        return ordered;
     }
+
+    private static bool MatchesSearch(SongDto song, string? search) =>
+        Hathor.Domain.Services.FuzzySearch.IsMatch([song.Title, song.Artist, song.Album], search);
 
     public async Task<IReadOnlyList<long>> Handle(GetSongPlaylistsQuery q, CancellationToken ct) =>
         await playlists.GetIdsForSongAsync(q.UserId, q.File, ct);

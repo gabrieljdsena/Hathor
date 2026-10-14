@@ -30,6 +30,15 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
   const totalPages = Math.max(1, Math.ceil(queue.length / QUEUE_PAGE_SIZE))
   const safePage = Math.min(Math.max(1, page), totalPages)
 
+  // RAM: drop menu handles for removed/reordered rows (unbounded Map
+  // growth otherwise — same prune as LibraryTable).
+  useEffect(() => {
+    const alive = new Set(queue.map((s, i) => `${s.file}-${i}`))
+    for (const key of menuRefs.current.keys()) {
+      if (!alive.has(key)) menuRefs.current.delete(key)
+    }
+  }, [queue])
+
   // Follow the current song when it moves (track change, jump, reorder).
   useEffect(() => {
     if (currentFile === seenFile.current) return

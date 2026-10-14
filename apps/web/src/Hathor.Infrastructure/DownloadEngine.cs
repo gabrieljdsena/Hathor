@@ -25,7 +25,7 @@ public sealed class YoutubeExplodeEngine(
     private readonly YoutubeClient _youtube = new();
     private string? _ffmpeg;
     private bool _ffmpegProbed;
-    private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromMinutes(5);
 
     public async Task<IReadOnlyList<VideoHitDto>> SearchAsync(
         string query, int limit, CancellationToken ct = default)
@@ -51,8 +51,14 @@ public sealed class YoutubeExplodeEngine(
                     v.Thumbnails.TryGetWithHighestResolution()?.Url ?? ""));
                 if (hits.Count >= clamped) break;
             }
+            // Size-counted: the shared cache has a SizeLimit, and entries
+            // without Size throw on Set (that once broke all searches).
             cache.Set(key, (IReadOnlyList<VideoHitDto>)hits,
-                new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = SearchCacheTtl });
+                new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = SearchCacheTtl,
+                    Size = 1,
+                });
             return hits;
         }
         catch (Exception ex)

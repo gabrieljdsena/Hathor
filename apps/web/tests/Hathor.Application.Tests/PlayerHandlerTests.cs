@@ -381,7 +381,7 @@ public sealed class ReplaceQueueBroadcastTests
         await hub.DidNotReceive().BroadcastStateAsync(
             Arg.Any<Guid>(), Arg.Any<Dtos.PlayerStateDto>(), Arg.Any<CancellationToken>());
         await hub.Received(1).BroadcastQueueAsync(
-            userId, Arg.Any<IReadOnlyList<Dtos.SongDto>>(), Arg.Any<CancellationToken>());
+            userId, Arg.Any<IReadOnlyList<Dtos.SongDto>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

@@ -78,7 +78,7 @@ function playerState(over: Partial<PlayerState>): PlayerState {
     source: null,
     isCustomQueue: false,
     firstPlay: true,
-    queueTotal: 0,
+    queueTotal: 0, queueVersion: 0,
     ...over,
   }
 }
@@ -141,6 +141,42 @@ describe('usePlayerHub', () => {
     expect(usePlayer.getState().currentSong?.file).toBe('new.mp3')
   })
 
+  it('keeps the held queue array when the broadcast version matches', () => {
+    const held = [{ ...song, file: 'held.mp3' }]
+    usePlayer.setState(playerState({ queue: held as Song[], queueTotal: 1, queueVersion: 7 }))
+    renderHook(() => usePlayerHub('user'))
+    const onState = handlers.get('PlaybackStateChanged')
+    // Same version, different array instance + flipped scalars: scalars
+    // apply, but the retained queue array must be untouched (no new MBs).
+    onState!(
+      playerState({
+        queue: [{ ...song, file: 'other.mp3' }] as Song[],
+        queueTotal: 1,
+        queueVersion: 7,
+        isPlaying: true,
+      }) as never,
+    )
+    expect(usePlayer.getState().isPlaying).toBe(true)
+    expect(usePlayer.getState().queue).toBe(held)
+  })
+
+  it('replaces the queue when the broadcast version moved', () => {
+    const held = [{ ...song, file: 'held.mp3' }]
+    usePlayer.setState(playerState({ queue: held as Song[], queueTotal: 1, queueVersion: 7 }))
+    renderHook(() => usePlayerHub('user'))
+    const onState = handlers.get('PlaybackStateChanged')
+    onState!(
+      playerState({
+        queue: [{ ...song, file: 'fresh.mp3' }] as Song[],
+        queueTotal: 1,
+        queueVersion: 8,
+      }) as never,
+    )
+    expect(usePlayer.getState().queue).toHaveLength(1)
+    expect(usePlayer.getState().queue[0].file).toBe('fresh.mp3')
+    expect(usePlayer.getState().queueVersion).toBe(8)
+  })
+
   it('stays disconnected when logged out', () => {
     renderHook(() => usePlayerHub(null))
     expect(mockBuild).not.toHaveBeenCalled()
@@ -170,3 +206,4 @@ describe('usePlayerHub', () => {
     await flight.catch(() => {})
   })
 })
+

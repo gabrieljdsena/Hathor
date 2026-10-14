@@ -192,20 +192,22 @@ public sealed class DapperSongReadModel(
         bool includeCover, CancellationToken ct = default)
     {
         // Queue DTOs may reference either library (mixed song+episode queues).
+        // RAM/IO: single-row date lookup (was: full-table scan per call, on
+        // every player-state mutation).
         if (storage.SongExists(userId, file))
         {
             var dto = metadata.Read(userId, file, includeCover);
-            var dates = await DateLookupAsync(userId, ct);
-            return dto with { DateDownload = dates.TryGetValue(file, out var d) ? d : null };
+            var date = await SongDateForFileAsync(userId, file, ct);
+            return dto with { DateDownload = date };
         }
         if (storage.PodcastExists(userId, file))
         {
             var dto = metadata.ReadPodcastFile(userId, file, includeCover);
-            var dates = await PodcastDateLookupAsync(userId, ct);
+            var date = await PodcastDateForFileAsync(userId, file, ct);
             return dto with
             {
                 IsPodcast = true,
-                DateDownload = dates.TryGetValue(file, out var d) ? d : null,
+                DateDownload = date,
             };
         }
         return null;
@@ -213,6 +215,13 @@ public sealed class DapperSongReadModel(
 
     public SongDto ReadLocalSong(Guid userId, string file) =>
         metadata.Read(userId, file, includeCover: false);
+
+    public (byte[] Bytes, string Mime, string Version)? ReadCover(Guid userId, string file)
+    {
+        // SongExists guards path traversal (bare filenames only).
+        if (!storage.SongExists(userId, file)) return null;
+        return SongMetadataReader.ReadCoverBytes(storage.SongPath(userId, file));
+    }
 
     // Batch resolve preserving input order, skipping missing files.
     // Cover-less DTOs come straight from the materialized columns (no file
@@ -222,7 +231,9 @@ public sealed class DapperSongReadModel(
     {
         var list = files.ToList();
         var rows = await SongRowsByFilesAsync(userId, list, ct);
-        var podcastDates = await PodcastDateLookupAsync(userId, ct);
+        // RAM/IO: scoped date lookup for the requested files only (was:
+        // full Podcasts table per call, on every player-state mutation).
+        var podcastDates = await PodcastDatesForFilesAsync(userId, list, ct);
         var result = new List<SongDto>(list.Count);
         var dirty = false;
         foreach (var file in list)
@@ -305,7 +316,25 @@ public sealed class DapperSongReadModel(
     }
 
     public async Task<IReadOnlyList<SongDto>> GetSongsByArtistAsync(
-        Guid userId, string artist, CancellationToken ct = default)
+        Guid userId, string artist, string? search = null, string? sort = null, string? dir = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default)
+    {
+        var ordered = OrderArtistView(await ArtistSongsFilteredAsync(userId, artist, search, ct), sort, dir);
+        return Page(ordered, page, pageSize);
+    }
+
+    public async Task<int> GetArtistSongCountAsync(
+        Guid userId, string artist, string? search = null, CancellationToken ct = default) =>
+        (await ArtistSongsFilteredAsync(userId, artist, search, ct)).Count;
+
+    public async Task<IReadOnlyList<string>> GetArtistFilesAsync(
+        Guid userId, string artist, string? search = null,
+        string? sort = null, string? dir = null, CancellationToken ct = default) =>
+        OrderArtistView(await ArtistSongsFilteredAsync(userId, artist, search, ct), sort, dir)
+            .Select(s => s.File).ToList();
+
+    private async Task<List<SongDto>> ArtistSongsFilteredAsync(
+        Guid userId, string artist, string? search, CancellationToken ct)
     {
         var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
             $"{factory.Quote("Artist")}, {factory.Quote("Album")}, {factory.Quote("Year")}, " +
@@ -327,8 +356,55 @@ public sealed class DapperSongReadModel(
             .Where(r => live.Contains(r.File))
             .Select(ToDto)
             .Where(s => string.Equals(s.Artist, artist, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(s => s.Album, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase)
+            .Where(s => MatchesSearch(s, search))
+            .ToList();
+    }
+
+    // Artist view order: explicit sort wins, otherwise the desktop
+    // Album+Title default (dir applies to both).
+    private static List<SongDto> OrderArtistView(List<SongDto> songs, string? sort, string? dir) =>
+        ApplyViewSort(songs, sort ?? "Album", dir ?? "asc",
+            (s => s.Album, s => s.Title));
+
+    // Album view order: explicit sort wins, otherwise the desktop
+    // Artist+Title default.
+    private static List<SongDto> OrderAlbumView(List<SongDto> songs, string? sort, string? dir) =>
+        ApplyViewSort(songs, sort ?? "Artist", dir ?? "asc",
+            (s => s.Artist, s => s.Title));
+
+    private static List<SongDto> ApplyViewSort(List<SongDto> songs, string sort, string dir,
+        (Func<SongDto, string> Primary, Func<SongDto, string> Secondary) textDefault)
+    {
+        var desc = string.Equals(dir, "desc", StringComparison.OrdinalIgnoreCase);
+        return (sort switch
+        {
+            "Title" => desc
+                ? songs.OrderByDescending(s => s.Title)
+                : songs.OrderBy(s => s.Title),
+            "Album" => desc
+                ? songs.OrderByDescending(s => s.Album).ThenByDescending(s => s.Title)
+                : songs.OrderBy(s => s.Album).ThenBy(s => s.Title),
+            "Artist" => desc
+                ? songs.OrderByDescending(s => s.Artist).ThenByDescending(s => s.Title)
+                : songs.OrderBy(s => s.Artist).ThenBy(s => s.Title),
+            "Duration" => desc
+                ? songs.OrderByDescending(s => s.Duration)
+                : songs.OrderBy(s => s.Duration),
+            "DateDownload" => desc
+                ? songs.OrderByDescending(s => s.DateDownload)
+                : songs.OrderBy(s => s.DateDownload),
+            _ => desc
+                ? songs.OrderByDescending(textDefault.Primary).ThenByDescending(textDefault.Secondary)
+                : songs.OrderBy(textDefault.Primary).ThenBy(textDefault.Secondary),
+        }).ToList();
+    }
+
+    // Null page/pageSize = whole list (legacy callers: rebuild-queue, sync).
+    private static IReadOnlyList<SongDto> Page(List<SongDto> ordered, int? page, int? pageSize)
+    {
+        if (page is null || pageSize is null) return ordered;
+        return ordered.Skip((Math.Max(page.Value, 1) - 1) * Math.Max(pageSize.Value, 1))
+            .Take(Math.Max(pageSize.Value, 1))
             .ToList();
     }
 
@@ -390,7 +466,25 @@ public sealed class DapperSongReadModel(
     }
 
     public async Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(
-        Guid userId, string album, CancellationToken ct = default)
+        Guid userId, string album, string? search = null, string? sort = null, string? dir = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default)
+    {
+        var ordered = OrderAlbumView(await AlbumSongsFilteredAsync(userId, album, search, ct), sort, dir);
+        return Page(ordered, page, pageSize);
+    }
+
+    public async Task<int> GetAlbumSongCountAsync(
+        Guid userId, string album, string? search = null, CancellationToken ct = default) =>
+        (await AlbumSongsFilteredAsync(userId, album, search, ct)).Count;
+
+    public async Task<IReadOnlyList<string>> GetAlbumFilesAsync(
+        Guid userId, string album, string? search = null,
+        string? sort = null, string? dir = null, CancellationToken ct = default) =>
+        OrderAlbumView(await AlbumSongsFilteredAsync(userId, album, search, ct), sort, dir)
+            .Select(s => s.File).ToList();
+
+    private async Task<List<SongDto>> AlbumSongsFilteredAsync(
+        Guid userId, string album, string? search, CancellationToken ct)
     {
         var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("Title")}, " +
             $"{factory.Quote("Artist")}, {factory.Quote("Album")}, {factory.Quote("Year")}, " +
@@ -412,40 +506,98 @@ public sealed class DapperSongReadModel(
             .Where(r => live.Contains(r.File))
             .Select(ToDto)
             .Where(s => string.Equals(s.Album, album, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(s => s.Artist, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase)
+            .Where(s => MatchesSearch(s, search))
             .ToList();
     }
 
-    private async Task<Dictionary<string, string?>> PodcastDateLookupAsync(Guid userId, CancellationToken ct)
+    // Ordered file names for queue building (same search/sort as ListAsync,
+    // no metadata reads): play-all without holding full Song[] lists.
+    public async Task<IReadOnlyList<string>> ListFilesAsync(
+        Guid userId, string? search, string? sort, string? dir, CancellationToken ct = default)
     {
-        // Quoted identifiers: Postgres folds unquoted names to lowercase
-        // while EF creates quoted PascalCase tables/columns.
-        var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("DateDownloadUtc")} " +
-            $"FROM {factory.Quote("Podcasts")} WHERE {factory.UserIdPredicate()}";
-        using var conn = factory.Create();
-        var rows = await conn.QueryAsync<(string File, DateTime DateDownloadUtc)>(
-            new CommandDefinition(sql,
-                new { UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId) },
-                cancellationToken: ct));
-        var lookup = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var r in rows)
-            lookup[r.File] = Domain.UtcIso.Format(r.DateDownloadUtc);
-        return lookup;
+        var byFile = (await SongRowsAsync(userId, ct))
+            .ToDictionary(r => r.File, StringComparer.OrdinalIgnoreCase);
+        var live = storage.ListSongFiles(userId);
+        var songs = new List<SongDto>();
+        foreach (var file in live)
+        {
+            SongDto dto;
+            if (byFile.TryGetValue(file, out var row))
+            {
+                dto = ToDto(row);
+            }
+            else
+            {
+                try { dto = metadata.Read(userId, file, includeCover: false); }
+                catch { continue; }
+            }
+            if (!MatchesSearch(dto, search)) continue;
+            songs.Add(dto);
+        }
+        return Sort(songs, sort ?? "Title", dir ?? "asc").Select(s => s.File).ToList();
     }
 
-    private async Task<Dictionary<string, string?>> DateLookupAsync(Guid userId, CancellationToken ct)
+    // Scoped date lookups: single-row / requested-files-only. The previous
+    // full-table scans ran on every player-state mutation (each toggle,
+    // seek, volume change resolves current + full queue).
+    private async Task<string?> SongDateForFileAsync(Guid userId, string file, CancellationToken ct)
     {
-        var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("DateDownloadUtc")} " +
-            $"FROM {factory.Quote("Songs")} WHERE {factory.UserIdPredicate()}";
+        var sql = $"SELECT {factory.Quote("DateDownloadUtc")} " +
+            $"FROM {factory.Quote("Songs")} WHERE {factory.UserIdPredicate()} " +
+            $"AND {factory.Quote("File")} = @File LIMIT 1";
         using var conn = factory.Create();
-        var rows = await conn.QueryAsync<(string File, DateTime DateDownloadUtc)>(
+        var dt = await conn.QueryFirstOrDefaultAsync<DateTime?>(
             new CommandDefinition(sql,
-                new { UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId) },
+                new
+                {
+                    UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId),
+                    File = file,
+                },
                 cancellationToken: ct));
+        return dt is null ? null : Domain.UtcIso.Format(dt.Value);
+    }
+
+    private async Task<string?> PodcastDateForFileAsync(Guid userId, string file, CancellationToken ct)
+    {
+        var sql = $"SELECT {factory.Quote("DateDownloadUtc")} " +
+            $"FROM {factory.Quote("Podcasts")} WHERE {factory.UserIdPredicate()} " +
+            $"AND {factory.Quote("File")} = @File LIMIT 1";
+        using var conn = factory.Create();
+        var dt = await conn.QueryFirstOrDefaultAsync<DateTime?>(
+            new CommandDefinition(sql,
+                new
+                {
+                    UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId),
+                    File = file,
+                },
+                cancellationToken: ct));
+        return dt is null ? null : Domain.UtcIso.Format(dt.Value);
+    }
+
+    private async Task<Dictionary<string, string?>> PodcastDatesForFilesAsync(
+        Guid userId, IReadOnlyList<string> files, CancellationToken ct)
+    {
         var lookup = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var r in rows)
-            lookup[r.File] = Domain.UtcIso.Format(r.DateDownloadUtc);
+        // Song files simply match no rows — no need to pre-filter with
+        // File.Exists per file (that would be 10k syscalls per queue resolve).
+        if (files.Count == 0) return lookup;
+        using var conn = factory.Create();
+        foreach (var chunk in files.Chunk(500))
+        {
+            var names = chunk.Select((_, ix) => $"@f{ix}").ToArray();
+            var parameters = new DynamicParameters();
+            parameters.Add("UserId",
+                Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId));
+            for (var ix = 0; ix < chunk.Length; ix++)
+                parameters.Add($"f{ix}", chunk[ix]);
+            var sql = $"SELECT {factory.Quote("File")}, {factory.Quote("DateDownloadUtc")} " +
+                $"FROM {factory.Quote("Podcasts")} WHERE {factory.UserIdPredicate()} " +
+                $"AND {factory.Quote("File")} IN ({string.Join(",", names)})";
+            var rows = await conn.QueryAsync<(string File, DateTime DateDownloadUtc)>(
+                new CommandDefinition(sql, parameters, cancellationToken: ct));
+            foreach (var r in rows)
+                lookup[r.File] = Domain.UtcIso.Format(r.DateDownloadUtc);
+        }
         return lookup;
     }
 
@@ -511,11 +663,11 @@ public sealed class SongMetadataReader(ILibraryStorage storage, SongMetadataCach
             var year = tag.Tag.Year is 0 or > 2100 ? null : tag.Tag.Year.ToString();
             var genre = tag.Tag.FirstGenre?.Trim();
             string? cover = null;
-            if (includeCover && tag.Tag.Pictures is { Length: > 0 } pics)
+            if (includeCover)
             {
-                var pic = pics[0];
-                var mime = string.IsNullOrWhiteSpace(pic.MimeType) ? "image/jpeg" : pic.MimeType;
-                cover = $"data:{mime};base64,{Convert.ToBase64String(pic.Data.Data)}";
+                var art = ReadCoverBytes(path);
+                if (art is not null)
+                    cover = $"data:{art.Value.Mime};base64,{Convert.ToBase64String(art.Value.Bytes)}";
             }
             dto = dto with
             {
@@ -533,6 +685,27 @@ public sealed class SongMetadataReader(ILibraryStorage storage, SongMetadataCach
             // Corrupt/unreadable file → filename defaults (desktop except-pass equivalent).
         }
         return dto;
+    }
+
+    // Raw embedded art for the /cover endpoints: bytes + mime + a version
+    // stamp (size + mtime ticks) for ETag/browser caching. Null when the
+    // file is missing, unreadable, or has no pictures.
+    public static (byte[] Bytes, string Mime, string Version)? ReadCoverBytes(string path)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            using var tag = TagLib.File.Create(path);
+            if (tag.Tag.Pictures is not { Length: > 0 } pics) return null;
+            var pic = pics[0];
+            var mime = string.IsNullOrWhiteSpace(pic.MimeType) ? "image/jpeg" : pic.MimeType;
+            var info = new FileInfo(path);
+            return (pic.Data.Data, mime, $"{info.Length}-{info.LastWriteTimeUtc.Ticks}");
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
 
@@ -568,7 +741,21 @@ public sealed class SongMetadataCache
     {
         var info = Stat(path);
         if (info is null) return;
-        if (_entries.Count > 20000) _entries.Clear();
+        // RAM: cap 500 entries (rowed files resolve from DB anyway; this
+        // only saves TagLib re-opens for unrowed/legacy files and the
+        // current-song resolve). Slower worst case, flat memory.
+        // Evict a small batch instead of Clear() to avoid a thundering
+        // TagLib re-read burst right after the flush.
+        if (_entries.Count >= 500)
+        {
+            var removed = 0;
+            foreach (var key in _entries.Keys)
+            {
+                if (removed >= 50) break;
+                _entries.TryRemove(key, out _);
+                removed++;
+            }
+        }
         _entries[path] = new Entry(dto, info.Value.Size, info.Value.MtimeUtc);
     }
 
@@ -703,14 +890,43 @@ public sealed class LocalLibraryStorage : ILibraryStorage
             .Select(Path.GetFileName)
             .FirstOrDefault(f => f is not null);
 
-    public async Task<string> SaveBackgroundAsync(Guid userId, byte[] bytes,
+    // Streamed background upload (10 MB cap enforced during the copy so
+    // a hostile Content-Length can't buffer arbitrarily): stage to temp,
+    // then swap into place. Over-cap streams delete the partial file.
+    public async Task<string> SaveBackgroundFromStreamAsync(Guid userId, Stream content,
         string contentType, CancellationToken ct = default)
     {
+        const long MaxBytes = 10 * 1024 * 1024;
         var dir = BackgroundsDir(userId);
-        foreach (var f in Directory.EnumerateFiles(dir)) File.Delete(f);
         var ext = BackgroundExtensions.TryGetValue(contentType, out var e) ? e : ".jpg";
         var name = "background" + ext;
-        await File.WriteAllBytesAsync(Path.Combine(dir, name), bytes, ct);
+        var tmp = Path.Combine(dir, $"background.tmp-{Guid.NewGuid():N}{ext}");
+        try
+        {
+            await using var dest = File.Create(tmp);
+            var buffer = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = await content.ReadAsync(buffer, ct)) > 0)
+            {
+                total += read;
+                if (total > MaxBytes)
+                    throw new InvalidOperationException("Image must be non-empty and under 10 MB.");
+                await dest.WriteAsync(buffer.AsMemory(0, read), ct);
+            }
+            if (total == 0)
+                throw new InvalidOperationException("An image file is required.");
+            await dest.FlushAsync(ct);
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch { }
+            throw;
+        }
+        foreach (var f in Directory.EnumerateFiles(dir))
+            if (!string.Equals(f, tmp, StringComparison.OrdinalIgnoreCase))
+                File.Delete(f);
+        File.Move(tmp, Path.Combine(dir, name), overwrite: true);
         return name;
     }
 

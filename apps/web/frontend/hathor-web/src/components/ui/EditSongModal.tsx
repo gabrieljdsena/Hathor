@@ -36,20 +36,9 @@ export default function EditSongModal({
   const [queued, setQueued] = useState<PendingEdit | null>(null)
   const [discarding, setDiscarding] = useState(false)
 
-  // Lazy-load full cover when the row only carried a thumb-less entry.
-  useEffect(() => {
-    if (cover) return
-    let cancelled = false
-    const load = song.isPodcast ? api.podcastDetails(song.file) : api.song(song.file, true)
-    load
-      .then((full) => {
-        if (!cancelled && full.coverArt) setCover(full.coverArt)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [cover, song.file, song.isPodcast])
+  // NOTE: no lazy base64 fetch here — the preview falls back to the
+  // browser-cached /cover URL when `cover` is null, and submitting null
+  // means "keep existing" server-side, so unchanged art needs no bytes.
 
   // A stashed edit for this file (saved while it played) prefills the
   // form so the queued payload itself is editable; saving overwrites it.
@@ -85,12 +74,43 @@ export default function EditSongModal({
 
   const pickFile = (file: File | undefined) => {
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      setCover(typeof e.target?.result === 'string' ? e.target.result : null)
-      setCoverRemoved(false)
+    // RAM: downscale huge phone photos to max 800px JPEG before holding
+    // the data URL in state (a 12MP upload is ~5-8MB base64 otherwise).
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const MAX = 800
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height))
+        if (scale >= 1) {
+          const reader = new FileReader()
+          reader.onload = (e) => {
+            setCover(typeof e.target?.result === 'string' ? e.target.result : null)
+            setCoverRemoved(false)
+          }
+          reader.readAsDataURL(file)
+        } else {
+          const canvas = document.createElement('canvas')
+          canvas.width = Math.round(img.width * scale)
+          canvas.height = Math.round(img.height * scale)
+          canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+          setCover(canvas.toDataURL('image/jpeg', 0.82))
+          setCoverRemoved(false)
+        }
+      } finally {
+        URL.revokeObjectURL(url)
+      }
     }
-    reader.readAsDataURL(file)
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        setCover(typeof e.target?.result === 'string' ? e.target.result : null)
+        setCoverRemoved(false)
+      }
+      reader.readAsDataURL(file)
+    }
+    img.src = url
   }
 
   const submit = async (e: FormEvent) => {
@@ -192,7 +212,7 @@ export default function EditSongModal({
 
         <div className="flex items-center gap-4 bg-white/[0.04] p-3 rounded-xl border border-white/[0.08]">
           <CoverArt
-            src={coverRemoved ? null : cover}
+            src={coverRemoved ? null : (cover ?? api.coverUrl(song.file, null, song.isPodcast))}
             alt="Cover preview"
             className="w-16 h-16 rounded-lg flex-shrink-0"
           />

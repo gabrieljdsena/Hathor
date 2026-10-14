@@ -30,7 +30,12 @@ public sealed record PlayerStateDto(
     QueueSourceDto? Source,
     bool IsCustomQueue,
     bool FirstPlay,
-    int QueueTotal = 0);
+    int QueueTotal = 0,
+    // Monotonic per user, bumped on every queue-structure change (replace,
+    // add, next, reorder, jump, clear, advance, rewind, rebuild). Tabs skip
+    // re-retaining the queue array when it matches — slower convergence,
+    // flat memory. Resets on service restart (tabs reconverge via refresh).
+    int QueueVersion = 0);
 
 public sealed record NowPlayingDto(
     string? Title,
@@ -38,6 +43,10 @@ public sealed record NowPlayingDto(
     string? CoverUrl,
     double PositionSec,
     double? DurationSec);
+
+// Raw cover bytes for the /cover endpoints (browser-cached by ETag, so
+// base64 art never sits in the tab's JS heap).
+public sealed record SongCoverDto(byte[] Bytes, string Mime, string Version);
 
 public sealed record AuthTokensDto(string AccessToken, string RefreshToken, string Username);
 

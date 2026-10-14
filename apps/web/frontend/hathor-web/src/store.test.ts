@@ -67,7 +67,7 @@ describe('boot (page refresh)', () => {
       source: null,
       isCustomQueue: false,
       firstPlay: true,
-      queueTotal: 0,
+      queueTotal: 0, queueVersion: 0,
       ...over,
     }
   }
@@ -135,7 +135,7 @@ describe('playSong failure', () => {
       source: null,
       isCustomQueue: false,
       firstPlay: true,
-      queueTotal: 0,
+      queueTotal: 0, queueVersion: 0,
       ...over,
     }
   }
@@ -284,7 +284,7 @@ describe('autoAdvance instant-death breaker', () => {
       source: null,
       isCustomQueue: false,
       firstPlay: true,
-      queueTotal: 0,
+      queueTotal: 0, queueVersion: 0,
       ...over,
     }
   }
@@ -343,3 +343,4 @@ describe('autoAdvance instant-death breaker', () => {
     expect(usePlayer.getState().isPlaying).toBe(false)
   })
 })
+

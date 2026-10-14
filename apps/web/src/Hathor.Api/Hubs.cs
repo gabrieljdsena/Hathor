@@ -53,8 +53,9 @@ public sealed class SignalRPlaybackHub(
     public Task BroadcastStateAsync(Guid userId, PlayerStateDto state, CancellationToken ct = default) =>
         player.Clients.Group($"user:{userId}").SendAsync("PlaybackStateChanged", state, ct);
 
-    public Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue, CancellationToken ct = default) =>
-        player.Clients.Group($"user:{userId}").SendAsync("QueueUpdated", queue, ct);
+    public Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue,
+        int queueVersion = 0, CancellationToken ct = default) =>
+        player.Clients.Group($"user:{userId}").SendAsync("QueueUpdated", queue, queueVersion, ct);
 
     // Staged progress (0→90 download, 90 finished, 95 metadata, 100 done).
     public Task BroadcastDownloadAsync(Guid userId, DownloadJobDto job, CancellationToken ct = default) =>

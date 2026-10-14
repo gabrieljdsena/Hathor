@@ -26,15 +26,49 @@ export default function PlaylistFormModal({
 
   const pickFile = (file: File | undefined) => {
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      if (typeof e.target?.result === 'string') {
-        setCover(e.target.result)
-        setCoverTouched(true)
-        setCoverRemoved(false)
+    // RAM: downscale huge uploads to max 800px JPEG (see EditSongModal).
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const MAX = 800
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height))
+        if (scale >= 1) {
+          const reader = new FileReader()
+          reader.onload = (e) => {
+            if (typeof e.target?.result === 'string') {
+              setCover(e.target.result)
+              setCoverTouched(true)
+              setCoverRemoved(false)
+            }
+          }
+          reader.readAsDataURL(file)
+        } else {
+          const canvas = document.createElement('canvas')
+          canvas.width = Math.round(img.width * scale)
+          canvas.height = Math.round(img.height * scale)
+          canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+          setCover(canvas.toDataURL('image/jpeg', 0.82))
+          setCoverTouched(true)
+          setCoverRemoved(false)
+        }
+      } finally {
+        URL.revokeObjectURL(url)
       }
     }
-    reader.readAsDataURL(file)
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        if (typeof e.target?.result === 'string') {
+          setCover(e.target.result)
+          setCoverTouched(true)
+          setCoverRemoved(false)
+        }
+      }
+      reader.readAsDataURL(file)
+    }
+    img.src = url
   }
 
   const submit = async (e: FormEvent) => {

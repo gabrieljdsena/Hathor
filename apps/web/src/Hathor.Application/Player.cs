@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
 using Hathor.Domain.Playback;
@@ -6,6 +7,21 @@ using Hathor.Application.Metadata;
 using MediatR;
 
 namespace Hathor.Application.Player;
+
+// In-memory per-user queue version (see PlayerStateDto.QueueVersion):
+// bumped on every queue-structure change so tabs can skip re-retaining
+// the queue array when it matches. Plain memory (no migration): resets
+// on service restart, and tabs reconverge via boot refresh + the
+// reconnect handler. Slightly slower convergence for passive tabs,
+// flat memory.
+internal static class QueueVersions
+{
+    private static readonly ConcurrentDictionary<Guid, int> Versions = new();
+    public static int Current(Guid userId) =>
+        Versions.TryGetValue(userId, out var v) ? v : 0;
+    public static int Bump(Guid userId) =>
+        Versions.AddOrUpdate(userId, 1, (_, v) => v + 1);
+}
 
 // Queries/commands backing §4 Playback endpoints. Backend is the source of
 // truth; every mutation broadcasts state so web UI and external remotes converge.
@@ -137,7 +153,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
             await playback.SaveChangesAsync(ct);
             var converged = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
             await hub.BroadcastStateAsync(cmd.UserId, converged, ct);
-            await hub.BroadcastQueueAsync(cmd.UserId, converged.Queue, ct);
+            await hub.BroadcastQueueAsync(cmd.UserId, converged.Queue, converged.QueueVersion, ct);
             return converged;
         }
 
@@ -166,6 +182,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
                 // Podcast-ness resolves per file so mixed queues stay correct.
                 var resolved = await songs.GetByFileAsync(cmd.UserId, next, includeCover: false, ct);
                 state.StartPlaying(next, resolved?.IsPodcast ?? false, now);
+                QueueVersions.Bump(cmd.UserId); // advance consumed the head
                 if (!state.CurrentIsPodcast)
                     PlayerEvents.RaiseSongPlayed(cmd.UserId, next, state.CurrentPlaylistId);
             }
@@ -183,7 +200,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -200,12 +217,13 @@ public sealed class PrevHandler(IPlaybackStateRepository playback, ISongReadMode
         {
             var resolved = await songs.GetByFileAsync(cmd.UserId, prev, includeCover: false, ct);
             state.StartPlaying(prev, resolved?.IsPodcast ?? false, DateTime.UtcNow);
+            QueueVersions.Bump(cmd.UserId); // rewind reinserted the head
         }
         await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -309,9 +327,11 @@ public sealed class PlayerPrefsHandler(
         var state = await playback.GetOrCreateAsync(userId, ct);
         apply(state);
         await playback.SaveChangesAsync(ct);
+        // broadcastQueue callers (shuffle on/off) reorder NextFiles.
+        if (broadcastQueue) QueueVersions.Bump(userId);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, userId, ct);
         await hub.BroadcastStateAsync(userId, dto, ct);
-        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
+        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -480,10 +500,13 @@ public sealed class QueueHandler(
     private async Task<PlayerStateDto> SaveAndBroadcast(Guid userId, PlaybackState state, CancellationToken ct, bool broadcastState = true, bool broadcastQueue = false)
     {
         await playback.SaveChangesAsync(ct);
+        // Every queue-command caller mutates NextFiles (replace, add,
+        // play-next, clear, remove, reorder, jump).
+        QueueVersions.Bump(userId);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, userId, ct);
         if (broadcastState)
             await hub.BroadcastStateAsync(userId, dto, ct);
-        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
+        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -495,7 +518,10 @@ public static class PlayerHelpers
     {
         SongDto? current = null;
         if (state.CurrentFile is not null)
-            current = await songs.GetByFileAsync(userId, state.CurrentFile, includeCover: true, ct);
+            // Cover-less: art travels via the browser-cached /cover endpoint
+            // (PlayerBar/NowPlaying fall back to it); attaching base64 here
+            // put megabytes on every state response + broadcast.
+            current = await songs.GetByFileAsync(userId, state.CurrentFile, includeCover: false, ct);
 
         // One batched resolve (single date lookup) instead of per-file
         // queries — full-library queues would otherwise cost 1000+ DB
@@ -515,7 +541,8 @@ public static class PlayerHelpers
             current, state.IsPlaying, position,
             state.Volume, state.Shuffle, state.Repeat, queue,
             state.Source is null ? null : new QueueSourceDto(state.Source.Type, state.Source.Id),
-            state.IsCustomQueue, state.FirstPlay, state.NextFiles.Count);
+            state.IsCustomQueue, state.FirstPlay, state.NextFiles.Count,
+            QueueVersions.Current(userId));
     }
 }
 

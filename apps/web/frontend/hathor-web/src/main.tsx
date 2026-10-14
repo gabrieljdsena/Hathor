@@ -18,6 +18,12 @@ const queryClient = new QueryClient({
         return count < 1
       },
       staleTime: 15_000,
+      // RAM: drop unused query data fast (default gcTime is 5 min — a
+      // whole-library ['songs','all'] entry + per-artist/album lists would
+      // linger long after unmount). 60s keeps back-nav instant, not GBs.
+      gcTime: 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     },
   },
 })

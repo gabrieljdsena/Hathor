@@ -31,7 +31,7 @@ public sealed class SyncDeltaTests
         public string PodcastPath(Guid u, string f) => f;
         public bool PodcastExists(Guid u, string f) => false;
         public string? FindBackground(Guid u) => null;
-        public Task<string> SaveBackgroundAsync(Guid u, byte[] b, string c, CancellationToken ct = default) =>
+        public Task<string> SaveBackgroundFromStreamAsync(Guid u, Stream s, string c, CancellationToken ct = default) =>
             Task.FromResult("");
         public Task DeleteBackgroundAsync(Guid u, CancellationToken ct = default) => Task.CompletedTask;
         public string BackgroundPath(Guid u, string f) => f;

@@ -19,8 +19,41 @@ public sealed class PodcastsController(
 {
     [HttpGet]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
-    public async Task<ActionResult<IReadOnlyList<SongDto>>> List(CancellationToken ct) =>
-        Ok(await mediator.Send(new ListPodcastsQuery(CurrentUserId()), ct));
+    public async Task<ActionResult<IReadOnlyList<SongDto>>> List(
+        [FromQuery] string? search, [FromQuery] long? tagId,
+        [FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(new ListPodcastsQuery(CurrentUserId(), search, tagId, page, pageSize), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("count")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public async Task<ActionResult<int>> Count([FromQuery] string? search, [FromQuery] long? tagId, CancellationToken ct) =>
+        Ok(await mediator.Send(new PodcastCountQuery(CurrentUserId(), search, tagId), ct));
+
+    // Ordered file names for queue building. Declared before {file} so the
+    // literal wins over the file parameter.
+    [HttpGet("files")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public async Task<ActionResult<IReadOnlyList<string>>> Files(
+        [FromQuery] string? search, [FromQuery] long? tagId, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(new PodcastFilesQuery(CurrentUserId(), search, tagId), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 
     [HttpGet("{file}")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
@@ -63,6 +96,32 @@ public sealed class PodcastsController(
         {
             return Conflict(new { message = "File is in use and could not be deleted." });
         }
+    }
+
+    // Embedded cover bytes for <img> (same shape/auth as song covers).
+    [HttpGet("{file}/cover")]
+    [AllowAnonymous]
+    public async Task<ActionResult> Cover(string file, [FromQuery] string? v, [FromQuery] string? token)
+    {
+        _ = v;
+        var userId = AuthenticatedUserId();
+        if (userId is null && !string.IsNullOrEmpty(token))
+        {
+            var principal = await tokens.ValidateAsync(token);
+            if (principal is not null &&
+                TokenValidator.SatisfiesLibraryRead(principal) &&
+                Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var tokenUser))
+                userId = tokenUser;
+        }
+        if (userId is null) return Unauthorized();
+        var cover = await mediator.Send(new GetPodcastCoverQuery(userId.Value, file));
+        if (cover is null) return NotFound();
+        var etag = $"\"{cover.Version}\"";
+        if (Request.Headers.IfNoneMatch.ToString().Contains(etag, StringComparison.Ordinal))
+            return StatusCode(StatusCodes.Status304NotModified);
+        Response.Headers.ETag = etag;
+        Response.Headers.CacheControl = "public, max-age=3600, must-revalidate";
+        return File(cover.Bytes, cover.Mime);
     }
 
     // Byte-range streaming with the same header-or-?token= auth as songs.

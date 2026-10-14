@@ -187,7 +187,7 @@ public sealed class GetDeltaHandler(ISyncService sync)
         sync.GetDeltaAsync(q.UserId, q.Cursor, ct);
 }
 
-public sealed record SaveSyncFileCommand(Guid UserId, string File, bool IsPodcast, byte[] Bytes)
+public sealed record SaveSyncFileCommand(Guid UserId, string File, bool IsPodcast, Stream Content)
     : IRequest<bool>;
 
 public sealed class SaveSyncFileHandler(ISyncService sync)
@@ -195,7 +195,7 @@ public sealed class SaveSyncFileHandler(ISyncService sync)
 {
     public async Task<bool> Handle(SaveSyncFileCommand cmd, CancellationToken ct)
     {
-        await sync.SaveFileAsync(cmd.UserId, cmd.File, cmd.IsPodcast, cmd.Bytes, ct);
+        await sync.SaveFileFromStreamAsync(cmd.UserId, cmd.File, cmd.IsPodcast, cmd.Content, ct);
         return true;
     }
 }

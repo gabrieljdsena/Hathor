@@ -45,15 +45,39 @@ export function usePlayerHub(username: string | null) {
           // back to the old song — skip it. Genuine remote changes arriving
           // with no local flight in progress always apply.
           if (hasInflightTransport()) return
-          usePlayer.setState(state)
+          // RAM: the queue array is the fattest retained structure (full
+          // library on play-all). When its version matches what we hold,
+          // apply scalars only and keep our array — no new retained MBs.
+          // A version mismatch (reorder, jump, advance elsewhere) or a
+          // version reset (service restart) applies the whole state.
+          const held = usePlayer.getState()
+          if (
+            typeof state.queueVersion === 'number' &&
+            state.queueVersion === held.queueVersion &&
+            state.queueVersion !== 0
+          ) {
+            const { queue: _dropped, queueTotal: _same, ...scalars } = state
+            void _dropped
+            void _same
+            usePlayer.setState(scalars)
+          } else {
+            usePlayer.setState(state)
+          }
           usePlayer.getState().syncAudio()
         } catch {
           /* a bad payload must never break the socket */
         }
       })
-      built.on('QueueUpdated', (queue: Song[]) => {
+      // QueueUpdated carries the version as a second arg (old servers send
+      // one arg — then the version is unknown and the array applies, which
+      // also reconverges after a service restart reset it to 0).
+      built.on('QueueUpdated', (queue: Song[], version?: number) => {
         try {
-          if (Array.isArray(queue)) usePlayer.setState({ queue })
+          if (Array.isArray(queue)) {
+            usePlayer.setState(
+              typeof version === 'number' ? { queue, queueVersion: version } : { queue },
+            )
+          }
         } catch {
           /* ignore */
         }

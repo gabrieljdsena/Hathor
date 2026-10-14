@@ -20,8 +20,40 @@ public sealed class LibraryController(IMediator mediator) : ControllerBase
         Ok(await mediator.Send(new ListArtistsQuery(CurrentUserId()), ct));
 
     [HttpGet("artists/{name}/songs")]
-    public async Task<ActionResult<IReadOnlyList<SongDto>>> ArtistSongs(string name, CancellationToken ct) =>
-        Ok(await mediator.Send(new ArtistSongsQuery(CurrentUserId(), name), ct));
+    public async Task<ActionResult<IReadOnlyList<SongDto>>> ArtistSongs(
+        string name, [FromQuery] string? search, [FromQuery] string? sort, [FromQuery] string? dir,
+        [FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(
+                new ArtistSongsQuery(CurrentUserId(), name, search, sort, dir, page, pageSize), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("artists/{name}/songs/count")]
+    public async Task<ActionResult<int>> ArtistSongsCount(
+        string name, [FromQuery] string? search, CancellationToken ct) =>
+        Ok(await mediator.Send(new ArtistSongCountQuery(CurrentUserId(), name, search), ct));
+
+    [HttpGet("artists/{name}/files")]
+    public async Task<ActionResult<IReadOnlyList<string>>> ArtistFiles(
+        string name, [FromQuery] string? search,
+        [FromQuery] string? sort, [FromQuery] string? dir, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(new ArtistFilesQuery(CurrentUserId(), name, search, sort, dir), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 
     // Artist portrait for the detail header (iTunes 600x600, exact-match
     // preference). 404 → client shows the music-note fallback.
@@ -37,8 +69,40 @@ public sealed class LibraryController(IMediator mediator) : ControllerBase
         Ok(await mediator.Send(new ListAlbumsQuery(CurrentUserId()), ct));
 
     [HttpGet("albums/{title}/songs")]
-    public async Task<ActionResult<IReadOnlyList<SongDto>>> AlbumSongs(string title, CancellationToken ct) =>
-        Ok(await mediator.Send(new AlbumSongsQuery(CurrentUserId(), title), ct));
+    public async Task<ActionResult<IReadOnlyList<SongDto>>> AlbumSongs(
+        string title, [FromQuery] string? search, [FromQuery] string? sort, [FromQuery] string? dir,
+        [FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(
+                new AlbumSongsQuery(CurrentUserId(), title, search, sort, dir, page, pageSize), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("albums/{title}/songs/count")]
+    public async Task<ActionResult<int>> AlbumSongsCount(
+        string title, [FromQuery] string? search, CancellationToken ct) =>
+        Ok(await mediator.Send(new AlbumSongCountQuery(CurrentUserId(), title, search), ct));
+
+    [HttpGet("albums/{title}/files")]
+    public async Task<ActionResult<IReadOnlyList<string>>> AlbumFiles(
+        string title, [FromQuery] string? search,
+        [FromQuery] string? sort, [FromQuery] string? dir, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(new AlbumFilesQuery(CurrentUserId(), title, search, sort, dir), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 
     // Album cover for the detail header (artist disambiguates same-name
     // albums). 404 → client shows the music-note fallback.

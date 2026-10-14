@@ -54,7 +54,9 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 builder.Services.AddOpenApi();
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
-builder.Services.AddMemoryCache();
+// RAM: bound the process-wide cache (idempotency DTOs hold full player
+// state). Entries must set Size — see PlayerController.
+builder.Services.AddMemoryCache(options => options.SizeLimit = 1024);
 
 builder.Services.AddHathorInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<IPlaybackHub, SignalRPlaybackHub>();

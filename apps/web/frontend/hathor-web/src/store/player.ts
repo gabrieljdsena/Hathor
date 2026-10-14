@@ -45,6 +45,10 @@ interface PlayerStore extends PlayerState {
   refresh: () => Promise<void>
   boot: () => Promise<void>
   playSong: (song: Song, context: Song[], source: QueueSource | null) => Promise<void>
+  // Infinite-scroll play flow: the full Song[] list is never materialized —
+  // only ordered file names (see the */files endpoints). Same transport
+  // semantics as playSong.
+  playSongByFiles: (song: Song, files: string[], source: QueueSource | null) => Promise<void>
   toggle: () => Promise<void>
   syncAudio: () => void
   // Volume normalization (client-side leveling): browser-local only, never
@@ -331,6 +335,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   isCustomQueue: false,
   firstPlay: true,
   queueTotal: 0,
+  queueVersion: 0,
   normalize: loadNormalize(),
   chapterSkip: loadChapterSkip(),
 
@@ -432,6 +437,32 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       // A newer click already moved on: anything below names a stale track
       // and must never overwrite the store or reload the engine (that is
       // what kept resurrecting old songs between every new one).
+      if (!isCurrentTransport(gen)) return
+      const state = await api.play(song.file, song.isPodcast)
+      if (!isCurrentTransport(gen)) return
+      set(state)
+      syncEngine(state)
+    } catch (e) {
+      if (!isCurrentTransport(gen)) return
+      await get()
+        .refresh()
+        .catch(() => {})
+      throw e
+    } finally {
+      releaseTransport()
+    }
+  },
+
+  playSongByFiles: async (song, files, source) => {
+    // Same contract as playSong, but the queue context arrives as ordered
+    // file names (infinite scroll never holds the full Song[] list).
+    // The clicked song object still drives the optimistic UI + engine load.
+    engine.ensureContext()
+    engine.load(toTrack(song), true)
+    set({ currentSong: song, isPlaying: true })
+    const gen = claimTransport()
+    try {
+      await api.setQueueFiles(song.file, files, source)
       if (!isCurrentTransport(gen)) return
       const state = await api.play(song.file, song.isPodcast)
       if (!isCurrentTransport(gen)) return

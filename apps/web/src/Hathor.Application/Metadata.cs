@@ -142,6 +142,7 @@ public sealed class DeleteSongHandler(
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.NextFiles.RemoveAll(f => string.Equals(f, cmd.File, StringComparison.OrdinalIgnoreCase));
         state.PrevFiles.RemoveAll(f => string.Equals(f, cmd.File, StringComparison.OrdinalIgnoreCase));
+        Player.QueueVersions.Bump(cmd.UserId); // delete evicts queue entries
         if (string.Equals(state.CurrentFile, cmd.File, StringComparison.OrdinalIgnoreCase))
         {
             state.IsPlaying = false;
@@ -155,7 +156,7 @@ public sealed class DeleteSongHandler(
 
         var dto = await Player.PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return true;
     }
 }

@@ -73,12 +73,18 @@ public sealed class SyncController(IMediator mediator, ILibraryStorage storage) 
         if (string.IsNullOrWhiteSpace(file) || Path.GetFileName(file) != file
             || !file.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Only bare *.mp3 filenames are accepted." });
-        using var body = new MemoryStream();
-        await Request.Body.CopyToAsync(body, ct);
-        if (body.Length == 0)
+        if (Request.ContentLength == 0)
             return BadRequest(new { message = "Empty file body." });
+        // Streamed upload (no MemoryStream buffering).
         var isPodcast = library.Equals("podcasts", StringComparison.OrdinalIgnoreCase);
-        await mediator.Send(new SaveSyncFileCommand(CurrentUserId(), file, isPodcast, body.ToArray()), ct);
+        try
+        {
+            await mediator.Send(new SaveSyncFileCommand(CurrentUserId(), file, isPodcast, Request.Body), ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
         return Ok(new { file });
     }
 

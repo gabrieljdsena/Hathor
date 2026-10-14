@@ -11,11 +11,22 @@ public interface ISongReadModel
     Task<SongDto?> GetByFileAsync(Guid userId, string file, bool includeCover, CancellationToken ct = default);
     Task<IReadOnlyList<SongDto>> GetManyAsync(Guid userId, IEnumerable<string> files,
         bool includeCover, CancellationToken ct = default);
+    // Raw cover bytes + mime + version stamp (mtime/size) for the
+    // browser-cached /cover endpoint. Null when the file has no art.
+    (byte[] Bytes, string Mime, string Version)? ReadCover(Guid userId, string file);
     // Raw file metadata without DB (library scans).
     SongDto ReadLocalSong(Guid userId, string file);
     // Exact-metadata matches, desktop-sorted (artist view: Album+Title, album view: Artist+Title).
+    // Paging is opt-in (null = whole list, legacy callers); infinite scroll
+    // passes page/pageSize, queue building uses the Files variants.
     Task<IReadOnlyList<string>> GetArtistsAsync(Guid userId, CancellationToken ct = default);
-    Task<IReadOnlyList<SongDto>> GetSongsByArtistAsync(Guid userId, string artist, CancellationToken ct = default);
+    Task<IReadOnlyList<SongDto>> GetSongsByArtistAsync(Guid userId, string artist,
+        string? search = null, string? sort = null, string? dir = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default);
+    Task<int> GetArtistSongCountAsync(Guid userId, string artist, string? search = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetArtistFilesAsync(Guid userId, string artist, string? search = null,
+        string? sort = null, string? dir = null, CancellationToken ct = default);
     // Owned file for a title/artist pair (normalized MediaKeys match),
     // or null — drives the "already in your library?" download confirm.
     Task<string?> FindFileByMetadataAsync(Guid userId, string title, string? artist,
@@ -24,7 +35,17 @@ public interface ISongReadModel
     Task<IReadOnlyList<string>> GetFilesMissingLoudnessAsync(Guid userId, int limit,
         CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetAlbumsAsync(Guid userId, CancellationToken ct = default);
-    Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(Guid userId, string album, CancellationToken ct = default);
+    Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(Guid userId, string album,
+        string? search = null, string? sort = null, string? dir = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default);
+    Task<int> GetAlbumSongCountAsync(Guid userId, string album, string? search = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetAlbumFilesAsync(Guid userId, string album, string? search = null,
+        string? sort = null, string? dir = null, CancellationToken ct = default);
+    // Ordered file names only (same search/sort as ListAsync, no metadata
+    // reads): queue building for play-all without holding full Song[] lists.
+    Task<IReadOnlyList<string>> ListFilesAsync(Guid userId, string? search, string? sort, string? dir,
+        CancellationToken ct = default);
 }
 
 // Playlist read-model port (Dapper): lists + song counts for grids/submenus.
@@ -79,8 +100,10 @@ public interface ILibraryStorage
     string PodcastPath(Guid userId, string file);
     bool PodcastExists(Guid userId, string file);
     // Custom background image (desktop background_path): single file per user.
+    // Streamed upload (no byte[] buffering): the handler enforces the size
+    // cap, the implementation deletes stale files then moves into place.
     string? FindBackground(Guid userId);
-    Task<string> SaveBackgroundAsync(Guid userId, byte[] bytes, string contentType,
+    Task<string> SaveBackgroundFromStreamAsync(Guid userId, Stream content, string contentType,
         CancellationToken ct = default);
     Task DeleteBackgroundAsync(Guid userId, CancellationToken ct = default);
     string BackgroundPath(Guid userId, string file);
@@ -88,10 +111,18 @@ public interface ILibraryStorage
 
 // Podcast read-model port: lightweight list (DB titles + disk files,
 // no durations/covers until details) + full per-episode details.
+// Paging is opt-in (null = whole list, legacy callers).
 public interface IPodcastReadModel
 {
-    Task<IReadOnlyList<SongDto>> ListAsync(Guid userId, CancellationToken ct = default);
+    Task<IReadOnlyList<SongDto>> ListAsync(Guid userId, string? search = null, long? tagId = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default);
+    Task<int> CountAsync(Guid userId, string? search = null, long? tagId = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<string>> ListFilesAsync(Guid userId, string? search = null, long? tagId = null,
+        CancellationToken ct = default);
     Task<SongDto?> GetByFileAsync(Guid userId, string file, CancellationToken ct = default);
+    // Raw cover bytes + mime + version stamp (see ISongReadModel.ReadCover).
+    (byte[] Bytes, string Mime, string Version)? ReadCover(Guid userId, string file);
     // Raw file metadata without DB (library scans).
     SongDto ReadLocalEpisode(Guid userId, string file);
 }
@@ -113,8 +144,9 @@ public interface ISyncService
     Task<Application.Sync.SyncDelta> GetDeltaAsync(Guid userId, string cursor,
         CancellationToken ct = default);
     // Persist raw MP3 bytes pushed by a device (PUT /sync/files/{file}):
-    // writes to the shared library folder and upserts the catalog row.
-    Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
+    // streamed from the request body to the shared library folder (no
+    // MemoryStream buffering) and upserts the catalog row.
+    Task SaveFileFromStreamAsync(Guid userId, string file, bool isPodcast, Stream content,
         CancellationToken ct = default);
 }
 
@@ -152,7 +184,10 @@ public interface IMetadataWriter
 public interface IPlaybackHub
 {
     Task BroadcastStateAsync(Guid userId, PlayerStateDto state, CancellationToken ct = default);
-    Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue, CancellationToken ct = default);
+    // Extra SignalR args are ignored by old external clients, so the
+    // version rides along without breaking them.
+    Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue,
+        int queueVersion = 0, CancellationToken ct = default);
     Task BroadcastDownloadAsync(Guid userId, DownloadJobDto job, CancellationToken ct = default);
 }
 

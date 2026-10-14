@@ -84,7 +84,7 @@ function syncWith(over: Partial<PlayerState>) {
     source: null,
     isCustomQueue: false,
     firstPlay: false,
-    queueTotal: 0,
+    queueTotal: 0, queueVersion: 0,
     ...over,
   })
   usePlayer.getState().syncAudio()
@@ -177,7 +177,7 @@ describe('toggle during a fade', () => {
       source: null,
       isCustomQueue: false,
       firstPlay: false,
-      queueTotal: 0,
+      queueTotal: 0, queueVersion: 0,
     }
   }
 
@@ -212,3 +212,4 @@ describe('toggle during a fade', () => {
     expect(usePlayer.getState().isPlaying).toBe(true)
   })
 })
+
