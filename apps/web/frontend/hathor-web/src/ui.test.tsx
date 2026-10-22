@@ -49,20 +49,76 @@ describe('ToggleSwitch', () => {
 })
 
 describe('SortableHeader', () => {
+  const columns = [
+    { key: 'Title' as const, label: 'Song' },
+    { key: 'Album' as const, label: 'Album', hideOnMobile: true },
+    { key: 'Duration' as const, label: 'Duration' },
+    { key: 'DateDownload' as const, label: 'Added', hideOnMobile: true },
+  ]
+
   it('marks the active column with an arrow', () => {
     render(
       <SortableHeader
-        columns={[
-          { key: 'Title', label: 'Song' },
-          { key: 'Album', label: 'Album' },
-        ]}
+        columns={columns}
         sort="Title"
         dir="desc"
         onSort={() => {}}
-        gridClass="grid-cols-2"
+        gridClass="grid-cols-4"
       />,
     )
-    expect(screen.getByText('▼')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Song ▼' })).toBeInTheDocument()
+  })
+
+  it('offers every column in the mobile sort menu, including hidden ones', () => {
+    render(
+      <SortableHeader
+        columns={columns}
+        sort={null}
+        dir="asc"
+        onSort={() => {}}
+        gridClass="grid-cols-4"
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Sort' }))
+    for (const label of ['Song', 'Album', 'Duration', 'Added']) {
+      expect(screen.getByRole('menuitemradio', { name: label })).toBeInTheDocument()
+    }
+  })
+
+  it('selects a sort field and closes the menu', () => {
+    const onSort = vi.fn()
+    render(
+      <SortableHeader
+        columns={columns}
+        sort={null}
+        dir="asc"
+        onSort={onSort}
+        gridClass="grid-cols-4"
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Sort' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Album' }))
+    expect(onSort).toHaveBeenCalledWith('Album')
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('shows the active field and direction, and closes on Escape', () => {
+    render(
+      <SortableHeader
+        columns={columns}
+        sort="Title"
+        dir="desc"
+        onSort={() => {}}
+        gridClass="grid-cols-4"
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Sort: Song, descending' }))
+    expect(screen.getByRole('menuitemradio', { name: 'Song, descending' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 })
 

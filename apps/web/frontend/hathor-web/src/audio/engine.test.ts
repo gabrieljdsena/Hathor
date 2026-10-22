@@ -196,6 +196,18 @@ describe('AudioEngine transport', () => {
     expect(els[0].paused).toBe(false)
   })
 
+  it('restarts the same file only when explicitly asked', () => {
+    const { engine, els } = setup()
+    engine.load(track('a.mp3'), true)
+    els[0].currentTime = 42
+
+    engine.load(track('a.mp3'), true)
+    expect(els[0].currentTime).toBe(42)
+
+    engine.load(track('a.mp3'), true, true)
+    expect(els[0].currentTime).toBe(0)
+  })
+
   it('routes volume through the master gain', () => {
     const { engine, ctx } = setup()
     engine.load(track('a.mp3'), true)
@@ -561,6 +573,8 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     s.els[0].currentTime = 47 // stream cut out mid-track
     s.els[0].fireEnded()
     expect(ended).toEqual([])
+    // Recovery re-attaches on the retry timer, not synchronously.
+    await s.advance(500)
     expect(s.els[0].currentTime).toBe(3600)
     expect(s.els[0].paused).toBe(false)
     expect(s.engine.currentFile()).toBe('ep.mp3')
@@ -694,18 +708,26 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     const plays = s.els[0].plays
     s.els[0].currentTime = 9999 // glitch state before the error surfaces
     s.els[0].fireError()
+    expect(s.els[0].paused).toBe(true) // held during the retry backoff
+    await s.advance(500)
     expect(s.els[0].currentTime).toBe(5000)
     expect(s.els[0].plays).toBeGreaterThan(plays)
     expect(s.els[0].paused).toBe(false)
   })
 
-  it('gives up (pauses) after repeated failures instead of spinning', async () => {
+  it('keeps retrying transient failures instead of stranding the song', async () => {
     const s = playingThreeHourTrack()
     await s.advance(250)
-    for (let i = 0; i < 3; i += 1) s.els[0].fireError()
-    expect(s.els[0].paused).toBe(false)
-    s.els[0].fireError()
-    expect(s.els[0].paused).toBe(true)
+    // No three-strike cap: a flaky connection must keep trying while the
+    // store still says "playing" (the old cap left a silent dead player).
+    for (let i = 0; i < 5; i += 1) {
+      s.els[0].fireError()
+      expect(s.els[0].paused).toBe(true)
+      await s.advance(500 * 2 ** Math.min(i, 4))
+      expect(s.els[0].paused).toBe(false)
+    }
+    expect(s.els[0].plays).toBeGreaterThan(5)
+    expect(s.engine.currentFile()).toBe('ep.mp3')
   })
 
   it('rescues a frozen clock via the stall watchdog', async () => {
@@ -766,16 +788,23 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     expect(s.els[0].paused).toBe(false)
   })
 
-  it('gives up re-attaching after repeated loss', async () => {
+  it('keeps re-attaching a repeatedly lost stream with fresh URLs', async () => {
     const s = setup()
+    const fetched: string[] = []
+    s.engine.setStreamUrlProvider((file) => {
+      fetched.push(file)
+      return `http://x/${file}?v=${fetched.length}`
+    })
     s.engine.load(track('ep.mp3', true), true)
     s.els[0].duration = 10800
     await s.advance(250)
     for (let i = 0; i < 4; i += 1) {
       s.els[0].networkState = 3
       await s.advance(6000)
+      expect(s.els[0].paused).toBe(false)
     }
-    expect(s.els[0].paused).toBe(true)
+    expect(fetched.length).toBeGreaterThanOrEqual(4)
+    expect(s.els[0].src).toContain('?v=')
   })
   it('reports element errors with media details for debugging', async () => {
     const s = setup()
@@ -786,7 +815,7 @@ describe('AudioEngine long-track seeks (hours-long podcasts)', () => {
     await s.advance(250)
     s.els[0].error = { code: 4, message: 'src not supported' }
     s.els[0].fireError()
-    expect(reports.some((m) => m.includes('element error'))).toBe(true)
+    expect(reports.some((m) => m.includes('element fatal error'))).toBe(true)
     expect(reports.some((m) => m.includes('4:src not supported'))).toBe(true)
   })
 
@@ -850,6 +879,7 @@ describe('AudioEngine driftTarget (server correction caps)', () => {
     await s.advance(10)
     s.els[0].currentTime = 9999 // glitch state before the error surfaces
     s.els[0].fireError()
+    await s.advance(500) // retry timer re-attaches at the last good spot
     expect(s.els[0].currentTime).toBe(3600)
     expect(s.els[0].paused).toBe(false)
     // The server still names the poisoned target — drift must NOT jump
@@ -869,6 +899,7 @@ describe('AudioEngine driftTarget (server correction caps)', () => {
     await s.advance(10)
     s.els[0].currentTime = 9999
     s.els[0].fireError()
+    await s.advance(500)
     expect(s.els[0].currentTime).toBe(3600)
     // The user deliberately retries the same region: the ceiling lifts for
     // the new attempt. If it is truly unplayable it will stall, recover,
@@ -891,6 +922,7 @@ describe('AudioEngine driftTarget (server correction caps)', () => {
     await s.advance(10)
     s.els[0].currentTime = 9999
     s.els[0].fireError() // falls back to 3700, not the stale 3600
+    await s.advance(500)
     expect(s.els[0].currentTime).toBe(3700)
     expect(s.engine.driftTarget(9000, 10800)).toBeNull() // parked at the grown ceiling
     s.engine.seek(4000, false) // stranded mid-way by a system correction
@@ -908,6 +940,7 @@ describe('AudioEngine driftTarget (server correction caps)', () => {
     await s.advance(10)
     s.els[0].currentTime = 9999
     s.els[0].fireError() // recovery #1 -> back at 3600, still playing
+    await s.advance(500)
     expect(s.els[0].paused).toBe(false)
     for (let i = 1; i <= 10; i += 1) {
       s.els[0].currentTime = 3600 + i // healthy advance from the ceiling
@@ -915,9 +948,10 @@ describe('AudioEngine driftTarget (server correction caps)', () => {
       expect(s.engine.driftTarget(8000, 10800)).toBeNull()
       expect(s.els[0].paused).toBe(false)
     }
-    // Budget intact: a later genuine failure still recovers instead of
-    // finding an exhausted counter and pausing mid-episode.
+    // A later genuine failure still recovers instead of finding an
+    // exhausted counter and pausing mid-episode.
     s.els[0].fireError()
+    await s.advance(1000) // retry #2 backoff
     expect(s.els[0].paused).toBe(false)
     expect(s.engine.currentFile()).toBe('ep.mp3')
   })
@@ -926,7 +960,9 @@ describe('AudioEngine driftTarget (server correction caps)', () => {
     const s = playingThreeHourTrack()
     await s.advance(250)
     s.engine.seek(8000)
+    s.els[0].currentTime = 9999
     s.els[0].fireError()
+    await s.advance(500)
     // Parked at the ceiling: suppressed to a no-op, never 8000.
     expect(s.engine.driftTarget(8000, 10800)).toBeNull()
     s.engine.load(track('next.mp3', true), true)
@@ -952,16 +988,18 @@ describe('AudioEngine tail-stuck advance (unfinishable final bytes)', () => {
     const advanced: string[] = []
     s.engine.onTailStuck(() => advanced.push('tail'))
     await s.advance(250) // tick records lastGoodTime = 197
-    s.els[0].fireError() // recoveries #1-#3, still playing at the tail
-    s.els[0].fireError()
-    s.els[0].fireError()
-    expect(s.els[0].paused).toBe(false)
+    // Three bounded retries, then the strand is treated as finished.
+    for (let i = 0; i < 3; i += 1) {
+      s.els[0].fireError()
+      await s.advance(500 * 2 ** i)
+      expect(s.els[0].paused).toBe(false)
+    }
     s.els[0].fireError() // exhausted at 197/200: finished, not broken
     expect(advanced).toEqual(['tail'])
     expect(s.els[0].paused).toBe(true)
   })
 
-  it('still pauses on mid-track exhaustion (real content at stake)', async () => {
+  it('keeps retrying mid-track failures instead of pausing', async () => {
     const s = setup()
     const advanced: string[] = []
     s.engine.onTailStuck(() => advanced.push('tail'))
@@ -969,9 +1007,14 @@ describe('AudioEngine tail-stuck advance (unfinishable final bytes)', () => {
     s.els[0].duration = 10800
     s.els[0].currentTime = 3600
     await s.advance(250)
-    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    // Mid-track network failures are never treated as a finished track:
+    // unbounded retries keep real content from being abandoned.
+    for (let i = 0; i < 4; i += 1) {
+      s.els[0].fireError()
+      await s.advance(500 * 2 ** Math.min(i, 3))
+      expect(s.els[0].paused).toBe(false)
+    }
     expect(advanced).toEqual([])
-    expect(s.els[0].paused).toBe(true)
   })
 
   it('never advances a deliberately paused strand', async () => {
@@ -990,12 +1033,17 @@ describe('AudioEngine tail-stuck advance (unfinishable final bytes)', () => {
     const advanced: string[] = []
     s.engine.onTailStuck(() => advanced.push('tail'))
     await s.advance(250)
-    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    for (let i = 0; i < 3; i += 1) {
+      s.els[0].fireError()
+      await s.advance(500 * 2 ** i)
+    }
+    s.els[0].fireError()
     expect(advanced).toEqual(['tail'])
-    // Toggle-play retry inside the cooldown: pauses, does not advance again.
+    // Toggle-play retry inside the cooldown: parks, does not advance again.
     s.engine.play()
-    for (let i = 0; i < 4; i += 1) s.els[0].fireError()
+    s.els[0].fireError()
     expect(advanced).toEqual(['tail'])
+    expect(s.els[0].paused).toBe(true)
     // Past the cooldown a renewed strand advances again.
     await s.advance(31000)
     s.engine.play()
@@ -1003,15 +1051,17 @@ describe('AudioEngine tail-stuck advance (unfinishable final bytes)', () => {
     expect(advanced).toEqual(['tail', 'tail'])
   })
 
-  it('pauses (no advance) with unknown or tiny durations', async () => {
+  it('does not tail-advance unknown or tiny durations', async () => {
     const unknown = setup()
     const advancedUnknown: string[] = []
     unknown.engine.onTailStuck(() => advancedUnknown.push('tail'))
     unknown.engine.load(track('s.mp3'), true)
     unknown.els[0].duration = Number.NaN
     await unknown.advance(250)
-    for (let i = 0; i < 4; i += 1) unknown.els[0].fireError()
+    unknown.els[0].fireError()
+    await unknown.advance(500)
     expect(advancedUnknown).toEqual([])
+    expect(unknown.els[0].paused).toBe(false) // still retrying, not "finished"
 
     const tiny = setup()
     const advancedTiny: string[] = []
@@ -1020,9 +1070,12 @@ describe('AudioEngine tail-stuck advance (unfinishable final bytes)', () => {
     tiny.els[0].duration = 4
     tiny.els[0].currentTime = 3
     await tiny.advance(250)
-    for (let i = 0; i < 4; i += 1) tiny.els[0].fireError()
+    for (let i = 0; i < 4; i += 1) {
+      tiny.els[0].fireError()
+      await tiny.advance(500 * 2 ** Math.min(i, 3))
+    }
     expect(advancedTiny).toEqual([])
-    expect(tiny.els[0].paused).toBe(true)
+    expect(tiny.els[0].paused).toBe(false)
   })
 
   it('advances on cut-short exhaustion at the tail too', async () => {
@@ -1131,25 +1184,41 @@ describe('AudioEngine seek budget + unload re-attach', () => {
 
   it('grants a fresh budget on explicit user seeks', async () => {
     const s = playingThreeHourTrack()
+    const fatal: string[] = []
+    s.engine.onFatal((file) => fatal.push(file))
     await s.advance(250)
+    s.els[0].error = { code: 4, message: 'src not supported' }
     s.els[0].fireError() // recovery #1
+    await s.advance(500)
     s.els[0].fireError() // recovery #2
+    await s.advance(1000)
     // Dragging the slider back is deliberate intent: failures at the old
-    // spot must not instantly pause the new one.
+    // spot must not instantly exhaust the new one.
     s.engine.seek(100)
     await s.advance(250)
-    s.els[0].fireError() // would be #3 on the old budget — must still play
+    s.els[0].fireError() // fresh budget #1
+    await s.advance(500)
+    s.els[0].fireError() // fresh budget #2 — must still play
+    await s.advance(1000)
+    expect(fatal).toEqual([])
     expect(s.els[0].paused).toBe(false)
   })
 
   it('does not mint fresh budget on system (drift) seeks', async () => {
     const s = playingThreeHourTrack()
+    const fatal: string[] = []
+    s.engine.onFatal((file) => fatal.push(file))
     await s.advance(250)
-    s.els[0].fireError() // recovery #1
+    s.els[0].error = { code: 4, message: 'src not supported' }
+    s.els[0].fireError() // deterministic failure recovery #1
+    await s.advance(500)
     s.engine.seek(3600, false) // drift-style correction
     s.els[0].fireError() // recovery #2, not #1 again
+    await s.advance(1000)
     s.els[0].fireError() // recovery #3
-    s.els[0].fireError() // exhausted -> pauses (bounded, no spin)
+    await s.advance(2000)
+    s.els[0].fireError() // exhausted -> hand off instead of spinning
+    expect(fatal).toEqual(['ep.mp3'])
     expect(s.els[0].paused).toBe(true)
   })
 
@@ -1160,6 +1229,7 @@ describe('AudioEngine seek budget + unload re-attach', () => {
     s.els[0].networkState = 3
     s.els[0].src = ''
     s.els[0].fireError()
+    await s.advance(500)
     expect(s.els[0].src).toBe('http://x/ep.mp3')
     expect(s.els[0].currentTime).toBe(3600)
     expect(s.els[0].paused).toBe(false)

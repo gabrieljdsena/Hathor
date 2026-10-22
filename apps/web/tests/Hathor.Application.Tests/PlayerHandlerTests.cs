@@ -285,6 +285,104 @@ public sealed class PlayHandlerTests
     }
 }
 
+public sealed class PauseResumeHandlerTests
+{
+    private static (IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub, PlaybackState state)
+        Setup(string file, double duration, bool playing, double position)
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var state = new PlaybackState
+        {
+            UserId = Guid.NewGuid(),
+            CurrentFile = file,
+            FirstPlay = false,
+            IsPlaying = playing,
+            PositionOffsetSec = position,
+            PausePositionSec = position,
+            LastPlayUtc = DateTime.UtcNow,
+        };
+        playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(state);
+        songs.GetByFileAsync(Arg.Any<Guid>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new Dtos.SongDto(file, "Artist", "Title", "Album", "2026", duration, null, null));
+        songs.GetManyAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.SongDto>());
+        return (playback, songs, hub, state);
+    }
+
+    [Fact]
+    public async Task Pause_WithLocalPosition_PreservesTheSpotEvenWhenTheRetryLandsLate()
+    {
+        // The pause request originally failed; playback stayed running on the
+        // server for minutes. The retry carries the position from the click,
+        // so the user resumes where they paused instead of at the stale end.
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: true, position: 0);
+        state.LastPlayUtc = DateTime.UtcNow.AddMinutes(-10);
+
+        var dto = await new PauseHandler(playback, songs, hub)
+            .Handle(new PauseCommand(state.UserId, "s.mp3", 42.5), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeApproximately(42.5, 0.001);
+        state.PausePositionSec.Should().BeApproximately(42.5, 0.001);
+    }
+
+    [Fact]
+    public async Task Pause_WithMismatchedFile_DoesNotRewindATrackThatMovedOn()
+    {
+        var (playback, songs, hub, state) = Setup("next.mp3", 200, playing: true, position: 30);
+
+        var dto = await new PauseHandler(playback, songs, hub)
+            .Handle(new PauseCommand(state.UserId, "old.mp3", 10), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeApproximately(30, 0.5);
+    }
+
+    [Fact]
+    public async Task Pause_IsIdempotentAtTheSameSpot()
+    {
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: false, position: 50);
+
+        var dto = await new PauseHandler(playback, songs, hub)
+            .Handle(new PauseCommand(state.UserId, "s.mp3", 50), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeApproximately(50, 0.001);
+    }
+
+    [Fact]
+    public async Task Resume_WhenPaused_ResumesFromTheStoredSpot()
+    {
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: false, position: 50);
+
+        var dto = await new ResumeHandler(playback, songs, hub)
+            .Handle(new ResumeCommand(state.UserId), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeTrue();
+        dto.PositionSec.Should().BeApproximately(50, 0.5);
+    }
+
+    [Fact]
+    public async Task Resume_WhenAlreadyPlaying_DoesNotRewindToTheStalePausePosition()
+    {
+        // A lost resume response must be safe to retry: the second call is a
+        // no-op, not a jump back to the position stored at the last pause.
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: true, position: 100);
+        state.PausePositionSec = 20;
+        state.LastPlayUtc = DateTime.UtcNow.AddSeconds(-5);
+
+        var dto = await new ResumeHandler(playback, songs, hub)
+            .Handle(new ResumeCommand(state.UserId), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeTrue();
+        dto.PositionSec.Should().BeApproximately(105, 0.5);
+    }
+}
+
 public sealed class ShuffleHandlerTests
 {
     private static (IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub, PlaybackState state)

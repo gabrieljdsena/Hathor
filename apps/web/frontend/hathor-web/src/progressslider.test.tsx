@@ -47,8 +47,11 @@ vi.mock('./audio/engine', async (importOriginal) => {
       pause: vi.fn(),
       load: vi.fn(),
       setNextProvider: vi.fn(),
+      setStreamUrlProvider: vi.fn(),
       onEnded: vi.fn(),
       onTailStuck: vi.fn(),
+      onBuffering: vi.fn(),
+      onFatal: vi.fn(),
       onReport: undefined,
     },
   }

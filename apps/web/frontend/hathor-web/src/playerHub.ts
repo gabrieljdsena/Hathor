@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { hasInflightTransport, usePlayer } from './store/player'
+import { hasInflightTransport, hasPendingPlaybackIntent, usePlayer } from './store/player'
 import type { PlayerState, Song } from './api/client'
 
 // Multi-tab transport sync: every control mutation (toggle, play, next,
@@ -42,9 +42,10 @@ export function usePlayerHub(username: string | null) {
           // One of OUR OWN transports is mid-flight (overlapping rapid
           // clicks): its REST responses decide the outcome. A broadcast
           // landing now reflects pre-flight server state and would flip us
-          // back to the old song — skip it. Genuine remote changes arriving
-          // with no local flight in progress always apply.
-          if (hasInflightTransport()) return
+          // back to the old song — skip it. The same applies while a
+          // pause/resume intent is retrying: the user's desired state wins
+          // until the server acknowledges it, not a stale broadcast.
+          if (hasInflightTransport() || hasPendingPlaybackIntent()) return
           // RAM: the queue array is the fattest retained structure (full
           // library on play-all). When its version matches what we hold,
           // apply scalars only and keep our array — no new retained MBs.

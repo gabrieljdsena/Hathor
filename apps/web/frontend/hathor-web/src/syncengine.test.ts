@@ -3,13 +3,14 @@ import { engine } from './audio/engine'
 import { usePlayer } from './store/player'
 import type { PlayerState } from './api/client'
 
-const { mockFile, mockDur, mockTime, mockPlaying, mockFading, mockToggle } = vi.hoisted(() => ({
+const { mockFile, mockDur, mockTime, mockPlaying, mockFading, mockPauseApi, mockResume } = vi.hoisted(() => ({
   mockFile: vi.fn(),
   mockDur: vi.fn(),
   mockTime: vi.fn(),
   mockPlaying: vi.fn(),
   mockFading: vi.fn(),
-  mockToggle: vi.fn(),
+  mockPauseApi: vi.fn(),
+  mockResume: vi.fn(),
 }))
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -18,7 +19,8 @@ vi.mock('./api/client', async (importOriginal) => {
     ...mod,
     api: {
       ...mod.api,
-      toggle: (...args: unknown[]) => mockToggle(...args),
+      pause: (...args: unknown[]) => mockPauseApi(...args),
+      resume: (...args: unknown[]) => mockResume(...args),
     },
   }
 })
@@ -54,8 +56,11 @@ vi.mock('./audio/engine', async (importOriginal) => {
       seek: vi.fn(),
       setVolume: vi.fn(),
       setNextProvider: vi.fn(),
+      setStreamUrlProvider: vi.fn(),
       onEnded: vi.fn(),
       onTailStuck: vi.fn(),
+      onBuffering: vi.fn(),
+      onFatal: vi.fn(),
     },
   }
 })
@@ -190,11 +195,13 @@ describe('toggle during a fade', () => {
     mockDur.mockReturnValue(200)
     mockTime.mockReturnValue(197)
     mockPlaying.mockReturnValue(true)
-    mockToggle.mockResolvedValue(pausedB())
+    mockPauseApi.mockResolvedValue(pausedB())
     vi.mocked(engine.pause).mockClear()
     syncWith({ currentSong: songB as PlayerState['currentSong'], isPlaying: true, positionSec: 0 })
     await usePlayer.getState().toggle()
     expect(engine.pause).toHaveBeenCalled()
+    // No seek: the element is still on the outgoing file during the fade.
+    expect(mockPauseApi).toHaveBeenCalledWith(null, 'b.mp3')
     expect(usePlayer.getState().isPlaying).toBe(false)
   })
 
@@ -204,11 +211,12 @@ describe('toggle during a fade', () => {
     mockDur.mockReturnValue(200)
     mockTime.mockReturnValue(197)
     mockPlaying.mockReturnValue(false)
-    mockToggle.mockResolvedValue({ ...pausedB(), isPlaying: true })
+    mockResume.mockResolvedValue({ ...pausedB(), isPlaying: true })
     vi.mocked(engine.play).mockClear()
     syncWith({ currentSong: songB as PlayerState['currentSong'], isPlaying: false, positionSec: 0 })
     await usePlayer.getState().toggle()
     expect(engine.play).toHaveBeenCalled()
+    expect(mockResume).toHaveBeenCalledOnce()
     expect(usePlayer.getState().isPlaying).toBe(true)
   })
 })

@@ -50,6 +50,9 @@ interface PlayerStore extends PlayerState {
   // semantics as playSong.
   playSongByFiles: (song: Song, files: string[], source: QueueSource | null) => Promise<void>
   toggle: () => Promise<void>
+  skipNext: () => Promise<void>
+  skipPrev: () => Promise<void>
+  toggleRepeat: () => Promise<void>
   syncAudio: () => void
   // Volume normalization (client-side leveling): browser-local only, never
   // synced — no server setting exists for it (unlike volume/crossfade).
@@ -60,6 +63,10 @@ interface PlayerStore extends PlayerState {
   // the transport arrows jump chapter boundaries regardless of this flag.
   chapterSkip: boolean
   setChapterSkip: (enabled: boolean) => void
+  // Audio is (re)loading/stalled — surfaced instead of looking frozen.
+  buffering: boolean
+  // A pause/resume command is retrying against a flaky API.
+  syncing: boolean
 }
 
 const NORMALIZE_KEY = 'hathor:normalize'
@@ -81,6 +88,13 @@ function loadChapterSkip(): boolean {
   return loadFlag(CHAPTER_SKIP_KEY)
 }
 
+function newInstanceId(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  )
+}
+
 function toTrack(song: Song) {
   return {
     file: song.file,
@@ -91,6 +105,13 @@ function toTrack(song: Song) {
         ? null
         : -14 - song.loudnessDb,
   }
+}
+
+export function nextForFade(): EngineTrack | null {
+  const state = usePlayer.getState()
+  if (state.repeat) return null
+  const next = state.queue[0]
+  return next ? toTrack(next) : null
 }
 
 // Transport generation: every mutating call (playSong, toggle) claims a
@@ -107,6 +128,7 @@ function toTrack(song: Song) {
 // response. Our flight's own responses decide the outcome instead.
 let transportGen = 0
 let inflightTransports = 0
+let repeatGen = 0
 function claimTransport(): number {
   transportGen += 1
   inflightTransports += 1
@@ -163,6 +185,132 @@ function syncEngine(state: PlayerState) {
   }
 }
 
+// ---- reliable pause/resume intents ----------------------------------
+// A blind toggle is unsafe to retry: a lost response would flip the server
+// back. Pause and resume are explicit and idempotent, so a failed command
+// keeps the optimistic UI and retries with backoff until acknowledged. This
+// is what prevents "paused visually but the backend kept playing" and the
+// resulting track change on unpause.
+interface PlaybackIntent {
+  gen: number
+  playing: boolean
+  file: string | null
+  positionSec: number | null
+  attempts: number
+  timer: ReturnType<typeof setTimeout> | null
+}
+const INTENT_RETRY_BASE_MS = 500
+const INTENT_RETRY_MAX_MS = 30000
+let playbackIntent: PlaybackIntent | null = null
+// Requests are serialized so a canceled command that is already on the wire
+// can never land after (and undo) the intent that replaced it.
+let intentQueue: Promise<void> = Promise.resolve()
+
+export function hasPendingPlaybackIntent(): boolean {
+  return playbackIntent !== null
+}
+
+function isCurrentIntent(intent: PlaybackIntent): boolean {
+  return playbackIntent === intent && intent.gen === transportGen
+}
+
+function finishPlaybackIntent(intent: PlaybackIntent) {
+  if (playbackIntent !== intent) return
+  if (intent.timer !== null) {
+    clearTimeout(intent.timer)
+    intent.timer = null
+  }
+  playbackIntent = null
+  releaseTransport()
+  usePlayer.setState({ syncing: false })
+}
+
+export function cancelPlaybackIntent() {
+  if (playbackIntent) finishPlaybackIntent(playbackIntent)
+}
+
+function intentRetryDelay(attempt: number, error: unknown): number {
+  const message = error instanceof Error ? error.message : String(error)
+  const hinted = /retry in (\d+)s/i.exec(message)
+  if (hinted) return Math.min(INTENT_RETRY_MAX_MS, Number(hinted[1]) * 1000)
+  return Math.min(INTENT_RETRY_MAX_MS, INTENT_RETRY_BASE_MS * 2 ** Math.min(attempt, 6))
+}
+
+// Auth/validation failures will never succeed by retrying. Everything else
+// (network drop, timeout, 5xx, 429) stays queued.
+function isPermanentIntentError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /unauthorized|forbidden|not found|bad request|\b400\b|\b401\b|\b403\b|\b404\b/i.test(message)
+}
+
+async function attemptPlaybackIntent(intent: PlaybackIntent): Promise<void> {
+  if (!isCurrentIntent(intent)) return
+  const previous = intentQueue
+  let release!: () => void
+  intentQueue = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  try {
+    await previous
+    if (!isCurrentIntent(intent)) return
+    const state = intent.playing
+      ? await api.resume()
+      : await api.pause(intent.positionSec, intent.file)
+    if (!isCurrentIntent(intent)) return
+    finishPlaybackIntent(intent)
+    usePlayer.setState(state)
+    syncEngine(state)
+    if (!state.isPlaying && state.currentSong) pushResumeSpot()
+  } catch (e) {
+    if (!isCurrentIntent(intent)) return
+    if (isPermanentIntentError(e)) {
+      finishPlaybackIntent(intent)
+      void usePlayer.getState().refresh().catch(() => {})
+      return
+    }
+    const delay = intentRetryDelay(intent.attempts, e)
+    intent.attempts += 1
+    if (intent.timer !== null) clearTimeout(intent.timer)
+    intent.timer = setTimeout(() => {
+      intent.timer = null
+      if (isCurrentIntent(intent)) void attemptPlaybackIntent(intent)
+    }, delay)
+  } finally {
+    release()
+  }
+}
+
+function startPlaybackIntent(
+  playing: boolean,
+  file: string | null,
+  positionSec: number | null,
+): PlaybackIntent {
+  cancelPlaybackIntent()
+  const gen = claimTransport()
+  const intent: PlaybackIntent = { gen, playing, file, positionSec, attempts: 0, timer: null }
+  playbackIntent = intent
+  usePlayer.setState({ syncing: true })
+  return intent
+}
+
+function retryPendingIntentNow() {
+  if (!playbackIntent) return
+  if (playbackIntent.timer !== null) {
+    clearTimeout(playbackIntent.timer)
+    playbackIntent.timer = null
+  }
+  void attemptPlaybackIntent(playbackIntent)
+}
+
+// Coming back online should not wait out a 30s backoff (transport command
+// and audio stream alike).
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    retryPendingIntentNow()
+    engine.retryNow()
+  })
+}
+
 // Server advance at fade start (engine calls this exactly when new audio
 // starts, passing the outgoing file). syncEngine is fade-aware, so the
 // matching case never reloads; a changed queue (or stop) hard-switches via
@@ -182,12 +330,22 @@ async function advanceForFade(outFile: string | null) {
 }
 
 engine.setNextProvider(
-  () => {
-    const next = usePlayer.getState().queue[0]
-    return next ? toTrack(next) : null
-  },
+  nextForFade,
   async (_expected: EngineTrack, outFile: string | null) => advanceForFade(outFile),
 )
+
+// Recovery URLs refresh expired access tokens (stream requests bypass the
+// API client's 401 path); buffering drives the player-bar indicator.
+engine.setStreamUrlProvider((file, isPodcast) => api.freshStreamUrl(file, isPodcast))
+engine.onBuffering((buffering) => usePlayer.setState({ buffering }))
+engine.onFatal((file) => {
+  if (hasPendingPlaybackIntent()) return
+  const st = usePlayer.getState()
+  if (!st.isPlaying || st.currentSong?.file !== file) return
+  // Deterministic media failure (decode/404): the existing instant-death
+  // breaker decides how many broken files to skip before parking.
+  autoAdvance(true)
+})
 
 // Engine diagnostics → server logs (throttled inside the engine): seek
 // targets, spurious ends, element errors, stall recoveries. This is what
@@ -261,10 +419,10 @@ function breakAdvanceChain(): void {
 // Raw queue advance with one guarded retry: a lost auto-advance strands the
 // finished song at the edge forever (pause/unpause just re-parks it). Chain
 // counting happens in the callers via noteAutoAdvance, not here.
-function requestNext(): void {
+function requestNext(auto: boolean): void {
   const expected = usePlayer.getState().currentSong?.file ?? null
   void api
-    .next()
+    .next(expected, auto)
     .then((s) => {
       usePlayer.setState(s)
       syncEngine(s)
@@ -277,7 +435,7 @@ function requestNext(): void {
           const cur = usePlayer.getState()
           if (cur.currentSong?.file !== expected || engine.currentFile() !== expected) return
           void api
-            .next()
+            .next(expected, auto)
             .then((s2) => {
               if (usePlayer.getState().currentSong?.file !== expected) return
               usePlayer.setState(s2)
@@ -299,7 +457,7 @@ export function autoAdvance(diedInstantly: boolean): void {
     breakAdvanceChain()
     return
   }
-  requestNext()
+  requestNext(!diedInstantly)
 }
 
 // Tail strand: the final bytes are unplayable so `ended` never fires (the
@@ -338,6 +496,8 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   queueVersion: 0,
   normalize: loadNormalize(),
   chapterSkip: loadChapterSkip(),
+  buffering: false,
+  syncing: false,
 
   setNormalize: (enabled: boolean) => {
     try {
@@ -363,6 +523,14 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
 
   refresh: async () => {
     const state = await api.playerState()
+    if (playbackIntent) {
+      // A pause/resume command is still retrying: the server may not have
+      // applied it yet. Pull metadata/queue but never let a stale
+      // isPlaying/position resurrect audio against the user's intent.
+      set({ ...state, isPlaying: playbackIntent.playing })
+      if (!playbackIntent.playing) engine.pause()
+      return
+    }
     set(state)
     syncEngine(state)
   },
@@ -375,13 +543,17 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     const pulled = await api.playerState()
     let state = pulled
     if (pulled.isPlaying && pulled.currentSong) {
-      try {
-        state = await api.pause()
-      } catch {
-        state = { ...pulled, isPlaying: false }
-      }
+      // The tab died mid-song (or another device left it playing): pause
+      // immediately in the UI, then use the reliable intent so a flaky API
+      // cannot leave the server running into the next track.
+      state = { ...pulled, isPlaying: false }
+      set(state)
+      const intent = startPlaybackIntent(false, pulled.currentSong.file, null)
+      await attemptPlaybackIntent(intent)
+      state = get()
+    } else {
+      set(state)
     }
-    set(state)
     if (state.queue.length === 0 && state.source && state.currentSong && !state.firstPlay) {
       try {
         const { state: rebuilt } = await api.queueRebuild()
@@ -418,8 +590,10 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     // the element already plays the new one — reconverge on the server
     // (refresh re-syncs the element too) instead of leaving the pair
     // diverged, then rethrow so callers see the failure as before.
+    cancelPlaybackIntent()
     engine.ensureContext()
-    engine.load(toTrack(song), true)
+    const restart = get().currentSong?.file === song.file || engine.currentFile() === song.file
+    engine.load(toTrack(song), true, restart)
     // Optimistic: the UI (player bar, row highlight, lyrics) names the
     // clicked song instantly instead of flashing the old one through both
     // server round trips. The responses below confirm or correct it; a
@@ -438,7 +612,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       // and must never overwrite the store or reload the engine (that is
       // what kept resurrecting old songs between every new one).
       if (!isCurrentTransport(gen)) return
-      const state = await api.play(song.file, song.isPodcast)
+      const state = await api.play(song.file, song.isPodcast, newInstanceId())
       if (!isCurrentTransport(gen)) return
       set(state)
       syncEngine(state)
@@ -457,14 +631,16 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     // Same contract as playSong, but the queue context arrives as ordered
     // file names (infinite scroll never holds the full Song[] list).
     // The clicked song object still drives the optimistic UI + engine load.
+    cancelPlaybackIntent()
     engine.ensureContext()
-    engine.load(toTrack(song), true)
+    const restart = get().currentSong?.file === song.file || engine.currentFile() === song.file
+    engine.load(toTrack(song), true, restart)
     set({ currentSong: song, isPlaying: true })
     const gen = claimTransport()
     try {
       await api.setQueueFiles(song.file, files, source)
       if (!isCurrentTransport(gen)) return
-      const state = await api.play(song.file, song.isPodcast)
+      const state = await api.play(song.file, song.isPodcast, newInstanceId())
       if (!isCurrentTransport(gen)) return
       set(state)
       syncEngine(state)
@@ -479,47 +655,69 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     }
   },
 
-  toggle: async () => {
-    // Optimistic flip: pause/play locally first (instant), then let the
-    // server confirm — it stays source of truth for remote control and
-    // reconciles us on response. Only when a song is loaded; otherwise
-    // the server decides (nothing loaded yet).
-    const before = get()
-    // During a fade the element's active slot is still the outgoing track
-    // while the store already names the incoming one — by design, not
-    // divergence — so a fading engine always allows the instant flip.
-    // Without this, pausing mid-fade does nothing locally: audio plays on
-    // until the server round trip, and a fade handoff landing after the
-    // pause resurrects playback entirely.
-    const canFlip =
-      before.currentSong !== null &&
-      (engine.isFading() || engine.currentFile() === before.currentSong.file)
-    if (canFlip) {
-      if (before.isPlaying) engine.pause()
-      else engine.play()
-      set({ isPlaying: !before.isPlaying })
-    }
+  skipNext: async () => {
+    cancelPlaybackIntent()
     const gen = claimTransport()
     try {
-      const state = await api.toggle()
-      // A newer transport already moved on (rapid pause/play): a stale
-      // toggle response must not flip the store or reload the engine —
-      // that is what restarted audio right after pausing.
+      const state = await api.next()
       if (!isCurrentTransport(gen)) return
       set(state)
       syncEngine(state)
-      // Landing paused snapshots this browser's spot so other devices can
-      // offer it (resuming never pushes — only pauses do).
-      if (!state.isPlaying && state.currentSong) pushResumeSpot()
     } catch {
-      if (!isCurrentTransport(gen)) return
-      // Server unreachable — resync to whatever it actually has.
-      void get()
-        .refresh()
-        .catch(() => {})
+      if (isCurrentTransport(gen)) await get().refresh().catch(() => {})
     } finally {
       releaseTransport()
     }
+  },
+
+  skipPrev: async () => {
+    cancelPlaybackIntent()
+    const gen = claimTransport()
+    try {
+      const state = await api.prev()
+      if (!isCurrentTransport(gen)) return
+      set(state)
+      syncEngine(state)
+    } catch {
+      if (isCurrentTransport(gen)) await get().refresh().catch(() => {})
+    } finally {
+      releaseTransport()
+    }
+  },
+
+  toggleRepeat: async () => {
+    const gen = ++repeatGen
+    try {
+      const state = await api.repeat()
+      if (gen !== repeatGen) return
+      set(state)
+    } catch {
+      /* playerHub/refresh will converge on the next broadcast */
+    }
+  },
+
+  toggle: async () => {
+    // Optimistic flip: pause/play locally first (instant), then send an
+    // explicit idempotent command. A failed round trip keeps the local
+    // state and retries, so the backend cannot keep advancing the track
+    // and change songs when the user finally unpauses. During a fade the
+    // element's active slot is still the outgoing track while the store
+    // names the incoming one, so pausing there must not seek the incoming
+    // file to the outgoing position.
+    const before = get()
+    const desired = !before.isPlaying
+    const fading = engine.isFading()
+    const positionSec = desired || fading ? null : engine.time()
+    const canFlip =
+      before.currentSong !== null &&
+      (fading || engine.currentFile() === before.currentSong.file)
+    // Pausing is always safe locally; resuming only when the element is
+    // already on the track the store names (otherwise the response loads it).
+    if (!desired) engine.pause()
+    else if (canFlip) engine.play()
+    set({ isPlaying: desired })
+    const intent = startPlaybackIntent(desired, before.currentSong?.file ?? null, positionSec)
+    await attemptPlaybackIntent(intent)
   },
 
   // Re-point the engine at whatever the server says is current

@@ -114,7 +114,13 @@ public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadMo
             .Handle(new PlayCommand(cmd.UserId, null, null, null), ct);
 }
 
-public sealed record PauseCommand(Guid UserId) : IRequest<PlayerStateDto>;
+// Pause is idempotent. The web client retries it after network failures and
+// passes the position it paused at: the request may land minutes later, by
+// which time the server's wall-clock estimate has run past the song end. The
+// expected file keeps a delayed retry from rewinding a track that moved on.
+public sealed record PauseCommand(Guid UserId, string? ExpectedFile = null, double? PositionSec = null)
+    : IRequest<PlayerStateDto>;
+public sealed record ResumeCommand(Guid UserId) : IRequest<PlayerStateDto>;
 public sealed record NextCommand(Guid UserId, bool Auto = false, string? IdempotencyKey = null, string? ExpectedFile = null) : IRequest<PlayerStateDto>;
 public sealed record PrevCommand(Guid UserId, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
 
@@ -124,12 +130,38 @@ public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadMod
     public async Task<PlayerStateDto> Handle(PauseCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
-        state.Pause(DateTime.UtcNow);
+        var now = DateTime.UtcNow;
+        state.Pause(now);
+        var sameFile = cmd.ExpectedFile is null ||
+            string.Equals(state.CurrentFile, cmd.ExpectedFile, StringComparison.OrdinalIgnoreCase);
+        if (sameFile && cmd.PositionSec is { } pos && double.IsFinite(pos))
+            state.Seek(pos, now);
         await PlaybackPositionClamp.ClampStoredAsync(state, songs, cmd.UserId, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
         return dto;
+    }
+}
+
+// Explicit, idempotent resume. Unlike PlayHandler's same-file toggle, calling
+// this while already playing must not reset PositionOffsetSec to the stale
+// pause position (a lost response would otherwise rewind playback on retry).
+public sealed class ResumeHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
+    : IRequestHandler<ResumeCommand, PlayerStateDto>
+{
+    public async Task<PlayerStateDto> Handle(ResumeCommand cmd, CancellationToken ct)
+    {
+        var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
+        if (!state.IsPlaying && state.CurrentFile is not null)
+        {
+            state.Resume(DateTime.UtcNow);
+            await playback.SaveChangesAsync(ct);
+            var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
+            await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
+            return dto;
+        }
+        return await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
     }
 }
 

@@ -187,4 +187,98 @@ public sealed class Phase3HandlerTests
         page.TotalPages.Should().Be(1);
         page.CurrentPage.Should().Be(1);
     }
+
+    [Fact]
+    public async Task HistoryDownloadFiles_UsesDownloadTabSourceAndQueueCap()
+    {
+        var history = Substitute.For<IHistoryReadModel>();
+        history.GetDownloadHistoryFilesAsync(UserId, 500, Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "b.mp3", "a.mp3" });
+
+        var files = await new HistoryHandlers(
+            history, Substitute.For<ISongReadModel>(), Substitute.For<IPlaylistReadModel>())
+            .Handle(new GetDownloadHistoryFilesQuery(UserId), CancellationToken.None);
+
+        files.Should().Equal("b.mp3", "a.mp3");
+        await history.Received(1)
+            .GetDownloadHistoryFilesAsync(UserId, 500, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HistoryPlayedFiles_UsesDedupedRecentSourceAndQueueCap()
+    {
+        var history = Substitute.For<IHistoryReadModel>();
+        history.GetRecentPlayedFilesAsync(UserId, 500, Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "b.mp3", "a.mp3" });
+
+        var files = await new HistoryHandlers(
+            history, Substitute.For<ISongReadModel>(), Substitute.For<IPlaylistReadModel>())
+            .Handle(new GetPlayedHistoryFilesQuery(UserId), CancellationToken.None);
+
+        files.Should().Equal("b.mp3", "a.mp3");
+        await history.Received(1)
+            .GetRecentPlayedFilesAsync(UserId, 500, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Rebuild_DownloadHistory_UsesHistoryTabSource()
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var state = new PlaybackState
+        {
+            UserId = UserId,
+            CurrentFile = "b.mp3",
+            Source = new QueueSource(QueueSourceTypes.DownloadHistory, null),
+        };
+        playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(state);
+        var history = Substitute.For<IHistoryReadModel>();
+        history.GetDownloadHistoryFilesAsync(UserId, 500, Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "a.mp3", "b.mp3", "c.mp3" });
+        var storage = Substitute.For<ILibraryStorage>();
+        var songs = Substitute.For<ISongReadModel>();
+        var mix = new DailyMixService(
+            Substitute.For<IDailyMixRepository>(), songs, storage);
+
+        var result = await new RebuildQueueHandler(
+            playback, Substitute.For<IPlaylistRepository>(), mix, songs, history, storage,
+            Substitute.For<IPlaybackHub>())
+            .Handle(new RebuildQueueCommand(UserId), CancellationToken.None);
+
+        result.Rebuilt.Should().BeTrue();
+        state.NextFiles.Should().BeEquivalentTo("c.mp3");
+        state.PrevFiles.Should().BeEquivalentTo("a.mp3");
+        await history.DidNotReceive()
+            .GetRecentDownloadedFilesAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Rebuild_RecentlyDownloaded_UsesHomeSource()
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var state = new PlaybackState
+        {
+            UserId = UserId,
+            CurrentFile = "b.mp3",
+            Source = new QueueSource(QueueSourceTypes.RecentlyDownloaded, null),
+        };
+        playback.GetOrCreateAsync(UserId, Arg.Any<CancellationToken>()).Returns(state);
+        var history = Substitute.For<IHistoryReadModel>();
+        history.GetRecentDownloadedFilesAsync(UserId, 500, Arg.Any<CancellationToken>())
+            .Returns(new List<string> { "a.mp3", "b.mp3", "c.mp3" });
+        var storage = Substitute.For<ILibraryStorage>();
+        var songs = Substitute.For<ISongReadModel>();
+        var mix = new DailyMixService(
+            Substitute.For<IDailyMixRepository>(), songs, storage);
+
+        var result = await new RebuildQueueHandler(
+            playback, Substitute.For<IPlaylistRepository>(), mix, songs, history, storage,
+            Substitute.For<IPlaybackHub>())
+            .Handle(new RebuildQueueCommand(UserId), CancellationToken.None);
+
+        result.Rebuilt.Should().BeTrue();
+        state.NextFiles.Should().BeEquivalentTo("c.mp3");
+        state.PrevFiles.Should().BeEquivalentTo("a.mp3");
+        await history.DidNotReceive()
+            .GetDownloadHistoryFilesAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
 }

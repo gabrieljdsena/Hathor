@@ -195,6 +195,21 @@ export function PendingEditChip({ file }: { file: string }) {
   )
 }
 
+// Subtle "not dead" cue while the stream buffers or a transport command is
+// retrying against a flaky connection.
+function NetworkStatus({ label }: { label: string }) {
+  return (
+    <span
+      role="status"
+      className="inline-flex items-center gap-1 ml-1 text-[10px] font-medium uppercase tracking-[0.12em] text-orange-300/80 align-middle"
+      title={label === 'Buffering' ? 'Buffering audio…' : 'Syncing with the server…'}
+    >
+      <span className="spinner-btn" aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
 // Bottom player bar cloned from Music Player/ui/index.html #controls
 // (orange top border, glass). Audio renders server state; crossfade
 // and gapless arrive in a later phase — manual next/prev stay instant.
@@ -223,8 +238,16 @@ export default function PlayerBar({
   const shuffle = usePlayer((s) => s.shuffle)
   const repeat = usePlayer((s) => s.repeat)
   const source = usePlayer((s) => s.source)
+  const buffering = usePlayer((s) => s.buffering)
+  const syncing = usePlayer((s) => s.syncing)
   const toggle = usePlayer((s) => s.toggle)
+  const skipNext = usePlayer((s) => s.skipNext)
+  const skipPrev = usePlayer((s) => s.skipPrev)
+  const toggleRepeat = usePlayer((s) => s.toggleRepeat)
   const boot = usePlayer((s) => s.boot)
+  // Reconnecting to the stream (audio stalled/retrying) vs. retrying a
+  // pause/resume command. Both look frozen otherwise.
+  const networkLabel = buffering ? 'Buffering' : syncing ? 'Syncing' : null
   const navigate = useNavigate()
   // Podcast chapters: auto-skip pump + chapter-aware transport arrows.
   useChapterAutoSkip()
@@ -266,22 +289,8 @@ export default function PlayerBar({
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const toggle = () => void usePlayer.getState().toggle()
-    const next = () =>
-      void api
-        .next()
-        .then((s) => {
-          usePlayer.setState(s)
-          usePlayer.getState().syncAudio()
-        })
-        .catch(() => {})
-    const prev = () =>
-      void api
-        .prev()
-        .then((s) => {
-          usePlayer.setState(s)
-          usePlayer.getState().syncAudio()
-        })
-        .catch(() => {})
+    const next = () => void usePlayer.getState().skipNext()
+    const prev = () => void usePlayer.getState().skipPrev()
     try {
       navigator.mediaSession.setActionHandler('play', toggle)
       navigator.mediaSession.setActionHandler('pause', toggle)
@@ -308,26 +317,14 @@ export default function PlayerBar({
     // (chapter seek, not a track change) — even with auto-skip off. Past
     // the last chapter it falls through to the next track.
     if (chapterJump.next()) return
-    void api
-      .next()
-      .then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio() // hard switch; cancels any fade
-      })
-      .catch(() => {})
+    void skipNext()
   }
   const doPrev = () => {
     // Same deal backwards (restarts the chapter when well inside it).
     if (chapterJump.prev()) return
-    void api
-      .prev()
-      .then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio() // hard switch; cancels any fade
-      })
-      .catch(() => {})
+    void skipPrev()
   }
-  const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
+  const doRepeat = () => void toggleRepeat()
   const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))
   const doMute = () => {
     if (volume > 0) {
@@ -344,6 +341,15 @@ export default function PlayerBar({
       id="controls"
       className="fixed bottom-0 left-0 right-0 flex flex-col min-[1100px]:flex-row min-[1100px]:items-center min-[1100px]:justify-between gap-1 min-[1100px]:gap-0 border-t border-orange-500/10 bg-black/40 backdrop-blur-2xl px-3 min-[1100px]:px-6 py-2 min-[1100px]:py-0 min-[1100px]:h-28 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
     >
+      {resumeSpot && (
+        <div className="min-[1100px]:hidden">
+          <ResumeBento
+            key={resumeSpot.file + resumeSpot.updatedUtc}
+            spot={resumeSpot}
+            variant="banner"
+          />
+        </div>
+      )}
       {/* The AudioEngine owns its elements (double-buffered for crossfade);
           UI polls engine time — no DOM <audio> needed here. */}
       {/* Compact stacked layout (below 1100px): song + centered transport, progress below */}
@@ -377,6 +383,7 @@ export default function PlayerBar({
               <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
             )}
             {song && <PendingEditChip file={song.file} />}
+            {networkLabel && <NetworkStatus label={networkLabel} />}
           </div>
         </div>
         <div className="flex items-center justify-center gap-0.5 sm:gap-1">
@@ -387,12 +394,6 @@ export default function PlayerBar({
           <ControlButton icon="repeat" title="Toggle Repeat" active={repeat} iconClass="w-5 h-5" onClick={doRepeat} />
         </div>
         <div className="flex items-center justify-end">
-          {resumeSpot && (
-            <ResumeBento
-              key={resumeSpot.file + resumeSpot.updatedUtc}
-              spot={resumeSpot}
-            />
-          )}
           <button
             onClick={onToggleLyrics}
             title="Toggle Lyrics"

@@ -1,9 +1,25 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { engine } from './audio/engine'
-import { autoAdvance, noteAutoAdvance, resetAutoAdvanceStreak, usePlayer } from './store/player'
+import {
+  autoAdvance,
+  nextForFade,
+  noteAutoAdvance,
+  resetAutoAdvanceStreak,
+  usePlayer,
+} from './store/player'
 import type { PlayerState } from './api/client'
 
-const { mockUpdateSettings, mockPlayerState, mockPause, mockSettings, mockSetQueue, mockPlay, mockNext } = vi.hoisted(() => ({
+const {
+  mockUpdateSettings,
+  mockPlayerState,
+  mockPause,
+  mockSettings,
+  mockSetQueue,
+  mockPlay,
+  mockNext,
+  mockPrev,
+  mockRepeat,
+} = vi.hoisted(() => ({
   mockUpdateSettings: vi.fn(),
   mockPlayerState: vi.fn(),
   mockPause: vi.fn(),
@@ -11,6 +27,8 @@ const { mockUpdateSettings, mockPlayerState, mockPause, mockSettings, mockSetQue
   mockSetQueue: vi.fn(),
   mockPlay: vi.fn(),
   mockNext: vi.fn(),
+  mockPrev: vi.fn(),
+  mockRepeat: vi.fn(),
 }))
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -26,6 +44,8 @@ vi.mock('./api/client', async (importOriginal) => {
       setQueue: (...args: unknown[]) => mockSetQueue(...args),
       play: (...args: unknown[]) => mockPlay(...args),
       next: (...args: unknown[]) => mockNext(...args),
+      prev: (...args: unknown[]) => mockPrev(...args),
+      repeat: (...args: unknown[]) => mockRepeat(...args),
     },
   }
 })
@@ -344,3 +364,146 @@ describe('autoAdvance instant-death breaker', () => {
   })
 })
 
+
+describe('stream consistency', () => {
+  const mkSong = (file: string) => ({
+    file,
+    artist: 'Artist',
+    title: file,
+    album: '',
+    year: '',
+    duration: 200,
+    coverArt: null,
+    dateDownload: null,
+    isPodcast: false,
+  })
+
+  function playerState(over: Partial<PlayerState>): PlayerState {
+    return {
+      currentSong: null,
+      isPlaying: false,
+      positionSec: 0,
+      volume: 0.7,
+      shuffle: false,
+      repeat: false,
+      queue: [],
+      source: null,
+      isCustomQueue: false,
+      firstPlay: true,
+      queueTotal: 0,
+      queueVersion: 0,
+      ...over,
+    }
+  }
+
+  const songA = mkSong('a.mp3')
+  const songB = mkSong('b.mp3')
+  const songC = mkSong('c.mp3')
+
+  async function settle() {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    mockNext.mockReset()
+    mockPrev.mockReset()
+    mockRepeat.mockReset()
+    mockPlay.mockReset()
+    mockSetQueue.mockReset()
+  })
+
+  it('passes the expected file and auto flag on automatic advance retry', async () => {
+    vi.useFakeTimers()
+    resetAutoAdvanceStreak()
+    vi.spyOn(engine, 'ensureContext').mockImplementation(() => {})
+    vi.spyOn(engine, 'load').mockImplementation(() => {})
+    vi.spyOn(engine, 'currentFile').mockReturnValue('a.mp3')
+    mockNext
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(
+        playerState({ currentSong: songB as PlayerState['currentSong'], isPlaying: true }),
+      )
+    usePlayer.setState({
+      currentSong: songA as PlayerState['currentSong'],
+      isPlaying: true,
+      queue: [songB],
+    })
+
+    autoAdvance(false)
+    await settle()
+    expect(mockNext).toHaveBeenNthCalledWith(1, 'a.mp3', true)
+
+    await vi.advanceTimersByTimeAsync(2000)
+    await settle()
+    expect(mockNext).toHaveBeenNthCalledWith(2, 'a.mp3', true)
+    expect(usePlayer.getState().currentSong?.file).toBe('b.mp3')
+  })
+
+  it('does not ask the server to repeat while skipping a fatal file', async () => {
+    resetAutoAdvanceStreak()
+    mockNext.mockResolvedValue(
+      playerState({ currentSong: songB as PlayerState['currentSong'], isPlaying: true }),
+    )
+    usePlayer.setState({ currentSong: songA as PlayerState['currentSong'], isPlaying: true })
+
+    autoAdvance(true)
+    await settle()
+
+    expect(mockNext).toHaveBeenCalledWith('a.mp3', false)
+  })
+
+  it('does not stage a next track for crossfade while repeat is on', () => {
+    usePlayer.setState({
+      currentSong: songA as PlayerState['currentSong'],
+      queue: [songB],
+      repeat: true,
+    })
+    expect(nextForFade()).toBeNull()
+
+    usePlayer.setState({ repeat: false })
+    expect(nextForFade()?.file).toBe('b.mp3')
+  })
+
+  it('restarts a clicked current song with a fresh play instance', async () => {
+    vi.spyOn(engine, 'ensureContext').mockImplementation(() => {})
+    const load = vi.spyOn(engine, 'load').mockImplementation(() => {})
+    mockSetQueue.mockResolvedValue(
+      playerState({ currentSong: songA as PlayerState['currentSong'], isPlaying: true }),
+    )
+    mockPlay.mockResolvedValue(
+      playerState({ currentSong: songA as PlayerState['currentSong'], isPlaying: true }),
+    )
+    usePlayer.setState({ currentSong: songA as PlayerState['currentSong'], isPlaying: true })
+
+    await usePlayer.getState().playSong(songA, [songA], { type: 'all_songs', id: null })
+
+    expect(load).toHaveBeenCalledWith(expect.objectContaining({ file: 'a.mp3' }), true, true)
+    expect(mockPlay).toHaveBeenCalledWith('a.mp3', false, expect.any(String))
+  })
+
+  it('applies only the newest manual skip response', async () => {
+    vi.spyOn(engine, 'ensureContext').mockImplementation(() => {})
+    vi.spyOn(engine, 'load').mockImplementation(() => {})
+    let resolveFirst!: (state: PlayerState) => void
+    let resolveSecond!: (state: PlayerState) => void
+    mockNext
+      .mockImplementationOnce(() => new Promise<PlayerState>((r) => { resolveFirst = r }))
+      .mockImplementationOnce(() => new Promise<PlayerState>((r) => { resolveSecond = r }))
+    usePlayer.setState({ currentSong: songA as PlayerState['currentSong'], isPlaying: true })
+
+    const first = usePlayer.getState().skipNext()
+    const second = usePlayer.getState().skipNext()
+
+    resolveSecond(playerState({ currentSong: songB as PlayerState['currentSong'], isPlaying: true }))
+    await second
+    expect(usePlayer.getState().currentSong?.file).toBe('b.mp3')
+
+    resolveFirst(playerState({ currentSong: songC as PlayerState['currentSong'], isPlaying: true }))
+    await first
+    expect(usePlayer.getState().currentSong?.file).toBe('b.mp3')
+  })
+})

@@ -143,6 +143,32 @@ describe('Discover view', () => {
     expect(frame!.getAttribute('src')).toContain('enablejsapi=1')
   })
 
+  it('falls back to the next YouTube hit when the first has no preview', async () => {
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [
+          { id: 'blocked', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' },
+          { id: 'playable', title: 'Midnight City (audio)', uploader: 'M83', durationSec: 240, thumbnail: '' },
+        ]
+      }
+      if (url.includes('/youtube/preview')) {
+        if (url.includes('id=blocked')) return { id: 'blocked', embeddable: false, audioUrl: null }
+        return { id: 'playable', embeddable: true, audioUrl: null }
+      }
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
+    await waitFor(() => {
+      expect(document.querySelector('iframe')?.getAttribute('src')).toContain(
+        'https://www.youtube.com/embed/playable',
+      )
+    })
+  })
+
   it('shows a notice when no preview exists', async () => {
     stubFetch((input) => (String(input).includes('/youtube/search') ? [] : payload))
     renderDiscover()

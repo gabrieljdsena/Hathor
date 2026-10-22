@@ -41,10 +41,21 @@ export function createUnloadPause(
       return
     }
     if (!token) return
+    const position =
+      typeof state.positionSec === 'number' && Number.isFinite(state.positionSec)
+        ? Math.max(0, state.positionSec)
+        : null
     try {
+      // Send the exact frozen position: by the time a keepalive lands the
+      // server's wall-clock estimate can have run past the song end, which
+      // would make the next resume skip the track instead of continuing it.
       post('/api/v1/player/pause', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ file: state.file ?? null, positionSec: position }),
         keepalive: true,
       })
     } catch {

@@ -299,32 +299,77 @@ function authHeaders(): HeadersInit {
 // Single-flight silent refresh: on 401 (non-auth endpoints only),
 // rotate via the stored refresh token once, then retry the request.
 // Returns false when there is nothing to refresh with (logged out).
-let refreshFlight: Promise<boolean> | null = null
+type RefreshResult = 'ok' | 'rejected' | 'unavailable'
+let refreshFlight: Promise<RefreshResult> | null = null
 
-function tryRefresh(): Promise<boolean> {
+function refreshTokens(): Promise<RefreshResult> {
   const refreshToken = localStorage.getItem('hathor:refresh')
-  if (!refreshToken) return Promise.resolve(false)
+  if (!refreshToken) return Promise.resolve('rejected')
   refreshFlight ??= fetch(`${BASE}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
   })
     .then(async (res) => {
-      if (!res.ok) throw new Error('refresh rejected')
+      // Explicit rejection means the session is gone. Network/5xx is
+      // transient: the audio retry loop must not log the user out because
+      // the server was temporarily unreachable.
+      if (res.status === 400 || res.status === 401 || res.status === 403) return 'rejected' as const
+      if (!res.ok) return 'unavailable' as const
       const tokens = (await res.json()) as { accessToken: string; refreshToken: string }
       localStorage.setItem('hathor:token', tokens.accessToken)
       localStorage.setItem('hathor:refresh', tokens.refreshToken)
-      return true
+      return 'ok' as const
     })
-    .catch(() => {
-      localStorage.removeItem('hathor:token')
-      localStorage.removeItem('hathor:refresh')
-      return false
-    })
+    .catch(() => 'unavailable' as const)
     .finally(() => {
       refreshFlight = null
     })
   return refreshFlight
+}
+
+function tryRefresh(): Promise<boolean> {
+  return refreshTokens().then((result) => {
+    if (result === 'ok') return true
+    localStorage.removeItem('hathor:token')
+    localStorage.removeItem('hathor:refresh')
+    return false
+  })
+}
+
+// JWT exp check for media URLs: streams bypass request(), so a 15-minute
+// access token baked into an <audio> URL goes stale with no 401-refresh path.
+export function tokenExpiresWithin(token: string, seconds: number): boolean {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return true
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4)
+    const json = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: unknown }
+    return typeof json.exp !== 'number' || json.exp * 1000 <= Date.now() + seconds * 1000
+  } catch {
+    return true
+  }
+}
+
+// Token for stream retries. Refreshes when close to expiry; on a transient
+// refresh failure it still returns the current token so the retry loop can
+// try again with backoff instead of killing playback/session.
+async function streamToken(): Promise<string> {
+  let token = ''
+  try {
+    token = localStorage.getItem('hathor:token') ?? ''
+  } catch {
+    return ''
+  }
+  if (!token || !tokenExpiresWithin(token, 60)) return token
+  if ((await refreshTokens()) === 'ok') {
+    try {
+      return localStorage.getItem('hathor:token') ?? token
+    } catch {
+      return token
+    }
+  }
+  return token
 }
 
 function logoutLocal() {
@@ -438,10 +483,14 @@ export const api = {
 
   // player state + headless controls (plan §4 — same surface external clients use)
   playerState: () => request<PlayerState>('/player/state'),
-  play: (file?: string, isPodcast?: boolean) =>
+  play: (file?: string, isPodcast?: boolean, instanceId?: string | null) =>
     request<PlayerState>('/player/play', {
       method: 'POST',
-      body: JSON.stringify({ file: file ?? null, isPodcast: isPodcast ?? null }),
+      body: JSON.stringify({
+        file: file ?? null,
+        isPodcast: isPodcast ?? null,
+        instanceId: instanceId ?? null,
+      }),
     }),
   setQueue: (currentFile: string | null, files: Song[], source: QueueSource | null, playlistId: number | null = null) =>
     request<PlayerState>('/player/queue', {
@@ -466,14 +515,25 @@ export const api = {
       }),
     }),
   toggle: () => request<PlayerState>('/player/toggle', { method: 'POST' }),
-  pause: () => request<PlayerState>('/player/pause', { method: 'POST' }),
+  // Idempotent pause. positionSec/file let a delayed retry preserve the spot
+  // the user actually paused at (the server estimate keeps running while the
+  // request is lost); resume is the matching explicit, idempotent command.
+  pause: (positionSec?: number | null, file?: string | null) =>
+    request<PlayerState>('/player/pause', {
+      method: 'POST',
+      body: JSON.stringify({ file: file ?? null, positionSec: positionSec ?? null }),
+    }),
+  resume: () => request<PlayerState>('/player/resume', { method: 'POST' }),
   // expectedFile: conditional advance for the crossfade handoff — the
   // server skips the advance when the current track already moved on
   // (manual transport consumed it), converging instead of skipping a song.
-  next: (expectedFile?: string | null) =>
+  next: (expectedFile?: string | null, auto = false) =>
     request<PlayerState>(
       '/player/next',
-      { method: 'POST', body: JSON.stringify({ expectedFile: expectedFile ?? null }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({ expectedFile: expectedFile ?? null, auto }),
+      },
     ),
   prev: () => request<PlayerState>('/player/prev', { method: 'POST' }),
   seek: (seconds: number) =>
@@ -506,8 +566,10 @@ export const api = {
   // history
   downloadHistory: (page = 1, pageSize = 10) =>
     request<PagedResult<HistoryItem>>(`/history/downloads?page=${page}&pageSize=${pageSize}`),
+  downloadHistoryFiles: () => request<string[]>('/history/downloads/files'),
   playedHistory: (page = 1, pageSize = 10) =>
     request<PagedResult<HistoryItem>>(`/history/played-songs?page=${page}&pageSize=${pageSize}`),
+  playedHistoryFiles: () => request<string[]>('/history/played-songs/files'),
   playedPlaylistHistory: (page = 1, pageSize = 10) =>
     request<PagedResult<PlayedPlaylistItem>>(`/history/played-playlists?page=${page}&pageSize=${pageSize}`),
   recentlyPlayed: (limit = 15) => request<Song[]>(`/songs/recently-played?limit=${limit}`),
@@ -620,6 +682,14 @@ export const api = {
     `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/stream?token=${encodeURIComponent(
       localStorage.getItem('hathor:token') ?? '',
     )}`,
+
+  // Recovery URL for the audio engine: refreshes an expiring access token
+  // first. The cached streamUrl above cannot do this — media requests never
+  // pass through request()'s 401 path.
+  freshStreamUrl: async (file: string, isPodcast = false) => {
+    const token = await streamToken()
+    return `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/stream?token=${encodeURIComponent(token)}`
+  },
 
   // Embedded art as a cacheable URL (browser HTTP cache owns the bytes —
   // no base64 in JS state). <img> cannot set headers, so the token rides

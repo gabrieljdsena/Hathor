@@ -22,7 +22,25 @@ describe('createUnloadPause', () => {
     expect(post).toHaveBeenCalledOnce()
     expect(post).toHaveBeenCalledWith('/api/v1/player/pause', {
       method: 'POST',
-      headers: { Authorization: 'Bearer tok123' },
+      headers: { Authorization: 'Bearer tok123', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: null, positionSec: null }),
+      keepalive: true,
+    })
+    stop()
+  })
+
+  it('sends the frozen position so a delayed pause cannot skip the track', () => {
+    const post = vi.fn()
+    const stop = createUnloadPause(
+      () => ({ isPlaying: true, hasTrack: true, file: 's.mp3', positionSec: 42.5 }),
+      () => 'tok',
+      post,
+    )
+    firePageHide()
+    expect(post).toHaveBeenNthCalledWith(1, '/api/v1/player/pause', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer tok', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: 's.mp3', positionSec: 42.5 }),
       keepalive: true,
     })
     stop()

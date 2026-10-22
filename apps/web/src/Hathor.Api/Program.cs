@@ -22,7 +22,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Services run non-interactive with System32 as CWD — without this the
 // service would look for wwwroot/appsettings next to System32.
 builder.Services.AddWindowsService(options => options.ServiceName = "Hathor");
-if (!Environment.UserInteractive)
+if (Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService())
     builder.WebHost.UseContentRoot(AppContext.BaseDirectory);
 // No Server: Kestrel version banner on any response.
 builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);

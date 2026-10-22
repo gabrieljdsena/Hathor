@@ -45,8 +45,11 @@ vi.mock('./audio/engine', () => ({
     seek: (...args: unknown[]) => mockEngineSeek(...args),
     // store/player wires these at module scope; no-op here.
       setNextProvider: vi.fn(),
+      setStreamUrlProvider: vi.fn(),
       onEnded: vi.fn(),
       onTailStuck: vi.fn(),
+      onBuffering: vi.fn(),
+      onFatal: vi.fn(),
     onReport: undefined,
     currentFile: () => null,
     isFading: () => false,
@@ -89,11 +92,11 @@ const spot: PlaybackSpot = {
   queueSource: { type: 'all_songs', id: null },
 }
 
-function renderBento(s: PlaybackSpot | null) {
+function renderBento(s: PlaybackSpot | null, variant?: 'bento' | 'banner') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <ResumeBento spot={s} />
+      <ResumeBento spot={s} variant={variant} />
     </QueryClientProvider>,
   )
 }
@@ -133,6 +136,27 @@ describe('ResumeBento', () => {
     expect(songPos).toBeGreaterThan(devicePos)
     expect(await screen.findByText('From Android')).toBeInTheDocument()
     expect(await screen.findByText('Title — Artist')).toBeInTheDocument()
+  })
+
+  it('banner shows the device, track and saved time without the dots trigger', async () => {
+    renderBento(spot, 'banner')
+    expect(await screen.findByText('Paused on Android')).toBeInTheDocument()
+    expect(await screen.findByText('Title — Artist · 1:35')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resume from another device' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume at 1:35' }))
+
+    await waitFor(() =>
+      expect(mockPlaySong).toHaveBeenCalledWith(
+        song,
+        [song, nextSong],
+        { type: 'all_songs', id: null },
+      ),
+    )
+    expect(mockEngineSeek).toHaveBeenCalledWith(95)
+    expect(mockSeek).toHaveBeenCalledWith(95)
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Resume at 1:35' })).toBeNull(),
+    )
   })
 
   it('tapping resume restores the full foreign queue at the saved position', async () => {

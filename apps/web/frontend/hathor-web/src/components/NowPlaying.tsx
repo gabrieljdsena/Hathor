@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { api } from '../api/client'
 import { usePlayer } from '../store/player'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
@@ -17,7 +16,8 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   const isPlaying = usePlayer((s) => s.isPlaying)
   const volume = usePlayer((s) => s.volume)
   const toggle = usePlayer((s) => s.toggle)
-  const syncAudio = usePlayer((s) => s.syncAudio)
+  const skipNext = usePlayer((s) => s.skipNext)
+  const skipPrev = usePlayer((s) => s.skipPrev)
   const chapter = useActiveChapter(song?.file, song?.isPodcast)
   const { offsetMs } = useLyricsOffset(song?.file, chapter?.id ?? null)
   const { data: lyrics, isLoading: lyricsLoading } = useSongLyrics(
@@ -41,13 +41,7 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
 
   const step = (which: 'prev' | 'next') => () => {
     if (chapterJump[which]()) return
-    const call = which === 'prev' ? api.prev() : api.next()
-    void call
-      .then((s) => {
-        usePlayer.setState(s)
-        syncAudio()
-      })
-      .catch(() => {})
+    void (which === 'prev' ? skipPrev() : skipNext())
   }
 
   if (!song) return null

@@ -71,7 +71,14 @@ export async function resumeFromSpot(
 // DEVICE first, then the song + saved position. Explicit tap only —
 // nothing auto-plays. Hidden when there is no foreign spot or it names
 // what is already playing.
-export default function ResumeBento({ spot }: { spot: PlaybackSpot | null }) {
+export default function ResumeBento({
+  spot,
+  variant = 'bento',
+}: {
+  spot: PlaybackSpot | null
+  variant?: 'bento' | 'banner'
+}) {
+  const banner = variant === 'banner'
   const menuId = useId()
   const currentFile = usePlayer((s) => s.currentSong?.file)
   const playSong = usePlayer((s) => s.playSong)
@@ -156,6 +163,36 @@ export default function ResumeBento({ spot }: { spot: PlaybackSpot | null }) {
         setBusy(false)
         setError(e instanceof Error ? e.message : 'Resume failed')
       },
+    )
+  }
+
+  if (banner) {
+    return (
+      <div
+        ref={boxRef}
+        onClick={(e) => e.stopPropagation()}
+        title={`Paused on ${device}: ${name} at ${formatTime(spot.positionSec)}`}
+        className="flex w-full items-center gap-2 rounded-xl border border-orange-500/25 bg-zinc-900/80 px-3 py-2"
+      >
+        <Icon name="brand" className="w-4 h-4 flex-shrink-0 text-orange-400" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-orange-300 truncate">
+            Paused on {device}
+          </div>
+          <div className="text-xs text-zinc-400 truncate">
+            {name} · {formatTime(spot.positionSec)}
+          </div>
+          {error && <div className="text-[11px] text-red-300 truncate">{error}</div>}
+        </div>
+        <button
+          type="button"
+          onClick={resume}
+          disabled={busy}
+          className="flex-shrink-0 rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-orange-400 disabled:opacity-50 cursor-pointer"
+        >
+          {busy ? 'Loading…' : `Resume at ${formatTime(spot.positionSec)}`}
+        </button>
+      </div>
     )
   }
 

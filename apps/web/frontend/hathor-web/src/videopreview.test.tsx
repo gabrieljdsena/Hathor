@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import VideoPreview from './components/ui/VideoPreview'
 
@@ -37,11 +37,51 @@ describe('VideoPreview', () => {
     // No autoPlay: a preview starting on its own reads as an
     // out-of-queue track after pausing the library.
     expect(document.querySelector('audio')?.hasAttribute('autoplay')).toBe(false)
+    // App-styled controls instead of the browser's native (blue) player.
+    expect(document.querySelector('audio')?.hasAttribute('controls')).toBe(false)
+    expect(screen.getByRole('button', { name: 'Play preview' })).toBeTruthy()
+    expect(screen.getByLabelText('Preview position')).toBeTruthy()
     expect(document.querySelector('iframe')).toBeNull()
     expect(screen.getByText('Watch on YouTube ↗')).toHaveAttribute(
       'href',
       'https://www.youtube.com/watch?v=abc',
     )
+  })
+
+  it('reports a dead preview so callers can try another candidate', async () => {
+    mockPreview.mockResolvedValue({ id: 'abc', embeddable: false, audioUrl: null })
+    const onUnavailable = vi.fn()
+    render(<VideoPreview id="abc" onUnavailable={onUnavailable} />)
+    await waitFor(() => {
+      expect(screen.getByText('No preview available for this video.')).toBeTruthy()
+    })
+    expect(onUnavailable).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes an expired audio URL once before giving up', async () => {
+    mockPreview.mockImplementation((id: unknown, resolveAudio?: unknown) =>
+      Promise.resolve({
+        id,
+        embeddable: false,
+        audioUrl: resolveAudio
+          ? 'https://r1---googlevideo.com/fresh'
+          : 'https://r1---googlevideo.com/stale',
+      }),
+    )
+    render(<VideoPreview id="abc" />)
+    let audio: HTMLAudioElement | null = null
+    await waitFor(() => {
+      audio = document.querySelector('audio')
+      expect(audio?.getAttribute('src')).toBe('https://r1---googlevideo.com/stale')
+    })
+
+    fireEvent.error(audio!)
+    await waitFor(() => {
+      expect(document.querySelector('audio')?.getAttribute('src')).toBe(
+        'https://r1---googlevideo.com/fresh',
+      )
+    })
+    expect(mockPreview).toHaveBeenLastCalledWith('abc', true)
   })
 
   it('shows notice plus watch link when neither works', async () => {
@@ -50,6 +90,7 @@ describe('VideoPreview', () => {
     await waitFor(() => {
       expect(screen.getByText('No preview available for this video.')).toBeTruthy()
     })
+    expect(screen.queryByText(/playing (its )?audio instead/)).toBeNull()
     expect(document.querySelector('iframe')).toBeNull()
     expect(document.querySelector('audio')).toBeNull()
   })

@@ -83,6 +83,8 @@ public sealed class RebuildQueueHandler(
                 return (await history.GetRecentPlayedFilesAsync(userId, 500, ct)).ToList();
             case QueueSourceTypes.RecentlyDownloaded:
                 return (await history.GetRecentDownloadedFilesAsync(userId, 500, ct)).ToList();
+            case QueueSourceTypes.DownloadHistory:
+                return (await history.GetDownloadHistoryFilesAsync(userId, 500, ct)).ToList();
             case QueueSourceTypes.Podcast:
                 return storage.PodcastExists(userId, current) ? [current] : null;
             default: // all_songs and unknown types fall back to the general list

@@ -20,8 +20,19 @@ export interface SongMenuHandle {
 // Play, Play Next, Add to Queue, Edit Info, Add to Playlist…, Delete).
 // Self-contained: owns Edit/Delete/Playlists dialogs, invalidates queries.
 // Claims the global menu bus on open so only one menu shows at a time.
-const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; sourceId?: string | null; hideButton?: boolean }>(function SongMenu(
-  { song, sourceType, sourceId = null, hideButton = false },
+const SongMenu = forwardRef<
+  SongMenuHandle,
+  {
+    song: Song
+    sourceType: string
+    sourceId?: string | null
+    hideButton?: boolean
+    // Context-aware Play (library rows, recent strips, history tabs). When
+    // omitted, Play keeps the legacy single-song behavior.
+    onPlay?: () => void
+  }
+>(function SongMenu(
+  { song, sourceType, sourceId = null, hideButton = false, onPlay },
   ref,
 ) {
   const menuId = useId()
@@ -113,7 +124,9 @@ const SongMenu = forwardRef<SongMenuHandle, { song: Song; sourceType: string; so
       key: 'play',
       label: 'Play',
       icon: 'play' as const,
-      run: () => void playSong(song, [song], { type: sourceType, id: null }),
+      run:
+        onPlay ??
+        (() => void playSong(song, [song], { type: sourceType, id: null })),
     },
     {
       key: 'next',

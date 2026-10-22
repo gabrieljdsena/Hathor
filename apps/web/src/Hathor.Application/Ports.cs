@@ -88,6 +88,8 @@ public interface IHistoryReadModel
         GetPlayedPlaylistPageAsync(Guid userId, int page, int pageSize, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetRecentPlayedFilesAsync(Guid userId, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetRecentDownloadedFilesAsync(Guid userId, int limit, CancellationToken ct = default);
+    // Same filter/order as the Download History tab (DownloadedLink present).
+    Task<IReadOnlyList<string>> GetDownloadHistoryFilesAsync(Guid userId, int limit, CancellationToken ct = default);
 }
 public interface ILibraryStorage
 {

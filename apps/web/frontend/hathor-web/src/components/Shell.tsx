@@ -133,7 +133,10 @@ export default function Shell() {
             isPlaying: s.isPlaying,
             hasTrack: s.currentSong !== null,
             file: s.currentSong?.file ?? null,
-            positionSec: engine.time(),
+            // Mid-fade the active element is the outgoing track while the
+            // store already names the incoming one; let the server keep its
+            // incoming estimate instead of seeking it to the old position.
+            positionSec: engine.isFading() ? undefined : engine.time(),
             isPodcast: !!s.currentSong?.isPodcast,
             deviceId: deviceId(),
             deviceLabel: deviceLabel(),
@@ -162,11 +165,6 @@ export default function Shell() {
   const helpRef = useRef(false)
   helpRef.current = showHelp
   useEffect(() => {
-    const track = (call: Promise<import('../api/client').PlayerState>) =>
-      void call.then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio()
-      })
     const onKey = (e: KeyboardEvent) => {
       if (helpRef.current && e.key === 'Escape') {
         setShowHelp(false)
@@ -185,12 +183,12 @@ export default function Shell() {
           const v = Math.min(1, Math.max(0, usePlayer.getState().volume + d))
           void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
         },
-        nextTrack: () => track(api.next()),
-        prevTrack: () => track(api.prev()),
+        nextTrack: () => void usePlayer.getState().skipNext(),
+        prevTrack: () => void usePlayer.getState().skipPrev(),
         chapterNext: () => jumpRef.current.next(),
         chapterPrev: () => jumpRef.current.prev(),
         shuffle: () => void api.shuffle().then((s) => usePlayer.setState(s)),
-        repeat: () => void api.repeat().then((s) => usePlayer.setState(s)),
+        repeat: () => void usePlayer.getState().toggleRepeat(),
         mute: () => {
           const store = usePlayer.getState()
           const v = store.volume > 0 ? 0 : 1.0

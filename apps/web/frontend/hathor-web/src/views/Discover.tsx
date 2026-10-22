@@ -18,6 +18,13 @@ import ViewHeader from '../components/ui/ViewHeader'
 // Download view: quiet when nothing is in flight).
 type SourceFilter = 'all' | 'artist' | 'chart' | 'llm'
 
+type PreviewState = {
+  ids: string[]
+  index: number
+  title: string
+  artist: string
+}
+
 const SOURCE_LABEL: Record<Exclude<SourceFilter, 'all'>, string> = {
   artist: 'From your artists',
   chart: 'Trending',
@@ -138,7 +145,7 @@ export default function Discover() {
   // Pending already-owned confirm.
   const [confirm, setConfirm] = useState<DiscoverItem | null>(null)
   const [previewing, setPreviewing] = useState<ReadonlySet<string>>(new Set())
-  const [preview, setPreview] = useState<{ id: string; title: string; artist: string } | null>(null)
+  const [preview, setPreview] = useState<PreviewState | null>(null)
   const debounced = useDebouncedValue(search)
 
   // Job progress per card, matched by submitted title/artist (the backend
@@ -214,13 +221,19 @@ export default function Discover() {
     const key = `${item.title} — ${item.artist}`
     setPreviewing((prev) => new Set(prev).add(key))
     try {
-      const hits = await api.youtubeSearch(`${item.title} ${item.artist}`, 1)
-      const hit = hits[0]
-      if (!hit) {
+      const hits = await api.youtubeSearch(`${item.title} ${item.artist}`, 5)
+      if (hits.length === 0) {
         setNotice(`No YouTube preview found for ${item.title}.`)
         return
       }
-      setPreview({ id: hit.id, title: item.title, artist: item.artist })
+      // Keep every hit: if the first is age-restricted or has no audio,
+      // VideoPreview asks for the next candidate instead of dead-ending.
+      setPreview({
+        ids: hits.map((hit) => hit.id),
+        index: 0,
+        title: item.title,
+        artist: item.artist,
+      })
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Preview failed.')
     } finally {
@@ -230,6 +243,13 @@ export default function Discover() {
         return next
       })
     }
+  }
+
+  const tryNextPreview = () => {
+    setPreview((p) => {
+      if (!p || p.index + 1 >= p.ids.length) return p
+      return { ...p, index: p.index + 1 }
+    })
   }
 
   const requestDownload = async (item: DiscoverItem) => {
@@ -395,7 +415,14 @@ export default function Discover() {
         title={preview ? `Preview: ${preview.title}` : 'Preview'}
         wide
       >
-        {preview && <VideoPreview id={preview.id} title={preview.title} />}
+        {preview && (
+          <VideoPreview
+            key={preview.ids[preview.index]}
+            id={preview.ids[preview.index]}
+            title={preview.title}
+            onUnavailable={tryNextPreview}
+          />
+        )}
       </Modal>
 
       <ConfirmModal

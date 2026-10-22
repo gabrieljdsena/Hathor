@@ -90,3 +90,38 @@ describe('ytdlp api', () => {
     expect(calls[0].init?.method).toBe('POST')
   })
 })
+
+describe('player api', () => {
+  function captureFetch(body: string) {
+    const calls: { input: unknown; init?: RequestInit }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        calls.push({ input, init })
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    return calls
+  }
+
+  it('sends the expected file and auto flag on next', async () => {
+    const calls = captureFetch('{}')
+    await api.next('a.mp3', true)
+    expect(calls[0].input).toBe('/api/v1/player/next')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      expectedFile: 'a.mp3',
+      auto: true,
+    })
+  })
+
+  it('sends a play instance id for explicit replay', async () => {
+    const calls = captureFetch('{}')
+    await api.play('a.mp3', false, 'instance-1')
+    expect(calls[0].input).toBe('/api/v1/player/play')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      file: 'a.mp3',
+      isPodcast: false,
+      instanceId: 'instance-1',
+    })
+  })
+})

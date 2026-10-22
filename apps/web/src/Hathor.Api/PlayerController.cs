@@ -63,8 +63,14 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
 
     [HttpPost("pause")]
     [Authorize(Policy = ScopeAuthorization.PlayerControl)]
-    public async Task<ActionResult<PlayerStateDto>> Pause(CancellationToken ct) =>
-        Ok(await mediator.Send(new PauseCommand(UserId), ct));
+    public async Task<ActionResult<PlayerStateDto>> Pause(
+        [FromBody] PauseRequest? body, CancellationToken ct) =>
+        Ok(await mediator.Send(new PauseCommand(UserId, body?.File, body?.PositionSec), ct));
+
+    [HttpPost("resume")]
+    [Authorize(Policy = ScopeAuthorization.PlayerControl)]
+    public async Task<ActionResult<PlayerStateDto>> Resume(CancellationToken ct) =>
+        Ok(await mediator.Send(new ResumeCommand(UserId), ct));
 
     [HttpPost("next")]
     [Authorize(Policy = ScopeAuthorization.PlayerControl)]
@@ -238,6 +244,7 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
 }
 
 public sealed record PlayRequest(string? File, bool? IsPodcast, string? InstanceId, bool Opening = false);
+public sealed record PauseRequest(string? File, double? PositionSec);
 public sealed record NextRequest(bool Auto = false, string? ExpectedFile = null);
 public sealed record SeekRequest(double Seconds);
 public sealed record SeekByRequest(double DeltaSeconds);

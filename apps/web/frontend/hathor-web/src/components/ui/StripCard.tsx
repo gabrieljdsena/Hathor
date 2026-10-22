@@ -58,6 +58,7 @@ export default function StripCard({
           }}
           song={song}
           sourceType={menuSourceType}
+          onPlay={onPlay}
           hideButton
         />
       )}

@@ -160,6 +160,19 @@ const TAIL_STUCK_WINDOW_SEC = 5
 // Minimum gap between tail-advance attempts: a failed advance (lost
 // response) must not double-advance the queue on every toggle.
 const TAIL_STUCK_COOLDOWN_MS = 30000
+// Network-class failures retry forever while playback is intended: a flaky
+// connection must never silently strand a song with the UI still saying
+// "playing". Backoff caps so a long outage keeps trying without a hot loop.
+const RETRY_BASE_MS = 500
+const RETRY_MAX_MS = 30000
+// Healthy playback for this long resets the backoff to the fast path.
+const HEALTHY_RESET_MS = 15000
+// Deterministic media failures (decode / unsupported source) get a few
+// fresh-URL attempts, then the store advances past the broken file.
+const FATAL_MEDIA_RETRIES = 3
+// Ignore transient readyState dips shorter than this before showing the
+// buffering state (normal loads/seek refills would otherwise flash).
+const BUFFERING_AFTER_MS = 700
 
 // Clamp a seek target into playable range. Duration-unknown (NaN, metadata
 // not loaded yet) keeps the old behavior — nothing better is knowable.
@@ -195,7 +208,19 @@ export class AudioEngine {
     async () => null
   private endedCb: () => void = () => {}
   private tailStuckCb: () => void = () => {}
+  private fatalCb: (file: string, reason: string) => void = () => {}
+  private bufferingCb: (buffering: boolean) => void = () => {}
   private timer: ReturnType<typeof setInterval> | null = null
+  // Explicit playback intent. The element can sit paused because of a
+  // failed load/stall; that is not a user pause and must keep retrying.
+  private wantPlaying = false
+  private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private retryAttempt = 0
+  private retrying = false
+  private retryEpoch = 0
+  private lastRetryAt = -Infinity
+  private buffering = false
+  private streamUrl: ((file: string, isPodcast: boolean) => string | Promise<string>) | null = null
   // Debug sink: the store wires this to the server log bridge (throttled).
   // Seeks/ends/errors/recoveries report here — the element swallows them
   // otherwise, which is exactly how far-seek stalls went undiagnosed.
@@ -233,6 +258,185 @@ export class AudioEngine {
     }
     return `file=${slot.file} pos=${slot.el.currentTime} dur=${slot.el.duration} ` +
       `paused=${slot.el.paused} seeking=${slot.el.seeking} readyState=${ready} net=${net} error=${err}`
+  }
+
+  private setBuffering(next: boolean) {
+    if (this.buffering === next) return
+    this.buffering = next
+    try {
+      this.bufferingCb(next)
+    } catch {
+      /* UI reporting must never break playback */
+    }
+  }
+
+  private mediaErrorCode(slot: Slot): number | null {
+    try {
+      return slot.el.error ? slot.el.error.code : null
+    } catch {
+      return null
+    }
+  }
+
+  // 1 = aborted (often a src swap/seek), 2 = network. No error object means
+  // the unload/watchdog path — both are transient and worth retrying.
+  private isTransientMediaError(slot: Slot): boolean {
+    const code = this.mediaErrorCode(slot)
+    return code === null || code === 1 || code === 2
+  }
+
+  private clearRetryTimer() {
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer)
+      this.retryTimer = null
+    }
+  }
+
+  private pauseQuietly(el: AudioElementLike) {
+    try {
+      el.pause()
+    } catch {
+      /* a dead element may throw */
+    }
+  }
+
+  // Cancel pending retries and invalidate any in-flight URL resolution.
+  // resetAttempts=false keeps the backoff history (used when playback
+  // recovers on its own or the user seeks); pause/load fully reset it.
+  private cancelRetry(resetAttempts = true) {
+    this.clearRetryTimer()
+    this.retrying = false
+    this.retryEpoch += 1
+    if (resetAttempts) {
+      this.retryAttempt = 0
+      this.lastRetryAt = -Infinity
+    }
+    this.setBuffering(false)
+  }
+
+  // Network/unload/stall retries are unbounded while playback is intended.
+  // A hard 3-strike cap is exactly what stranded songs with a lying UI.
+  private scheduleRetry(slot: Slot, reason: string) {
+    if (slot !== this.active || !this.wantPlaying || !slot.file) {
+      this.setBuffering(false)
+      return
+    }
+    if (this.retryTimer !== null) return // already scheduled
+    // Stranded at the tail after several retries: the remaining bytes are
+    // unplayable and `ended` will never fire. Advance instead of retrying
+    // forever a second short of the end (mid-track failures keep retrying).
+    if (this.strandIsTail() && this.retryAttempt >= MAX_RECOVERIES) {
+      if (this.deps.now() - this.lastTailAdvanceAt > TAIL_STUCK_COOLDOWN_MS) {
+        this.handleExhausted(slot, 'error')
+      } else {
+        // An advance already fired inside the cooldown and hasn't landed:
+        // park instead of fake-retrying or double-advancing the queue.
+        this.wantPlaying = false
+        this.pauseQuietly(slot.el)
+        this.setBuffering(false)
+        this.retrying = false
+      }
+      return
+    }
+    const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(this.retryAttempt, 6))
+    this.retryAttempt += 1
+    this.retrying = true
+    this.lastRetryAt = this.deps.now()
+    this.retryEpoch += 1
+    const epoch = this.retryEpoch
+    this.setBuffering(true)
+    this.report(`retry #${this.retryAttempt} in ${delay}ms (${reason}) ${this.describeSlot(slot)}`)
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      if (epoch !== this.retryEpoch) return
+      void this.runRetry(slot, reason)
+    }, delay)
+  }
+
+  private async runRetry(slot: Slot, reason: string) {
+    const epoch = this.retryEpoch
+    if (slot !== this.active || !this.wantPlaying || !slot.file) {
+      this.retrying = false
+      this.setBuffering(false)
+      return
+    }
+    let url = slot.url ?? ''
+    try {
+      if (this.streamUrl) {
+        const fresh = await this.streamUrl(slot.file, slot.isPodcast)
+        if (epoch !== this.retryEpoch) return
+        if (fresh) url = fresh
+      }
+    } catch (e: unknown) {
+      this.report(`stream URL refresh failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    if (epoch !== this.retryEpoch || slot !== this.active || !this.wantPlaying) return
+    try {
+      if (url) {
+        slot.url = url
+        slot.el.src = url
+        // Re-assigning the same URL does not always restart the pipeline;
+        // load() forces a fresh fetch after a failed range/expired token.
+        slot.el.load()
+      }
+      // Treat the attempt as a fresh load so the paused-watchdog cannot
+      // schedule a second retry before play() settles. lastLoadAt itself
+      // stays the file's original load time — driftTarget uses
+      // (lastRecoveryAt > lastLoadAt) to engage its recovery ceiling.
+      this.lastRetryRanAt = this.deps.now()
+      this.lastRecoveryAt = this.deps.now()
+      this.lastSeekAt = this.deps.now()
+      this.lastSeekTarget = Math.max(0, this.lastGoodTime)
+      this.lastAdvanceAt = this.deps.now()
+      this.retrying = false
+      try {
+        slot.el.currentTime = Math.max(0, this.lastGoodTime)
+      } catch (e: unknown) {
+        this.report(`retry seek threw: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      this.tryPlay(slot.el, `retry-${reason}`)
+    } catch (e: unknown) {
+      this.report(`retry threw: ${e instanceof Error ? e.message : String(e)}`)
+      this.scheduleRetry(slot, `${reason}-threw`)
+    }
+  }
+
+  // Called when the browser comes back online: retry immediately instead of
+  // waiting out a 30s backoff.
+  retryNow() {
+    if (!this.wantPlaying || !this.active.file) return
+    try {
+      if (!this.active.el.paused && this.active.el.readyState >= 3 && !this.isUnloaded(this.active)) return
+    } catch {
+      /* retry below regardless */
+    }
+    this.clearRetryTimer()
+    this.retryAttempt = 0
+    this.retrying = true
+    this.lastRetryAt = this.deps.now()
+    this.retryEpoch += 1
+    this.setBuffering(true)
+    void this.runRetry(this.active, 'online')
+  }
+
+  private handleFatalMedia(slot: Slot, reason: string) {
+    if (slot !== this.active) return
+    const file = slot.file
+    this.cancelRetry(true)
+    this.wantPlaying = false
+    this.report(`fatal media failure (${reason}), handing off ${this.describeSlot(slot)}`)
+    try {
+      slot.el.pause()
+    } catch {
+      /* ignore */
+    }
+    if (file) {
+      try {
+        this.fatalCb(file, reason)
+      } catch {
+        /* the store's recovery must never break the engine */
+      }
+    }
   }
 
   private tryPlay(el: AudioElementLike, why: string, retry = true) {
@@ -286,6 +490,7 @@ export class AudioEngine {
   private lastSeekAt = -Infinity
   private lastSeekTarget = 0
   private lastLoadAt = -Infinity
+  private lastRetryRanAt = -Infinity
 
   constructor(deps?: Partial<EngineDeps>) {
     const createElement =
@@ -395,6 +600,23 @@ export class AudioEngine {
     this.endedCb = cb
   }
 
+  // Buffering/reconnecting indicator (debounced by the caller's UI).
+  onBuffering(cb: (buffering: boolean) => void) {
+    this.bufferingCb = cb
+  }
+
+  // A file that cannot be decoded/streamed even after fresh-URL retries.
+  // The store advances the queue instead of freezing on it.
+  onFatal(cb: (file: string, reason: string) => void) {
+    this.fatalCb = cb
+  }
+
+  // Recovery URL provider: refresh access tokens before re-attaching the
+  // stream. Media requests bypass the API client's 401 refresh path.
+  setStreamUrlProvider(fn: (file: string, isPodcast: boolean) => string | Promise<string>) {
+    this.streamUrl = fn
+  }
+
   // Fired when the track strands at its tail: the final bytes are
   // unplayable, `ended` will never fire, and the recovery budget is spent.
   // The store treats it as finished (advance, or replay when repeat is on)
@@ -449,10 +671,13 @@ export class AudioEngine {
     }
   }
 
-  load(track: EngineTrack | null, autoplay: boolean) {
+  load(track: EngineTrack | null, autoplay: boolean, restart = false) {
     this.ensureContext()
     this.cancelFade()
+    this.cancelRetry(true)
+    this.wantPlaying = autoplay
     if (!track) {
+      this.wantPlaying = false
       this.active.el.pause()
       this.active.el.src = ''
       this.active.file = null
@@ -484,6 +709,25 @@ export class AudioEngine {
       this.lastTailAdvanceAt = -Infinity
       this.lastSeekAt = -Infinity
       this.lastLoadAt = this.deps.now()
+    } else if (restart) {
+      try {
+        this.active.el.currentTime = 0
+      } catch (e: unknown) {
+        this.report(`load restart currentTime threw: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      this.active.recoveries = 0
+      this.lastGoodTime = 0
+      this.lastRecoveryAt = -Infinity
+      this.lastUserSeekAt = -Infinity
+      this.lastTailAdvanceAt = -Infinity
+      this.lastSeekAt = -Infinity
+      this.lastLoadAt = this.deps.now()
+    } else if (autoplay) {
+      // Explicit (re)start of the same file (resume after a fatal error,
+      // repeat-one, remote play): grant a fresh recovery budget.
+      this.active.recoveries = 0
+      this.lastRecoveryAt = -Infinity
+      this.lastUserSeekAt = -Infinity
     }
     this.setSlotGain(this.active, 1)
     if (autoplay) this.tryPlay(this.active.el, 'load')
@@ -494,6 +738,7 @@ export class AudioEngine {
 
   play() {
     this.ensureContext()
+    this.wantPlaying = true
     this.startTimer()
     this.lastAdvanceAt = this.deps.now()
     // Resuming a paused fade shifts its start so progress freezes cleanly.
@@ -505,7 +750,10 @@ export class AudioEngine {
     if (this.fading) this.tryPlay(this.fading.incoming.el, 'play-fade-incoming')
   }
 
-  pause() {    if (this.fading && this.fading.pauseBeganAt === null) this.fading.pauseBeganAt = this.deps.now()
+  pause() {
+    this.wantPlaying = false
+    this.cancelRetry(true)
+    if (this.fading && this.fading.pauseBeganAt === null) this.fading.pauseBeganAt = this.deps.now()
     this.active.el.pause()
     if (this.fading) this.fading.incoming.el.pause()
   }
@@ -520,6 +768,9 @@ export class AudioEngine {
     if (isUserSeek) {
       this.active.recoveries = 0
       this.lastUserSeekAt = this.deps.now()
+      // Deliberate intent: drop any pending network retry so it cannot
+      // yank playback back to the pre-seek high-water mark.
+      this.cancelRetry(true)
     }
     // Clamp into playable range (element duration is the ground truth —
     // metadata estimates can overshoot it on huge VBR files, and landing
@@ -707,22 +958,13 @@ export class AudioEngine {
   }
 
   private recoverCutShortEnd(slot: Slot) {
-    if (slot.recoveries >= MAX_RECOVERIES) {
+    if (slot.recoveries >= FATAL_MEDIA_RETRIES) {
       this.handleExhausted(slot, 'cut-short')
       return
     }
     slot.recoveries += 1
-    try {
-      slot.el.currentTime = Math.max(0, this.lastGoodTime)
-      this.lastRecoveryAt = this.deps.now()
-      this.lastAdvanceAt = this.deps.now()
-      // `ended` fires out of playing state (see the spurious branch), so
-      // resuming here is always correct. lastSeekAt is deliberately left
-      // alone: the spurious guard keeps its per-seek semantics.
-      this.tryPlay(slot.el, 'cut-short-end')
-    } catch (e: unknown) {
-      this.report(`cut-short recovery threw: ${e instanceof Error ? e.message : String(e)}`)
-    }
+    this.report(`cut-short ended, retrying (#${slot.recoveries}) ${this.describeSlot(slot)}`)
+    this.scheduleRetry(slot, `cut-short-${slot.recoveries}`)
   }
 
   private readPaused(el: AudioElementLike): boolean {
@@ -757,33 +999,93 @@ export class AudioEngine {
     return this.lastSeekTarget < dur - 2
   }
 
-  // An element-level failure (bad range/416/decode stall after a far seek
-  // on a huge file): re-seek the last good position and resume if it was
-  // playing. Bounded — a genuinely broken file pauses instead of spinning.
+  // Element-level failures. Network-class errors (and the watchdog's null
+  // error) retry forever with backoff while playback is intended.
+  // Deterministic decode/source failures get a few fresh-URL attempts, then
+  // hand off to the store so it can advance past the broken file.
   private handleSlotError(slot: Slot) {
-    const wasPlaying = !slot.el.paused
-    if (slot.recoveries >= MAX_RECOVERIES) {
-      this.handleExhausted(slot, 'error')
+    const transient = this.isTransientMediaError(slot)
+    if (slot !== this.active) {
+      // Already cleared for a fresh preload: ignore late error events.
+      if (slot.file === null) {
+        slot.recoveries = 0
+        return
+      }
+      // Staged/preloaded slot failed: refresh its URL and re-attach. If it
+      // exhausts the bounded budget mid-fade, promote it (the store already
+      // names it) and let the active retry path own recovery. Never abort
+      // silently: the outgoing tail would then advance the server twice.
+      if (slot.recoveries >= MAX_RECOVERIES) {
+        slot.recoveries = 0
+        if (this.fading?.incoming === slot) {
+          this.finishFade()
+          if (this.wantPlaying) this.scheduleRetry(this.active, 'fade-error-exhausted')
+        } else {
+          slot.file = null
+          slot.url = null
+        }
+        return
+      }
+      slot.recoveries += 1
+      const wasPlaying = !this.readPaused(slot.el)
+      this.report(`slot error, re-attaching (#${slot.recoveries}) ${this.describeSlot(slot)}`)
+      void this.reattachSlot(slot, wasPlaying)
+      return
+    }
+    if (!this.wantPlaying) {
+      this.setBuffering(false)
+      return
+    }
+    if (transient) {
+      this.report(`element error (retrying): ${this.describeSlot(slot)}`)
+      // Hold the element during backoff: a glitched clock reading must not
+      // count as healthy progress and cancel the pending retry. Aborted
+      // errors are usually our own src swap — leave those alone.
+      if (this.mediaErrorCode(slot) !== 1) this.pauseQuietly(slot.el)
+      this.scheduleRetry(slot, 'element-error')
+      return
+    }
+    if (slot.recoveries >= FATAL_MEDIA_RETRIES) {
+      this.handleFatalMedia(slot, `media-error-${this.mediaErrorCode(slot) ?? 'unknown'}`)
       return
     }
     slot.recoveries += 1
     this.report(
-      `element error #${slot.recoveries}, recovering at lastGood=${this.lastGoodTime} ${this.describeSlot(slot)}`,
+      `element fatal error #${slot.recoveries}, retrying with a fresh URL ${this.describeSlot(slot)}`,
     )
+    this.scheduleRetry(slot, `media-error-${slot.recoveries}`)
+  }
+
+  // Re-attach a staged (preloaded / fade-incoming) slot with a fresh URL.
+  // Stream URLs carry access tokens, so a long preload window can expire
+  // them; refreshing here keeps the fade from handing over to a dead URL.
+  private async reattachSlot(slot: Slot, wasPlaying: boolean) {
+    let url = slot.url ?? ''
+    if (this.streamUrl && slot.file) {
+      try {
+        const fresh = await this.streamUrl(slot.file, slot.isPodcast)
+        if (fresh) url = fresh
+      } catch (e: unknown) {
+        this.report(`slot URL refresh failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    // The slot was repurposed or promoted to active while resolving:
+    // whichever path owns it now is responsible for its recovery.
+    if (slot === this.active || slot !== this.idle) return
     try {
-      // An unloaded pipeline (EMPTY/NO_SOURCE) ignores currentTime writes —
-      // re-attach first like the unload path, or the recovery seeks nowhere.
-      if (slot.url && this.isUnloaded(slot)) slot.el.src = slot.url
-      slot.el.currentTime = Math.max(0, this.lastGoodTime)
-      this.lastRecoveryAt = this.deps.now()
-      this.lastSeekAt = this.deps.now()
-      this.lastSeekTarget = Math.max(0, this.lastGoodTime)
-      this.lastAdvanceAt = this.deps.now()
-      if (wasPlaying) this.tryPlay(slot.el, 'error-recovery')
+      if (url) {
+        slot.url = url
+        slot.el.src = url
+        slot.el.load()
+      }
+      slot.el.currentTime = 0
+      // Idle preloads stay paused; only a live fade incoming resumes, and
+      // only if playback is still intended (a user pause wins).
+      if (wasPlaying && this.wantPlaying && this.fading?.incoming === slot) {
+        this.tryPlay(slot.el, 'fade-error-recovery')
+      }
     } catch (e: unknown) {
-      this.report(
-        `error recovery threw: ${e instanceof Error ? e.message : String(e)} ${this.describeSlot(slot)}`,
-      )
+      this.report(`slot recovery threw: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -797,15 +1099,26 @@ export class AudioEngine {
     return this.lastGoodTime >= d - TAIL_STUCK_WINDOW_SEC
   }
 
-  // Shared give-up path for all bounded recoveries. A strand at the tail
-  // while trying to play means the track is over as far as the bytes are
-  // concerned (`ended` will never fire): fire the tail callback once
-  // (cooldown-guarded) so the queue advances instead of freezing the bar a
-  // second short forever. Anything else — mid-track, unknown length, or
-  // deliberately paused — pauses exactly like before.
+  // Natural finish already fired: don't schedule a load retry while the
+  // store's auto-advance is in flight.
+  private atEnd(): boolean {
+    try {
+      const d = this.active.el.duration
+      const t = this.active.el.currentTime
+      return Number.isFinite(d) && d > 0 && Number.isFinite(t) && t >= d - END_EPSILON_SEC
+    } catch {
+      return false
+    }
+  }
+
+  // Shared bounded-recovery exhaustion path. A strand at the tail while
+  // trying to play means the track is over as far as the bytes are
+  // concerned (`ended` will never fire): fire the tail callback so the
+  // queue advances instead of freezing a second short forever. Mid-track
+  // deterministic failures hand off to the store for auto-skip instead of
+  // pausing with a UI that still claims to be playing.
   private handleExhausted(slot: Slot, kind: 'cut-short' | 'error' | 'unload') {
     if (
-      !this.readPaused(slot.el) &&
       this.strandIsTail() &&
       this.deps.now() - this.lastTailAdvanceAt > TAIL_STUCK_COOLDOWN_MS
     ) {
@@ -818,6 +1131,10 @@ export class AudioEngine {
         /* ignore */
       }
       this.tailStuckCb()
+      return
+    }
+    if (slot === this.active && this.wantPlaying) {
+      this.handleFatalMedia(slot, `${kind}-exhausted`)
       return
     }
     this.report(`${kind} recovery exhausted, pausing ${this.describeSlot(slot)}`)
@@ -883,6 +1200,8 @@ export class AudioEngine {
     this.lastAdvanceAt = this.deps.now()
     this.lastLoadAt = this.deps.now()
     this.lastRecoveryAt = -Infinity
+    this.cancelRetry(true)
+    this.active.recoveries = 0
   }
 
   // Stream unloaded underneath us (EMPTY/NO_SOURCE with a file assigned).
@@ -895,49 +1214,52 @@ export class AudioEngine {
     }
   }
 
-  // Re-attach an unloaded stream at the last good position (or the seek
-  // target if newer), resuming only if it was playing. Bounded like all
-  // recoveries; exhaustion pauses instead of fake-playing.
+  // Stream unloaded underneath us: retry forever while playback is intended
+  // (the URL provider refreshes expired tokens on every attempt).
   private recoverUnload(slot: Slot) {
-    const wasPlaying = !slot.el.paused
-    if (slot.recoveries >= MAX_RECOVERIES) {
-      this.handleExhausted(slot, 'unload')
-      return
-    }
-    slot.recoveries += 1
-    this.report(`stream unloaded, re-attaching (#${slot.recoveries}) ${this.describeSlot(slot)}`)
-    try {
-      // Re-assigning src forces the pipeline to fetch again; without this
-      // the element sits EMPTY forever even though the URL is fine.
-      if (slot.url) slot.el.src = slot.url
-      slot.el.currentTime = Math.max(0, this.lastGoodTime)
-      this.lastRecoveryAt = this.deps.now()
-      this.lastAdvanceAt = this.deps.now()
-      if (wasPlaying) this.tryPlay(slot.el, 'unload-recovery')
-    } catch (e: unknown) {
-      this.report(`unload recovery threw: ${e instanceof Error ? e.message : String(e)}`)
-    }
+    this.pauseQuietly(slot.el)
+    this.scheduleRetry(slot, 'unload')
   }
 
   // Frozen-clock watchdog: a playing element whose time stops advancing
-  // (stalled range request on a huge file, no error event) gets a recovery
-  // seek; the error listener covers hard failures. Seeking state never
-  // counts as stalled — the clock legitimately holds still mid-seek.
+  // (stalled range request on a huge file, no error event) gets a retry.
+  // The error listener covers hard failures. Seeking state never counts as
+  // stalled — the clock legitimately holds still mid-seek.
   private watchStall() {
     const el = this.active.el
-    const t = el.currentTime
+    let t: number
+    try {
+      t = el.currentTime
+    } catch {
+      return
+    }
     const now = this.deps.now()
     if (el.seeking || !Number.isFinite(t) || t < 0) return
     if (t > this.lastGoodTime) {
       this.lastGoodTime = t
       this.lastAdvanceAt = now
+      // Playback (or a retry) is working again: drop any pending retry
+      // before it interrupts healthy audio, and relax the backoff after a
+      // sustained healthy stretch.
+      if (this.retryTimer !== null) this.cancelRetry(false)
+      this.retrying = false
+      this.setBuffering(false)
+      if (now - this.lastRetryAt > HEALTHY_RESET_MS) {
+        this.retryAttempt = 0
+        this.lastRetryAt = -Infinity
+      }
       return
+    }
+    // No media-time progress for a moment: show buffering instead of a
+    // frozen bar. The retry itself waits for the longer stall timeout.
+    if (this.wantPlaying && now - this.lastAdvanceAt > BUFFERING_AFTER_MS) {
+      this.setBuffering(true)
     }
     if (now - this.lastAdvanceAt > STALL_TIMEOUT_MS) {
       const frozenSec = Math.round((now - this.lastAdvanceAt) / 1000)
       this.lastAdvanceAt = now
       this.report(`stall watchdog fired (frozen ~${frozenSec}s): ${this.describeSlot(this.active)}`)
-      this.handleSlotError(this.active)
+      this.scheduleRetry(this.active, 'stall-watchdog')
     }
   }
 
@@ -968,10 +1290,10 @@ export class AudioEngine {
       return
     }
     // Unloaded stream (the suspected long-file killer): EMPTY/NO_SOURCE
-    // with a file still assigned, past the post-load/seek grace. Fires
-    // whether paused or not — a user-paused element keeps its resource, so
-    // this only trips on genuine loss. Recovery re-attaches the stream.
-    if (this.active.file !== null && this.isUnloaded(this.active)) {
+    // with a file still assigned, past the post-load/seek grace. A
+    // user-paused element keeps its resource, so this only trips when
+    // playback is intended. Recovery re-attaches with a fresh URL.
+    if (this.wantPlaying && !this.retrying && this.active.file !== null && this.isUnloaded(this.active)) {
       const now = this.deps.now()
       if (now - this.lastLoadAt > UNLOAD_GRACE_MS && now - this.lastSeekAt > UNLOAD_GRACE_MS) {
         this.lastLoadAt = now
@@ -980,6 +1302,17 @@ export class AudioEngine {
       }
     }
     if (!this.active.el || this.active.el.paused) {
+      // The element paused itself without a user pause (failed load, lost
+      // stream, exhausted legacy path). Keep the intent alive and retry.
+      if (
+        this.wantPlaying &&
+        !this.retrying &&
+        this.active.file !== null &&
+        !this.atEnd() &&
+        this.deps.now() - Math.max(this.lastLoadAt, this.lastRetryRanAt) > UNLOAD_GRACE_MS
+      ) {
+        this.scheduleRetry(this.active, 'element-paused')
+      }
       // Paused (or nothing loaded): freeze fade progress. While a fade is
       // paused only the *incoming* may still be running (autoplay race) —
       // hold it too so both resume in sync.
@@ -1100,6 +1433,7 @@ export class AudioEngine {
     this.setSlotGain(incoming, 0)
     this.fading = null
     if (actual && this.active.file !== actual.file) {
+      this.cancelRetry(true)
       this.active.el.src = actual.url
       this.active.el.currentTime = 0
       this.active.file = actual.file
