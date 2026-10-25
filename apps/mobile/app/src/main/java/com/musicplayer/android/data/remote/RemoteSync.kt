@@ -6,28 +6,36 @@ import com.musicplayer.android.data.api.RemoteDeletionRow
 import com.musicplayer.android.data.api.SyncApi
 import com.musicplayer.android.data.api.SyncApiException
 import com.musicplayer.android.data.api.SyncConfig
-import com.musicplayer.android.data.db.AppDatabase
-import com.musicplayer.android.data.db.DailyMixEntity
-import com.musicplayer.android.data.db.LyricEntity
-import com.musicplayer.android.data.db.MusicHistoryEntry
-import com.musicplayer.android.data.db.PlaylistEntity
-import com.musicplayer.android.data.db.PlaylistHistoryEntry
-import com.musicplayer.android.data.db.PodcastChapterEntity
-import com.musicplayer.android.data.db.PodcastEntity
-import com.musicplayer.android.data.db.PodcastTagEntity
-import com.musicplayer.android.data.db.PodcastTagLink
-import com.musicplayer.android.data.db.SongEntity
-import com.musicplayer.android.data.db.SongPlaylistLink
+import com.musicplayer.android.data.local.AppDatabase
+import com.musicplayer.android.data.local.DailyMixEntity
+import com.musicplayer.android.data.local.LyricEntity
+import com.musicplayer.android.data.local.MusicHistoryEntity
+import com.musicplayer.android.data.local.PlaylistEntity
+import com.musicplayer.android.data.local.PlaylistHistoryEntity
+import com.musicplayer.android.data.local.PodcastChapterEntity
+import com.musicplayer.android.data.local.PodcastEntity
+import com.musicplayer.android.data.local.PodcastTagEntity
+import com.musicplayer.android.data.local.PodcastTagLinkEntity
+import com.musicplayer.android.data.local.SongEntity
+import com.musicplayer.android.data.local.SongPlaylistEntity
 import com.musicplayer.android.engine.DownloadEngine
 import java.io.File
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import org.json.JSONArray
 
 // Pull merge: server delta -> local Room + missing-file byte downloads
 // (desktop api_sync pull, 1:1). One bad row never aborts the pull.
-// Server tombstones (deletions-since) ARE applied — unlike the retired
-// JDBC pull, a delta must converge deletes or they resurrect. The sync
-// cursor persists in the "hathor" prefs and advances only on full success.
+// Server tombstones (deletions-since) ARE applied. The sync cursor persists
+// in the "hathor" prefs and advances only on full success.
+//
+// This writes into data.local (music_player.db) — the same Room database the
+// screens read — so a pull is visible immediately. It used to write into a
+// separate data.db/hathor.db instance that no UI code ever queried.
 object RemoteSync {
     private const val TAG = "RemoteSync"
     private const val CURSOR_KEY = "sync_cursor"
@@ -61,10 +69,16 @@ object RemoteSync {
         var downloadsFailed = 0
 
         for (row in snapshot.songs) {
-            val existing = db.songDao().byFile(row.file)
+            val existing = db.songDao().getByFile(row.file)
             if (existing == null) {
                 db.songDao().insertIgnore(
-                    SongEntity(row.file, row.downloadedLink, row.title, row.dateDownloadMillis, row.artist),
+                    SongEntity(
+                        file = row.file,
+                        downloadedLink = row.downloadedLink,
+                        title = row.title,
+                        dateDownload = dateText(row.dateDownloadMillis),
+                        artist = row.artist,
+                    ),
                 )
                 addedSongs++
             }
@@ -76,10 +90,16 @@ object RemoteSync {
         }
 
         for (row in snapshot.podcasts) {
-            val existing = db.podcastDao().byFile(row.file)
+            val existing = db.podcastDao().getByFile(row.file)
             if (existing == null) {
                 db.podcastDao().insertIgnore(
-                    PodcastEntity(row.file, row.downloadedLink, row.title, row.dateDownloadMillis, row.artist),
+                    PodcastEntity(
+                        file = row.file,
+                        downloadedLink = row.downloadedLink,
+                        title = row.title,
+                        dateDownload = dateText(row.dateDownloadMillis),
+                        artist = row.artist,
+                    ),
                 )
                 addedPodcasts++
             }
@@ -91,36 +111,37 @@ object RemoteSync {
         }
 
         for (row in snapshot.playlists) {
-            val existing = db.playlistDao().byId(row.id)
+            val existing = db.playlistDao().getPlaylist(row.id)
             if (existing == null) {
-                db.playlistDao().insertIgnore(
+                db.playlistDao().insertPlaylistIgnore(
                     PlaylistEntity(row.id, row.title, row.description, row.thumbnail),
                 )
             } else {
-                db.playlistDao().update(
+                db.playlistDao().updatePlaylist(
                     existing.copy(title = row.title, description = row.description, thumbnail = row.thumbnail),
                 )
             }
         }
         for (row in snapshot.songLinks) {
-            if (db.songPlaylistDao().insertIgnore(
-                    SongPlaylistLink(row.id, row.songFile, row.playlistId, row.dateAddedMillis),
-                ) == -1L
-            ) {
-                // Row exists under this id: scoped replace happens on push;
-                // pull only fills gaps, never rewrites links.
-            }
+            db.playlistDao().insertSongLinkIgnore(
+                SongPlaylistEntity(
+                    id = row.id,
+                    songFile = row.songFile,
+                    playlistId = row.playlistId,
+                    dateAdded = dateText(row.dateAddedMillis),
+                ),
+            )
         }
         for (row in snapshot.lyrics) {
-            if (db.lyricDao().insertIgnore(
+            if (db.playlistDao().insertLyricIgnore(
                     LyricEntity(row.id, row.songFile, row.lyrics, row.offsetMs),
                 ) == -1L
             ) {
-                val current = db.lyricDao().byId(row.id)
+                val current = db.playlistDao().lyricById(row.id)
                 if (current != null) {
                     // Preserve the highlight offset on update (it used to be
                     // dropped here, desyncing nudged songs after every pull).
-                    db.lyricDao().update(
+                    db.playlistDao().updateLyricEntity(
                         current.copy(
                             songFile = row.songFile, lyrics = row.lyrics,
                             offsetMs = row.offsetMs,
@@ -130,30 +151,24 @@ object RemoteSync {
             }
         }
         for (row in snapshot.musicHistory) {
-            if (db.musicHistoryDao().insertIgnore(
-                    MusicHistoryEntry(row.id, row.songFile, row.datePlayedMillis),
-                ) == -1L
-            ) {
-                // History rows are append-only; id collision = already have it.
-            }
+            db.playlistDao().insertMusicHistoryIgnore(
+                MusicHistoryEntity(row.id, row.songFile, dateText(row.datePlayedMillis)),
+            )
         }
         for (row in snapshot.playlistHistory) {
-            if (db.playlistHistoryDao().insertIgnore(
-                    PlaylistHistoryEntry(row.id, row.playlistId, row.datePlayedMillis),
-                ) == -1L
-            ) {
-                // Same append-only rule as music history.
-            }
+            db.playlistDao().insertPlaylistHistoryIgnore(
+                PlaylistHistoryEntity(row.id, row.playlistId, dateText(row.datePlayedMillis)),
+            )
         }
         for (row in snapshot.tags) {
             if (db.podcastTagDao().insertIgnore(PodcastTagEntity(row.id, row.name)) == -1L) {
-                val current = db.podcastTagDao().byId(row.id)
-                if (current != null) db.podcastTagDao().update(current.copy(name = row.name))
+                val current = db.podcastTagDao().tagById(row.id)
+                if (current != null) db.podcastTagDao().updateTag(current.copy(name = row.name))
             }
         }
         for (row in snapshot.tagLinks) {
-            db.podcastTagLinkDao().insertIgnore(
-                PodcastTagLink(row.id, row.podcastFile, row.tagId),
+            db.podcastTagLinkDao().insertLinkIgnore(
+                PodcastTagLinkEntity(row.id, row.podcastFile, row.tagId),
             )
         }
         // Episode chapters (upsert by id; empty delta never wipes local).
@@ -182,12 +197,12 @@ object RemoteSync {
                 try {
                     // Validate the JSON shape; malformed rows are skipped.
                     JSONArray(mix.songFilesJson)
-                    db.dailyMixDao().replace(DailyMixEntity(mix.mixDate, mix.songFilesJson))
+                    db.dailyMixDao().save(DailyMixEntity(mix.mixDate, mix.songFilesJson))
                 } catch (_: Exception) {
                     continue
                 }
             }
-            db.dailyMixDao().pruneBefore(LocalDate.now().toString())
+            db.dailyMixDao().purgeNonToday(LocalDate.now().toString())
         }
 
         // Cursor advances only on full success (one bad row never aborts,
@@ -210,31 +225,31 @@ object RemoteSync {
             try {
                 when (d.tableName.lowercase()) {
                     "songs" -> {
-                        db.songDao().deleteByFile(d.rowKey)
-                        db.songPlaylistDao().deleteByFile(d.rowKey)
-                        db.lyricDao().deleteByFile(d.rowKey)
-                        db.musicHistoryDao().deleteByFile(d.rowKey)
+                        db.songDao().deleteSong(d.rowKey)
+                        db.playlistDao().deleteLinksForSong(d.rowKey)
+                        db.playlistDao().deleteLyricsForSong(d.rowKey)
+                        db.playlistDao().deleteMusicHistoryForSong(d.rowKey)
                         deleteDiskFile(engine.outputDir(), d.rowKey)
                     }
                     "podcasts" -> {
                         db.podcastDao().deleteByFile(d.rowKey)
-                        db.podcastTagLinkDao().deleteForEpisode(d.rowKey)
+                        db.podcastTagLinkDao().deleteLinksForFile(d.rowKey)
                         db.podcastChapterDao().deleteForEpisode(d.rowKey)
                         deleteDiskFile(engine.podcastsDir(), d.rowKey)
                     }
                     "playlists" -> d.rowKey.toLongOrNull()?.let { id ->
-                        db.songPlaylistDao().deleteForPlaylists(listOf(id))
-                        db.playlistHistoryDao().deleteByPlaylistId(id)
-                        db.playlistDao().deleteById(id)
+                        db.playlistDao().deleteSongLinksForPlaylists(listOf(id))
+                        db.playlistDao().deletePlaylistHistory(id)
+                        db.playlistDao().deletePlaylistById(id)
                     }
-                    "lyrics" -> db.lyricDao().deleteByFile(d.rowKey)
-                    "music_history" -> db.musicHistoryDao().deleteByFile(d.rowKey)
+                    "lyrics" -> db.playlistDao().deleteLyricsForSong(d.rowKey)
+                    "music_history" -> db.playlistDao().deleteMusicHistoryForSong(d.rowKey)
                     "playlist_history" -> d.rowKey.toLongOrNull()?.let {
-                        db.playlistHistoryDao().deleteByPlaylistId(it)
+                        db.playlistDao().deletePlaylistHistory(it)
                     }
                     "podcast_tags" -> d.rowKey.toLongOrNull()?.let { id ->
-                        db.podcastTagLinkDao().deleteForTags(listOf(id))
-                        db.podcastTagDao().deleteById(id)
+                        db.podcastTagDao().deleteLinksForTags(listOf(id))
+                        db.podcastTagDao().deleteTagById(id)
                     }
                     "podcast_chapters" -> db.podcastChapterDao().deleteForEpisode(d.rowKey)
                 }
@@ -275,4 +290,12 @@ object RemoteSync {
             false
         }
     }
+
+    // Server ISO timestamps -> the desktop text shape the local DB and UI
+    // already use ("yyyy-MM-dd HH:mm:ss", UTC). Pull used to store raw ISO,
+    // which PodcastsScreen.shortDate could not parse and re-pushed verbatim.
+    private val STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
+
+    private fun dateText(millis: Long): String =
+        LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneOffset.UTC).format(STAMP)
 }

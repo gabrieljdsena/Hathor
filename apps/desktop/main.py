@@ -4,6 +4,9 @@ import subprocess
 from dotenv import load_dotenv
 
 load_dotenv()
+# Also look next to main.py, so launching from the repo root or an IDE with a
+# different working directory still finds the desktop .env.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # In a frozen build the .env must live next to the exe (never bundled inside it).
 if getattr(sys, 'frozen', False):

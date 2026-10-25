@@ -2,12 +2,12 @@ package com.musicplayer.android.data
 
 import android.content.Context
 import android.util.Log
-import com.musicplayer.android.data.db.AppDatabase
-import com.musicplayer.android.data.db.PodcastChapterEntity
-import com.musicplayer.android.data.db.PodcastEntity
-import com.musicplayer.android.data.db.PodcastTagEntity
-import com.musicplayer.android.data.db.PodcastTagLink
-import com.musicplayer.android.data.db.SyncDeletion
+import com.musicplayer.android.data.local.AppDatabase
+import com.musicplayer.android.data.local.PodcastChapterEntity
+import com.musicplayer.android.data.local.PodcastEntity
+import com.musicplayer.android.data.local.PodcastTagEntity
+import com.musicplayer.android.data.local.PodcastTagLinkEntity
+import com.musicplayer.android.data.local.SyncDeletionEntity
 import com.musicplayer.android.engine.DownloadEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,27 +50,27 @@ class PodcastRepository(
         File(appCtx.filesDir, "podcasts")
     }
 
+    /** Public folder handle used by the episode metadata dialog. */
+    fun dir(): File = podsDir()
+
     private fun toMeta(row: PodcastEntity): SongMeta = SongMeta(
         file = row.file,
         title = row.title,
         artist = row.artist.orEmpty(),
         album = "",
         durationSec = 0,
-        dateDownload = row.dateDownloadMillis.takeIf { it > 0 }?.let {
-            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-                .format(java.util.Date(it))
-        },
+        dateDownload = row.dateDownload,
         isPodcast = true,
     )
 
     suspend fun refresh() {
         try {
-            val rows = db.podcastDao().all()
+            val rows = db.podcastDao().getAll()
             _episodes.value = rows.map(::toMeta)
-            val links = db.podcastTagLinkDao().all()
+            val links = db.podcastTagLinkDao().getLinks()
             _tagsByFile.value = links.groupBy({ it.podcastFile }, { it.tagId })
             val counts = links.groupingBy { it.tagId }.eachCount()
-            _tags.value = db.podcastTagDao().all().map {
+            _tags.value = db.podcastTagDao().getTags().map {
                 PodcastTag(it.id, it.name, counts[it.id] ?: 0)
             }
         } catch (e: Exception) {
@@ -88,10 +88,10 @@ class PodcastRepository(
             var added = 0
             var updated = 0
             for (f in files) {
-                val row = db.podcastDao().byFile(f.name)
+                val row = db.podcastDao().getByFile(f.name)
                 if (row == null) {
                     db.podcastDao().insertIgnore(
-                        PodcastEntity(f.name, null, f.nameWithoutExtension, f.lastModified(), null),
+                        PodcastEntity(f.name, null, f.nameWithoutExtension, nowDate(), null),
                     )
                     added++
                 }
@@ -110,7 +110,7 @@ class PodcastRepository(
             metadata.metaFor(File(podsDir(), file))
         } catch (_: Exception) {
             try {
-                db.podcastDao().byFile(file)?.let(::toMeta)
+                db.podcastDao().getByFile(file)?.let(::toMeta)
             } catch (_: Exception) {
                 null
             }
@@ -119,7 +119,7 @@ class PodcastRepository(
 
     suspend fun updateInfo(file: String, title: String, artist: String) {
         try {
-            val row = db.podcastDao().byFile(file) ?: return
+            val row = db.podcastDao().getByFile(file) ?: return
             db.podcastDao().update(row.copy(title = title, artist = artist.takeIf { it.isNotBlank() }))
             refresh()
         } catch (e: Exception) {
@@ -134,11 +134,11 @@ class PodcastRepository(
         } catch (_: Exception) {
         }
         try {
-            db.podcastTagLinkDao().deleteForEpisode(file)
+            db.podcastTagLinkDao().deleteLinksForFile(file)
             db.podcastDao().deleteByFile(file)
             db.podcastChapterDao().deleteForEpisode(file)
-            db.syncDeletionDao().insert(SyncDeletion(tableName = "podcasts", rowKey = file))
-            db.syncDeletionDao().insert(SyncDeletion(tableName = "podcast_chapters", rowKey = file))
+            db.syncDeletionDao().insert(SyncDeletionEntity(tableName = "podcasts", rowKey = file))
+            db.syncDeletionDao().insert(SyncDeletionEntity(tableName = "podcast_chapters", rowKey = file))
             refresh()
         } catch (e: Exception) {
             Log.w(TAG, "episode delete failed", e)
@@ -149,14 +149,14 @@ class PodcastRepository(
         val clean = name.trim()
         if (clean.isEmpty()) return -1L
         return try {
-            val existing = db.podcastTagDao().all().firstOrNull { it.name == clean }
+            val existing = db.podcastTagDao().getTags().firstOrNull { it.name == clean }
             if (existing != null) {
                 existing.id
             } else {
                 val id = db.podcastTagDao().insertIgnore(PodcastTagEntity(name = clean))
                 refresh()
                 if (id == -1L) {
-                    db.podcastTagDao().all().firstOrNull { it.name == clean }?.id ?: -1L
+                    db.podcastTagDao().getTags().firstOrNull { it.name == clean }?.id ?: -1L
                 } else {
                     id
                 }
@@ -171,10 +171,10 @@ class PodcastRepository(
         val clean = name.trim()
         if (clean.isEmpty()) return false
         return try {
-            val clash = db.podcastTagDao().all().firstOrNull { it.name == clean }
+            val clash = db.podcastTagDao().getTags().firstOrNull { it.name == clean }
             if (clash != null && clash.id != id) return false
-            val row = db.podcastTagDao().byId(id) ?: return false
-            db.podcastTagDao().update(row.copy(name = clean))
+            val row = db.podcastTagDao().tagById(id) ?: return false
+            db.podcastTagDao().updateTag(row.copy(name = clean))
             refresh()
             true
         } catch (e: Exception) {
@@ -185,9 +185,9 @@ class PodcastRepository(
 
     suspend fun deleteTag(id: Long) {
         try {
-            db.podcastTagLinkDao().deleteForTags(listOf(id))
-            db.podcastTagDao().deleteById(id)
-            db.syncDeletionDao().insert(SyncDeletion(tableName = "podcast_tags", rowKey = id.toString()))
+            db.podcastTagLinkDao().deleteLinksForTags(listOf(id))
+            db.podcastTagDao().deleteTagById(id)
+            db.syncDeletionDao().insert(SyncDeletionEntity(tableName = "podcast_tags", rowKey = id.toString()))
             refresh()
         } catch (e: Exception) {
             Log.w(TAG, "tag delete failed", e)
@@ -196,7 +196,7 @@ class PodcastRepository(
 
     suspend fun assignTag(file: String, tagId: Long): Boolean {
         return try {
-            db.podcastTagLinkDao().insertIgnore(PodcastTagLink(podcastFile = file, tagId = tagId))
+            db.podcastTagLinkDao().insertLinkIgnore(PodcastTagLinkEntity(podcastFile = file, tagId = tagId))
             refresh()
             true
         } catch (e: Exception) {
@@ -284,5 +284,9 @@ class PodcastRepository(
 
     companion object {
         private const val TAG = "PodcastRepository"
+
+        private fun nowDate(): String =
+            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(java.util.Date())
     }
 }

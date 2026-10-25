@@ -153,9 +153,14 @@ def _norm_snapshot(snap):
 
 
 def _iso(dt):
-    """'YYYY-MM-DD HH:MM:SS' (UTC, local DB shape) -> ISO-8601 UTC."""
+    """'YYYY-MM-DD HH:MM:SS' (UTC, local DB shape) -> ISO-8601 UTC.
+
+    The server DTOs take a non-nullable DateTime: an explicit JSON null
+    rejects the WHOLE import with 400, so undated rows push as "now"
+    (mobile does the same). Older local rows can have a null date_download.
+    """
     if not dt:
-        return None
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     s = str(dt).strip()
     if " " in s and "T" not in s:
         s = s.replace(" ", "T", 1)

@@ -2,8 +2,8 @@ package com.musicplayer.android.data
 
 import android.content.Context
 import android.util.Log
-import com.musicplayer.android.data.db.AppDatabase
-import com.musicplayer.android.data.db.LyricEntity
+import com.musicplayer.android.data.local.AppDatabase
+import com.musicplayer.android.data.local.LyricEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,7 +60,7 @@ class LyricsRepository(context: Context) {
     ) {
         _state.value = LyricsState.Loading
         try {
-            val cached = db.lyricDao().bySongFile(fileName)?.lyrics
+            val cached = db.playlistDao().lyricFor(fileName)?.lyrics
             if (!cached.isNullOrBlank()) {
                 _state.value = LyricsState.Ready(toResult(true, cached))
                 return
@@ -130,7 +130,7 @@ class LyricsRepository(context: Context) {
 
     suspend fun loadOffset(fileName: String): Int {
         return try {
-            (db.lyricDao().bySongFile(fileName)?.offsetMs ?: 0).coerceIn(-20000, 20000)
+            (db.playlistDao().lyricFor(fileName)?.offsetMs ?: 0).coerceIn(-20000, 20000)
         } catch (_: Exception) {
             0
         }
@@ -139,12 +139,12 @@ class LyricsRepository(context: Context) {
     suspend fun saveOffset(fileName: String, ms: Int): Int {
         val clamped = ms.coerceIn(-20000, 20000)
         try {
-            val dao = db.lyricDao()
-            val row = dao.bySongFile(fileName)
+            val dao = db.playlistDao()
+            val row = dao.lyricFor(fileName)
             if (row == null) {
-                dao.insertIgnore(LyricEntity(songFile = fileName, lyrics = null, offsetMs = clamped))
+                dao.insertLyricIgnore(LyricEntity(songFile = fileName, lyrics = null, offsetMs = clamped))
             } else {
-                dao.update(row.copy(offsetMs = clamped))
+                dao.updateLyricEntity(row.copy(offsetMs = clamped))
             }
         } catch (e: Exception) {
             Log.w(TAG, "offset save failed", e)
@@ -153,13 +153,13 @@ class LyricsRepository(context: Context) {
     }
 
     private suspend fun saveRow(fileName: String, synced: String?, plain: String?) {
-        val dao = db.lyricDao()
-        val existing = dao.bySongFile(fileName)
+        val dao = db.playlistDao()
+        val existing = dao.lyricFor(fileName)
         val json = cachedJson(synced, plain)
         if (existing == null) {
-            dao.insertIgnore(LyricEntity(songFile = fileName, lyrics = json))
+            dao.insertLyricIgnore(LyricEntity(songFile = fileName, lyrics = json))
         } else {
-            dao.update(existing.copy(lyrics = json))
+            dao.updateLyricEntity(existing.copy(lyrics = json))
         }
     }
 
