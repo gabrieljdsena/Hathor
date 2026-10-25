@@ -23,64 +23,105 @@
     <div class="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent pointer-events-none"></div>
 
     <div class="relative z-10 flex flex-col gap-3">
-        <!-- Setting Row 1 -->
+        <!-- Audios Library -->
         <div
-            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
-            <div class="flex items-center gap-4">
-                <div
-                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                    </svg>
+            class="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div class="flex items-center gap-4 min-w-0">
+                    <div
+                        class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <h3 class="text-zinc-200 font-medium">Audios</h3>
+                        <p class="text-xs text-zinc-500 mt-0.5">Music, playlists, lyrics and play history</p>
+                        <div class="flex items-center gap-2 mt-1 min-w-0">
+                            <p id="current-folder-path" title="Click to change folder"
+                                onclick="changeLibraryFolder('songs')"
+                                class="text-xs text-orange-400/80 font-mono truncate min-w-0 cursor-pointer hover:text-orange-300 hover:underline">
+                            </p>
+                            <button type="button" onclick="changeLibraryFolder('songs')"
+                                class="shrink-0 text-xs text-orange-400/80 hover:text-orange-300 hover:underline hover:cursor-pointer">
+                                Change
+                            </button>
+                        </div>
+                    </div>
                 </div>
-                <div>
-                    <h3 class="text-zinc-200 font-medium">Download/Songs Folder</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Location where your songs are saved and read</p>
-                    <p id="current-folder-path"
-                        class="text-xs text-orange-400/80 mt-1 font-mono truncate max-w-[200px] sm:max-w-xs md:max-w-md">
-                    </p>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button id="sync-push-songs"
+                        onclick="syncLibrary('songs', 'push')"
+                        class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-orange-300 bg-orange-500/10 hover:bg-orange-500 hover:text-white border border-orange-500/30 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
+                        Push
+                    </button>
+                    <button id="sync-pull-songs"
+                        onclick="syncLibrary('songs', 'pull')"
+                        class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
+                        Pull
+                    </button>
                 </div>
             </div>
-            <div class="flex items-center gap-2">
-                <button
-                    onclick="if(window.pywebview && window.pywebview.api) window.pywebview.api.pick_folder().then(res => { if(res) { document.getElementById('current-folder-path').innerText = res; document.getElementById('current-folder-path').title = res; if (typeof notyf !== 'undefined') { notyf.success('Folder updated'); } else { alert('Folder updated to: ' + res); } } })"
-                    class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                    Change Folder
-                </button>
+            <div id="sync-progress-songs" class="sync-progress" hidden>
+                <div class="sync-progress-meta">
+                    <span id="sync-progress-label-songs" class="sync-progress-label"></span>
+                    <span id="sync-progress-pct-songs" class="sync-progress-pct"></span>
+                </div>
+                <div class="sync-progress-track">
+                    <div id="sync-progress-fill-songs" class="sync-progress-fill"></div>
+                </div>
             </div>
         </div>
 
-        <!-- Podcasts Folder -->
+        <!-- Podcasts Library -->
         <div
-            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
-            <div class="flex items-center gap-4">
-                <div
-                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"></path>
-                    </svg>
+            class="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div class="flex items-center gap-4 min-w-0">
+                    <div
+                        class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"></path>
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <h3 class="text-zinc-200 font-medium">Podcasts</h3>
+                        <p class="text-xs text-zinc-500 mt-0.5">Episodes, tags and chapters</p>
+                        <div class="flex items-center gap-2 mt-1 min-w-0">
+                            <p id="current-podcasts-path" title="Click to change folder"
+                                onclick="changeLibraryFolder('podcasts')"
+                                class="text-xs text-orange-400/80 font-mono truncate min-w-0 cursor-pointer hover:text-orange-300 hover:underline">
+                            </p>
+                            <button type="button" onclick="changeLibraryFolder('podcasts')"
+                                class="shrink-0 text-xs text-orange-400/80 hover:text-orange-300 hover:underline hover:cursor-pointer">
+                                Change
+                            </button>
+                        </div>
+                    </div>
                 </div>
-                <div>
-                    <h3 class="text-zinc-200 font-medium">Podcasts / Audio Folder</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Separate library for non-music downloads</p>
-                    <p id="current-podcasts-path"
-                        class="text-xs text-orange-400/80 mt-1 font-mono truncate max-w-[200px] sm:max-w-xs md:max-w-md">
-                    </p>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button id="sync-push-podcasts"
+                        onclick="syncLibrary('podcasts', 'push')"
+                        class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-orange-300 bg-orange-500/10 hover:bg-orange-500 hover:text-white border border-orange-500/30 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
+                        Push
+                    </button>
+                    <button id="sync-pull-podcasts"
+                        onclick="syncLibrary('podcasts', 'pull')"
+                        class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
+                        Pull
+                    </button>
                 </div>
             </div>
-            <div class="flex items-center gap-2">
-                <button
-                    onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Syncing podcasts...'); window.pywebview.api.sync_local_podcasts_to_db().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
-                    class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                    Sync Now
-                </button>
-                <button
-                    onclick="if(window.pywebview && window.pywebview.api) window.pywebview.api.pick_podcasts_folder().then(res => { if(res) { document.getElementById('current-podcasts-path').innerText = res; document.getElementById('current-podcasts-path').title = res; if (typeof notyf !== 'undefined') { notyf.success('Folder updated'); } else { alert('Folder updated to: ' + res); } } })"
-                    class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                    Change Folder
-                </button>
+            <div id="sync-progress-podcasts" class="sync-progress" hidden>
+                <div class="sync-progress-meta">
+                    <span id="sync-progress-label-podcasts" class="sync-progress-label"></span>
+                    <span id="sync-progress-pct-podcasts" class="sync-progress-pct"></span>
+                </div>
+                <div class="sync-progress-track">
+                    <div id="sync-progress-fill-podcasts" class="sync-progress-fill"></div>
+                </div>
             </div>
         </div>
 
@@ -217,77 +258,6 @@
                 Save
             </button>
         </div>
-        <!-- Setting Row 4 -->
-        <div
-            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
-            <div class="flex items-center gap-4">
-                <div
-                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
-                        </path>
-                    </svg>
-                </div>
-                <div>
-                    <h3 class="text-zinc-200 font-medium">Sync Local Songs to Database</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Scans your songs folder and updates the database</p>
-                </div>
-            </div>
-            <button
-                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Syncing songs...'); window.pywebview.api.sync_local_songs_to_db().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
-                class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                Sync Now
-            </button>
-        </div>
-
-        <!-- Setting Row 5 -->
-        <div
-            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
-            <div class="flex items-center gap-4">
-                <div
-                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12">
-                        </path>
-                    </svg>
-                </div>
-                <div>
-                    <h3 class="text-zinc-200 font-medium">Sync Local to Server</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Pushes songs, podcasts, playlists, tags, lyrics and history to the sync server</p>
-                </div>
-            </div>
-            <button
-                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Pushing to sync server...'); window.pywebview.api.sync_local_to_remote().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
-                class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                Push to Server
-            </button>
-        </div>
-
-        <!-- Setting Row 6 -->
-        <div
-            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
-            <div class="flex items-center gap-4">
-                <div
-                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10">
-                        </path>
-                    </svg>
-                </div>
-                <div>
-                    <h3 class="text-zinc-200 font-medium">Sync Server to Local</h3>
-                    <p class="text-xs text-zinc-500 mt-0.5">Fetches server songs and podcasts, then downloads missing files</p>
-                </div>
-            </div>
-            <button
-                onclick="if(window.pywebview && window.pywebview.api) { if(typeof notyf !== 'undefined') notyf.success('Fetching from sync server...'); window.pywebview.api.sync_remote_to_local_and_download().then(res => { if(typeof notyf !== 'undefined') notyf.success(res); else alert(res); }); }"
-                class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
-                Sync from Server
-            </button>
-        </div>
     </div>
 </div>
 
@@ -312,12 +282,257 @@
         box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
     }
     .xf-switch[data-on="1"] .xf-knob { left: 21px; background: #fff; }
+
+    /* Pull progress: slim bar under each library row. */
+    .sync-progress { margin-top: 12px; }
+    .sync-progress[hidden] { display: none; }
+    .sync-progress-meta {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; margin-bottom: 5px; font-size: 10px; line-height: 1.3;
+        color: #a1a1aa;
+    }
+    .sync-progress-label {
+        min-width: 0; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .sync-progress-pct {
+        flex-shrink: 0; color: #fdba74;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .sync-progress-track {
+        height: 5px; width: 100%; overflow: hidden;
+        border-radius: 9999px; background: rgba(255, 255, 255, 0.10);
+    }
+    .sync-progress-fill {
+        height: 100%; width: 0; border-radius: 9999px;
+        background: linear-gradient(90deg, #fb923c, #ea580c);
+        transition: width 0.25s ease;
+    }
+    .sync-progress.is-indeterminate .sync-progress-fill {
+        width: 35%;
+        animation: sync-progress-slide 1.15s ease-in-out infinite;
+    }
+    .sync-progress.is-error .sync-progress-fill {
+        width: 100%; background: #ef4444;
+    }
+    @keyframes sync-progress-slide {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(320%); }
+    }
 </style>
 
 <script>
     // Request settings when this view loads
     if (window.pywebview && window.pywebview.api) {
         window.pywebview.api.load_settings();
+    }
+
+    // One row per library: Push scans that folder first, Pull fetches only
+    // that library. Keeping the scope explicit avoids the old "did that push
+    // my songs or my podcasts?" confusion.
+    //
+    // Pull progress is pushed from Python (Api._sync_progress) as
+    // window.syncProgress({library, phase, done, total, message}). State is
+    // kept on window so navigating away and back doesn't re-enable a busy row.
+    const syncState = window.syncState || (window.syncState = {
+        songs: { busy: false, hideTimer: null },
+        podcasts: { busy: false, hideTimer: null }
+    });
+
+    function syncElements(library) {
+        const suffix = library === 'podcasts' ? 'podcasts' : 'songs';
+        return {
+            root: document.getElementById('sync-progress-' + suffix),
+            label: document.getElementById('sync-progress-label-' + suffix),
+            pct: document.getElementById('sync-progress-pct-' + suffix),
+            fill: document.getElementById('sync-progress-fill-' + suffix),
+            push: document.getElementById('sync-push-' + suffix),
+            pull: document.getElementById('sync-pull-' + suffix)
+        };
+    }
+
+    function setSyncBusy(library, busy) {
+        const state = syncState[library] || syncState.songs;
+        state.busy = !!busy;
+        refreshSyncButtons();
+    }
+
+    // Keep all four buttons disabled while either library is syncing: two
+    // pulls would write the same SQLite DB from separate worker threads.
+    function refreshSyncButtons() {
+        const anyBusy = syncState.songs.busy || syncState.podcasts.busy;
+        ['songs', 'podcasts'].forEach(function (library) {
+            const parts = syncElements(library);
+            [parts.push, parts.pull].forEach(function (btn) {
+                if (!btn) return;
+                btn.disabled = anyBusy;
+                btn.classList.toggle('opacity-50', anyBusy);
+                btn.classList.toggle('cursor-not-allowed', anyBusy);
+            });
+        });
+    }
+
+    function resetSyncBar(library, labelText) {
+        const state = syncState[library] || syncState.songs;
+        if (state.hideTimer) { clearTimeout(state.hideTimer); state.hideTimer = null; }
+        const parts = syncElements(library);
+        if (!parts.root) return;
+        parts.root.hidden = false;
+        parts.root.classList.remove('is-error');
+        parts.root.classList.add('is-indeterminate');
+        if (parts.label) parts.label.textContent = labelText || 'Starting pull…';
+        if (parts.pct) parts.pct.textContent = '';
+        if (parts.fill) parts.fill.style.width = '';
+    }
+
+    window.syncProgress = function (event) {
+        if (!event || !event.library) return;
+        const library = event.library === 'podcasts' ? 'podcasts' : 'songs';
+        const state = syncState[library] || syncState.songs;
+        const parts = syncElements(library);
+        if (!parts.root) return;
+        const phase = String(event.phase || '');
+        if (state.hideTimer) { clearTimeout(state.hideTimer); state.hideTimer = null; }
+        parts.root.hidden = false;
+        parts.root.classList.remove('is-error', 'is-indeterminate');
+
+        if (phase === 'contacting' || phase === 'merging') {
+            parts.root.classList.add('is-indeterminate');
+            if (parts.label) {
+                parts.label.textContent = phase === 'contacting'
+                    ? 'Contacting server…' : 'Merging library…';
+            }
+            if (parts.pct) parts.pct.textContent = '';
+            return;
+        }
+
+        if (phase === 'downloading') {
+            const total = Number(event.total) || 0;
+            const done = Number(event.done) || 0;
+            if (!total) {
+                parts.root.classList.add('is-indeterminate');
+                if (parts.label) {
+                    parts.label.textContent = String(event.message || '').trim()
+                        || 'Checking for new files…';
+                }
+                if (parts.pct) parts.pct.textContent = '';
+                return;
+            }
+            const percent = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+            if (parts.fill) parts.fill.style.width = percent + '%';
+            if (parts.pct) parts.pct.textContent = percent + '%';
+            if (parts.label) {
+                if (done >= total) {
+                    parts.label.textContent = `Downloaded ${total} file${total === 1 ? '' : 's'}`;
+                } else {
+                    const name = String(event.message || '').trim();
+                    parts.label.textContent = `Downloading ${done + 1} of ${total}${name ? ' · ' + name : ''}`;
+                    parts.label.title = name;
+                }
+            }
+            return;
+        }
+
+        if (phase === 'done') {
+            if (parts.fill) parts.fill.style.width = '100%';
+            if (parts.pct) parts.pct.textContent = '100%';
+            if (parts.label) parts.label.textContent = String(event.message || 'Pull complete');
+            setSyncBusy(library, false);
+            state.hideTimer = setTimeout(function () {
+                parts.root.hidden = true;
+                if (parts.fill) parts.fill.style.width = '0';
+            }, 1800);
+            return;
+        }
+
+        if (phase === 'error') {
+            parts.root.classList.add('is-error');
+            if (parts.label) parts.label.textContent = String(event.message || 'Pull failed');
+            if (parts.pct) parts.pct.textContent = '';
+            setSyncBusy(library, false);
+            state.hideTimer = setTimeout(function () {
+                parts.root.hidden = true;
+                parts.root.classList.remove('is-error');
+            }, 8000);
+        }
+    };
+
+    function syncLibrary(library, direction) {
+        const api = window.pywebview && window.pywebview.api;
+        if (!api) return;
+        const name = library === 'podcasts' ? 'Podcasts' : 'Audios';
+        const pushing = direction === 'push';
+        const state = syncState[library] || syncState.songs;
+        if (syncState.songs.busy || syncState.podcasts.busy) {
+            if (typeof notyf !== 'undefined') {
+                notyf.error('A sync is already running. Wait for it to finish.');
+            }
+            return;
+        }
+        if (typeof notyf !== 'undefined') {
+            notyf.success(`${pushing ? 'Pushing' : 'Pulling'} ${name.toLowerCase()}...`);
+        }
+        if (!pushing) {
+            setSyncBusy(library, true);
+            resetSyncBar(library, 'Starting pull…');
+        }
+        const request = pushing
+            ? api.sync_local_to_remote(library)
+            : api.sync_remote_to_local_and_download(library);
+        Promise.resolve(request).then(res => {
+            const text = String(res == null ? '' : res);
+            if (!pushing && /^Error\b/i.test(text)) {
+                window.syncProgress({ library: library, phase: 'error', message: text });
+            }
+            if (typeof notyf !== 'undefined') {
+                if (/^Error\b/i.test(text)) notyf.error(text);
+                else notyf.success(text);
+            } else {
+                alert(text);
+            }
+        }).catch(err => {
+            const text = (err && err.message) ? err.message : String(err);
+            if (!pushing) {
+                window.syncProgress({ library: library, phase: 'error', message: text });
+            }
+            if (typeof notyf !== 'undefined') notyf.error(text);
+            else alert(text);
+        }).finally(() => {
+            if (pushing) return;
+            // Python normally emits done/error before this resolves; this is
+            // a fallback for a missed progress event so the row never sticks.
+            setSyncBusy(library, false);
+            const parts = syncElements(library);
+            if (!parts.root || parts.root.hidden
+                || parts.root.classList.contains('is-error')) return;
+            if (parts.fill) parts.fill.style.width = '100%';
+            state.hideTimer = setTimeout(function () {
+                parts.root.hidden = true;
+                if (parts.fill) parts.fill.style.width = '0';
+            }, 1800);
+        });
+    }
+
+    function changeLibraryFolder(library) {
+        const api = window.pywebview && window.pywebview.api;
+        if (!api) return;
+        const isPodcast = library === 'podcasts';
+        const request = isPodcast ? api.pick_podcasts_folder() : api.pick_folder();
+        const target = isPodcast ? 'current-podcasts-path' : 'current-folder-path';
+        Promise.resolve(request).then(res => {
+            if (!res) return;
+            const el = document.getElementById(target);
+            if (el) {
+                el.innerText = res;
+                el.title = res;
+            }
+            if (typeof notyf !== 'undefined') notyf.success('Folder updated');
+            else alert('Folder updated to: ' + res);
+        }).catch(err => {
+            const text = (err && err.message) ? err.message : String(err);
+            if (typeof notyf !== 'undefined') notyf.error(text);
+            else alert(text);
+        });
     }
 
     // Crossfade controls Live-update the label, then load saved prefs
@@ -409,4 +624,8 @@
             window.addEventListener('pywebviewready', load, { once: true });
         }
     })();
+
+    // Re-apply the busy state when this view is re-created (the sync keeps
+    // running while the user is on another tab).
+    refreshSyncButtons();
 </script>

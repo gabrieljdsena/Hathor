@@ -237,6 +237,32 @@
                     </svg>
                     <span class="nav-text font-medium tracking-wide">Download</span>
                 </a>
+                <a href="#" data-target="artists"
+                    class="nav-link group flex items-center p-3 rounded-xl text-zinc-400 hover:text-white group-[.active-nav]:text-white group-[.active-nav]:bg-orange-500/10 hover:bg-orange-500/10 transition-all duration-300 relative overflow-hidden"
+                    title="Artists">
+                    <div
+                        class="nav-indicator absolute left-0 top-1/4 bottom-1/4 w-1 bg-orange-500 rounded-r-full scale-y-0 group-hover:scale-y-100 group-[.active-nav]:scale-y-100 transition-transform duration-300 origin-center">
+                    </div>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                        class="w-6 h-6 mr-3 flex-shrink-0 transition-transform duration-300 group-hover:scale-110 group-[.active-nav]:scale-110 group-hover:text-orange-400 group-[.active-nav]:text-orange-400">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                    </svg>
+                    <span class="nav-text font-medium tracking-wide">Artists</span>
+                </a>
+                <a href="#" data-target="albums"
+                    class="nav-link group flex items-center p-3 rounded-xl text-zinc-400 hover:text-white group-[.active-nav]:text-white group-[.active-nav]:bg-orange-500/10 hover:bg-orange-500/10 transition-all duration-300 relative overflow-hidden"
+                    title="Albums">
+                    <div
+                        class="nav-indicator absolute left-0 top-1/4 bottom-1/4 w-1 bg-orange-500 rounded-r-full scale-y-0 group-hover:scale-y-100 group-[.active-nav]:scale-y-100 transition-transform duration-300 origin-center">
+                    </div>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                        class="w-6 h-6 mr-3 flex-shrink-0 transition-transform duration-300 group-hover:scale-110 group-[.active-nav]:scale-110 group-hover:text-orange-400 group-[.active-nav]:text-orange-400">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                    </svg>
+                    <span class="nav-text font-medium tracking-wide">Albums</span>
+                </a>
                 <a href="#" data-target="podcasts"
                     class="nav-link group flex items-center p-3 rounded-xl text-zinc-400 hover:text-white group-[.active-nav]:text-white group-[.active-nav]:bg-orange-500/10 hover:bg-orange-500/10 transition-all duration-300 relative overflow-hidden"
                     title="Podcasts">
@@ -397,7 +423,12 @@
     <!-- Resume across devices: another device's paused spot (explicit tap only) -->
     <div id="resume_spot_bar" style="display: none;"
         class="fixed bottom-28 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-200 text-sm hover:bg-sky-500/20 transition-colors cursor-pointer max-w-[90vw]">
-        <span>&#9654;</span>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+            class="w-4 h-4 flex-shrink-0" aria-hidden="true">
+            <path fill-rule="evenodd"
+                d="M4.5 5.653c0-1.427 1.529-2.38 2.831-1.643L20.5 12 7.331 20.007c-1.302.737-2.831-.216-2.831-1.643V5.653Z"
+                clip-rule="evenodd" />
+        </svg>
         <span id="resume_spot_text" class="truncate"></span>
     </div>
 
@@ -1243,7 +1274,10 @@
             // Keep sidebar active state in sync for programmatic navigation
             // (e.g. home dashboard cards -> all_songs / daily_mix).
             try {
-                const sidebarTarget = (page === "all_songs" || page === "daily_mix") ? "home" : page;
+                const sidebarTarget = (page === "all_songs" || page === "daily_mix") ? "home"
+                    : (page === "artist") ? "artists"
+                    : (page === "album") ? "albums"
+                    : page;
                 document.querySelectorAll(".nav-link").forEach(el => {
                     if (el.getAttribute("data-target") === sidebarTarget) {
                         el.classList.add("active-nav");
@@ -1394,37 +1428,38 @@
             }
 
             if (titlebar) {
-                // Drag the window by grabbing the titlebar
-                let drag = null;
-                titlebar.addEventListener('pointerdown', async function (e) {
+                // Hand the drag to Windows (ReleaseCapture + WM_NCLBUTTONDOWN
+                // with HTCAPTION). A JS move_window loop cannot produce Aero
+                // Snap, snap layouts, or edge/corner magnetism; a native
+                // caption drag can. The Python call blocks until the drop, so
+                // it is deliberately not awaited here.
+                let lastTitleClick = { t: 0, x: 0, y: 0 };
+                titlebar.addEventListener('mousedown', function (e) {
                     if (e.target.closest('.win-ctrl-btn')) return;
+                    if (e.button !== 0) return;
                     e.preventDefault();
-                    await refreshWinFrame();
-                    if (!winFrame.known) return;
-                    const s = physScale();
-                    drag = { sx: e.screenX * s, sy: e.screenY * s, bx: winFrame.x, by: winFrame.y };
-                    try { titlebar.setPointerCapture(e.pointerId); } catch (err) { }
-                });
-                titlebar.addEventListener('pointermove', async function (e) {
                     const api = winApi();
-                    if (!drag || !api || !api.move_window) return;
-                    const s = physScale();
-                    const nx = Math.round(drag.bx + (e.screenX * s - drag.sx));
-                    const ny = Math.round(drag.by + (e.screenY * s - drag.sy));
-                    try {
-                        await api.move_window(nx, ny);
-                        winFrame.x = nx;
-                        winFrame.y = ny;
-                    } catch (err) { }
+                    if (!api) return;
+                    const now = Date.now();
+                    const isDouble = e.detail >= 2 || (
+                        now - lastTitleClick.t < 450 &&
+                        Math.abs(e.screenX - lastTitleClick.x) < 6 &&
+                        Math.abs(e.screenY - lastTitleClick.y) < 6
+                    );
+                    if (isDouble) {
+                        lastTitleClick.t = 0;
+                        if (api.toggle_maximize_window) api.toggle_maximize_window();
+                        return;
+                    }
+                    lastTitleClick = { t: now, x: e.screenX, y: e.screenY };
+                    if (api.start_window_drag) api.start_window_drag();
                 });
-                titlebar.addEventListener('pointerup', function () { drag = null; });
-                titlebar.addEventListener('pointercancel', function () { drag = null; });
 
-                // Double-click toggles maximize/restore
+                // Double-click is handled above before the native drag starts,
+                // so suppress the browser's default activation here.
                 titlebar.addEventListener('dblclick', function (e) {
                     if (e.target.closest('.win-ctrl-btn')) return;
-                    const api = winApi();
-                    if (api && api.toggle_maximize_window) api.toggle_maximize_window();
+                    e.preventDefault();
                 });
             }
 
@@ -1591,9 +1626,16 @@
                             }
                         }
                         if (typeof window.updateHighlightedLine === 'function' && !document.getElementById("lyrics-container-view").classList.contains("hidden")) {
-                            const _off = (window.lyricsOffsetFile === (window.current_playing_song && window.current_playing_song.File))
+                            const _file = window.current_playing_song && window.current_playing_song.File;
+                            const _off = (window.lyricsOffsetFile === _file)
                                 ? (window.lyricsOffsetMs || 0) / 1000 : 0;
-                            window.updateHighlightedLine(pos + _off);
+                            const _chapter = (window.lyricsChapterFile === _file)
+                                ? (window.lyricsChapterStart || 0) : 0;
+                            window.updateHighlightedLine(pos - _chapter + _off);
+                        }
+                        if (Date.now() - (window._lyricsChapterCheckedAt || 0) > 4000) {
+                            window._lyricsChapterCheckedAt = Date.now();
+                            if (typeof window.checkLyricsChapterChange === 'function') window.checkLyricsChapterChange();
                         }
                     }
                 } catch (err) {
@@ -1606,6 +1648,7 @@
         // Clean up background polling when the user closes the window
         window.addEventListener("beforeunload", function () {
             if (progressTimer) clearInterval(progressTimer);
+            if (window._resumeSpotTimer) clearInterval(window._resumeSpotTimer);
         });
 
         window.plaiyng_info = function (data) {
@@ -1641,12 +1684,57 @@
         }
 
         // Resume across devices: show another device's paused spot (polled
-        // on track change + once at startup). Tapping plays it here at its
-        // position explicitly — nothing auto-plays. Never throws.
+        // every 60s, on track change, and once at startup). Tapping plays it
+        // here at its position explicitly - nothing auto-plays. Never throws.
         window.resumeSpotDismissed = null;
+        window._resumeSpotCurrent = null;
+        window._resumeSpotLabel = '';
         window.fmtResumeTime = function (secs) {
             const s = Math.max(0, Math.floor(Number(secs) || 0));
             return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        };
+        window.hideResumeSpotUi = function () {
+            const bar = document.getElementById('resume_spot_bar');
+            if (bar) bar.style.display = 'none';
+            const dock = document.getElementById('resume_spot_dock');
+            if (dock) dock.style.display = 'none';
+        };
+        // Compact in-dock indicator (web PlayerBar parity). playing_view
+        // replaces the card HTML, so repaint from the cached label instead of
+        // refetching the spot on every metadata refresh.
+        window.paintResumeSpotDock = function (songFile) {
+            const dock = document.getElementById('resume_spot_dock');
+            const dockText = document.getElementById('resume_spot_dock_text');
+            if (!dock || !dockText) return;
+            const spot = window._resumeSpotCurrent;
+            const cur = songFile || (window.current_playing_song
+                ? (typeof window.current_playing_song === 'string'
+                    ? window.current_playing_song.split(/[\\/]/).pop()
+                    : window.current_playing_song.File)
+                : null);
+            if (!spot || !spot.file || spot.file === cur ||
+                (spot.file + spot.updated_utc) === window.resumeSpotDismissed) {
+                dock.style.display = 'none';
+                return;
+            }
+            dockText.textContent = window._resumeSpotLabel || '';
+            dock.title = (window._resumeSpotLabel || '') +
+                (spot.updated_utc ? ` (saved ${spot.updated_utc})` : '');
+            dock.style.display = 'flex';
+        };
+        window.resumeSpotPlay = async function () {
+            const spot = window._resumeSpotCurrent;
+            if (!spot) return;
+            window.resumeSpotDismissed = spot.file + spot.updated_utc;
+            window._resumeSpotCurrent = null;
+            window._resumeSpotLabel = '';
+            window.hideResumeSpotUi();
+            try {
+                const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+                if (api && typeof api.resume_spot_play === 'function') {
+                    await api.resume_spot_play(spot.file, spot.position_secs, !!spot.is_podcast);
+                }
+            } catch (e) { /* resume must never break the player */ }
         };
         window.checkResumeSpot = async function () {
             try {
@@ -1660,22 +1748,29 @@
                     : null;
                 if (!spot || !spot.file || spot.file === curFile ||
                     (spot.file + spot.updated_utc) === window.resumeSpotDismissed) {
-                    bar.style.display = 'none';
+                    window._resumeSpotCurrent = null;
+                    window._resumeSpotLabel = '';
+                    window.hideResumeSpotUi();
                     return;
                 }
+                const spotName = spot.title
+                    ? spot.title + ((spot.artist && spot.artist !== 'Unknown')
+                        ? ` - ${spot.artist}` : '')
+                    : spot.file;
+                window._resumeSpotCurrent = spot;
+                window._resumeSpotLabel =
+                    `Resume ${spotName} at ${window.fmtResumeTime(spot.position_secs)}` +
+                    (spot.device ? ` from ${spot.device}` : '');
                 bar.style.display = 'flex';
                 document.getElementById('resume_spot_text').textContent =
-                    `Resume ${spot.file} at ${window.fmtResumeTime(spot.position_secs)}` +
-                    (spot.device ? ` from ${spot.device}` : '');
-                bar.onclick = async () => {
-                    bar.style.display = 'none';
-                    window.resumeSpotDismissed = spot.file + spot.updated_utc;
-                    try {
-                        await api.resume_spot_play(spot.file, spot.position_secs, !!spot.is_podcast);
-                    } catch (e) { /* resume must never break the player */ }
-                };
+                    window._resumeSpotLabel;
+                bar.onclick = window.resumeSpotPlay;
+                window.paintResumeSpotDock(curFile);
             } catch (e) { /* resume must never break the player */ }
         };
+        window._resumeSpotTimer = setInterval(
+            () => { if (typeof window.checkResumeSpot === 'function') window.checkResumeSpot(); },
+            60000);
         setTimeout(() => { if (typeof window.checkResumeSpot === 'function') window.checkResumeSpot(); }, 4000);
 
         // Pull the current song from Python if the early startup push
@@ -1771,11 +1866,26 @@
                 <div class="flex flex-col min-w-0 leading-snug">
                     <div class="song-title truncate text-sm font-semibold text-zinc-100 group-hover:text-orange-400 transition-colors">${current_song.Title || "Unknown Title"}</div>
                     <div class="artist-link truncate text-xs text-zinc-500 hover:text-orange-400 hover:underline hover:underline-offset-2 cursor-pointer transition-colors mt-0.5" data-artist="${(current_song.Artist || "Unknown Artist").replace(/"/g, '&quot;')}">${current_song.Artist || "Unknown Artist"}</div>
+                    <button type="button" id="resume_spot_dock" style="display: none;"
+                        onclick="event.stopPropagation(); if (typeof window.resumeSpotPlay === 'function') window.resumeSpotPlay();"
+                        class="min-w-0 max-w-44 items-center gap-1.5 mt-0.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-sky-300/90 hover:text-sky-200 transition-colors cursor-pointer">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                            class="w-3 h-3 flex-shrink-0" aria-hidden="true">
+                            <path fill-rule="evenodd"
+                                d="M4.5 5.653c0-1.427 1.529-2.38 2.831-1.643L20.5 12 7.331 20.007c-1.302.737-2.831-.216-2.831-1.643V5.653Z"
+                                clip-rule="evenodd" />
+                        </svg>
+                        <span id="resume_spot_dock_text" class="truncate"></span>
+                    </button>
                 </div>
             </div>`;
             const container = document.getElementById("song_plaiyng_div");
             if (container) container.innerHTML = html;
             if (typeof window.syncNowPlaying === 'function') window.syncNowPlaying(current_song);
+            // The card was just replaced; restore the compact resume row.
+            if (typeof window.paintResumeSpotDock === 'function') {
+                window.paintResumeSpotDock(current_song.File);
+            }
         }
 
         // ── Fullscreen Now Playing ──
@@ -2232,7 +2342,14 @@
                 p.innerText = line.text;
                 p.onclick = () => {
                     if (window.pywebview && window.pywebview.api) {
-                        window.pywebview.api.progress_slider_click(line.time);
+                        // Chapter lyrics are chapter-relative; the web seeks
+                        // to chapter start + line time.
+                        const _file = window.current_playing_song
+                            && window.current_playing_song.File;
+                        const _chapter = (window.lyricsChapterFile === _file)
+                            ? (window.lyricsChapterStart || 0) : 0;
+                        window.pywebview.api.progress_slider_click(
+                            (Number(line.time) || 0) + _chapter);
                     }
                 };
                 container.appendChild(p);
@@ -2305,7 +2422,11 @@
                 btn.appendChild(title);
                 btn.appendChild(sub);
                 btn.addEventListener('click', async () => {
-                    await window.pywebview.api.save_lyrics(s.syncedLyrics || null, s.plainLyrics || null);
+                    await window.pywebview.api.save_lyrics(
+                        s.syncedLyrics || null,
+                        s.plainLyrics || null,
+                        (s.chapterId != null ? s.chapterId : window.lyricsChapterId) || null
+                    );
                     window.fetchLyricsForCurrentSong(window.current_playing_song);
                 });
 
@@ -2328,6 +2449,11 @@
             // Persisted highlight-timing correction (web parity, ms ±20000).
             window.lyricsOffsetMs = 0;
             window.lyricsOffsetFile = songData.File || null;
+            // Chapter context: line times are absolute, so the highlighter
+            // subtracts the active chapter start (web parity).
+            window.lyricsChapterId = null;
+            window.lyricsChapterStart = 0;
+            window.lyricsChapterFile = songData.File || null;
             try {
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.get_lyrics_offset && songData.File) {
                     const off = await window.pywebview.api.get_lyrics_offset(songData.File);
@@ -2351,6 +2477,11 @@
 
                 if (window.lyricsFetchId !== currentFetchId) {
                     return; // Another fetch has started, ignore these results
+                }
+
+                if (lyricsData && lyricsData.chapter_id != null) {
+                    window.lyricsChapterId = lyricsData.chapter_id;
+                    window.lyricsChapterStart = Number(lyricsData.chapter_start_secs) || 0;
                 }
 
                 if (lyricsData && lyricsData.synced) {
@@ -2413,6 +2544,21 @@
                     }
                 }
             } catch (e) { /* painted optimistically; next fetch reloads */ }
+        };
+
+        window.checkLyricsChapterChange = async function () {
+            if (!window.current_playing_song || !window.current_playing_song.IsPodcast) return;
+            const view = document.getElementById('lyrics-container-view');
+            if (!view || view.classList.contains('hidden')) return;
+            try {
+                if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.get_active_chapter !== 'function') return;
+                const active = await window.pywebview.api.get_active_chapter();
+                const activeId = (active && active.id != null) ? active.id : null;
+                const shownId = (window.lyricsChapterId != null) ? window.lyricsChapterId : null;
+                if (activeId !== shownId) {
+                    window.fetchLyricsForCurrentSong(window.current_playing_song);
+                }
+            } catch (e) { /* chapter poll is best-effort */ }
         };
 
         window.update_queue_ui = function () {
@@ -2509,6 +2655,9 @@
                     toggleLyricsBtn.classList.add("text-orange-500", "hover:text-orange-400");
                     if (window.current_playing_song && window.parsedLyrics.length === 0) {
                         window.fetchLyricsForCurrentSong(window.current_playing_song);
+                    } else if (typeof window.checkLyricsChapterChange === 'function') {
+                        // Chapter may have moved while the panel was closed.
+                        window.checkLyricsChapterChange();
                     }
                 } else {
                     lyricsView.classList.add("hidden");

@@ -466,14 +466,33 @@ class DatabaseManager:
             print(f" [Python] Error fetching date_download for artist: {e}")
 
         songs = []
+        artist_key = artist.lower()
         for f in path.iterdir():
             if f.is_file() and f.suffix.lower() == '.mp3':
                 song_data = self.api.metadata.get_song_metadata(str(f), f.name)
-                if (song_data.get('Artist') or '') == artist:
+                if (song_data.get('Artist') or '').strip().lower() == artist_key:
                     song_data['DateDownload'] = date_lookup.get(f.name, None)
                     songs.append(song_data)
         songs.sort(key=lambda s: ((s.get('Album') or '').lower(), (s.get('Title') or '').lower()))
         return songs
+
+    def get_artists(self):
+        """Distinct artist names for the Artists directory (web parity)."""
+        return self._distinct_metadata_names('Artist')
+
+    def get_albums(self):
+        """Distinct album names for the Albums directory (web parity)."""
+        return self._distinct_metadata_names('Album')
+
+    def _distinct_metadata_names(self, field):
+        """Non-blank names, minus "Unknown", deduped case-insensitively."""
+        names = {}
+        for song in self.get_all_songs():
+            name = (song.get(field) or '').strip()
+            if not name or name == 'Unknown':
+                continue
+            names.setdefault(name.lower(), name)
+        return sorted(names.values(), key=lambda n: n.lower())
 
     def get_songs_by_album(self, album):
         """Return all songs whose metadata Album matches the given album (metadata-only)."""
@@ -495,10 +514,11 @@ class DatabaseManager:
             print(f" [Python] Error fetching date_download for album: {e}")
 
         songs = []
+        album_key = album.lower()
         for f in path.iterdir():
             if f.is_file() and f.suffix.lower() == '.mp3':
                 song_data = self.api.metadata.get_song_metadata(str(f), f.name)
-                if (song_data.get('Album') or '') == album:
+                if (song_data.get('Album') or '').strip().lower() == album_key:
                     song_data['DateDownload'] = date_lookup.get(f.name, None)
                     songs.append(song_data)
         songs.sort(key=lambda s: ((s.get('Artist') or '').lower(), (s.get('Title') or '').lower()))

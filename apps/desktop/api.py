@@ -1,10 +1,15 @@
 import base64
+import ctypes
 import os
 import sqlite3
 import json
+import logging
+import platform
 import pygame
+import uuid
 import Download
 import settings
+from ctypes import wintypes
 from pathlib import Path
 import random
 import time
@@ -19,6 +24,96 @@ from services import (
     DownloadManager,
     startup_maintenance
 )
+
+# ==========================================================================
+# Native Windows window chrome
+# ==========================================================================
+# pywebview creates a frameless window with FormBorderStyle.None, which
+# removes WS_THICKFRAME. Windows refuses to Aero-Snap (drag to edge/corner,
+# snap layouts) a window without that style, even when the drag itself is
+# started natively with WM_NCLBUTTONDOWN/HTCAPTION. Adding the style normally
+# also paints a 7px native frame, so WM_NCCALCSIZE is answered with "client
+# area = whole window" and maximized bounds are clamped to the work area.
+_GWL_STYLE = -16
+_GWLP_WNDPROC = -4
+_WS_THICKFRAME = 0x00040000
+_WS_MAXIMIZEBOX = 0x00010000
+_WS_MINIMIZEBOX = 0x00020000
+_WS_SYSMENU = 0x00080000
+_WM_NCCALCSIZE = 0x0083
+_WM_GETMINMAXINFO = 0x0024
+_WM_NCLBUTTONDOWN = 0x00A1
+_HTCAPTION = 2
+_SWP_NOSIZE = 0x0001
+_SWP_NOMOVE = 0x0002
+_SWP_NOZORDER = 0x0004
+_SWP_FRAMECHANGED = 0x0020
+_MONITOR_DEFAULTTONEAREST = 2
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ('left', ctypes.c_long), ('top', ctypes.c_long),
+        ('right', ctypes.c_long), ('bottom', ctypes.c_long),
+    ]
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
+
+
+class _MINMAXINFO(ctypes.Structure):
+    _fields_ = [
+        ('ptReserved', _POINT), ('ptMaxSize', _POINT),
+        ('ptMaxPosition', _POINT), ('ptMinTrackSize', _POINT),
+        ('ptMaxTrackSize', _POINT),
+    ]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ('cbSize', wintypes.DWORD), ('rcMonitor', _RECT),
+        ('rcWork', _RECT), ('dwFlags', wintypes.DWORD),
+    ]
+
+
+_WNDPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+    wintypes.WPARAM, wintypes.LPARAM)
+
+
+def _win_user32():
+    """Configure 64-bit-safe prototypes once and return user32."""
+    user32 = ctypes.windll.user32
+    user32.GetWindowLongW.restype = ctypes.c_long
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.SetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowLongW.argtypes = [
+        wintypes.HWND, ctypes.c_int, ctypes.c_long]
+    user32.GetWindowLongPtrW.restype = ctypes.c_void_p
+    user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+    user32.SetWindowLongPtrW.argtypes = [
+        wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+    user32.CallWindowProcW.restype = ctypes.c_ssize_t
+    user32.CallWindowProcW.argtypes = [
+        ctypes.c_void_p, wintypes.HWND, wintypes.UINT,
+        wintypes.WPARAM, wintypes.LPARAM]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user32.MonitorFromWindow.restype = wintypes.HMONITOR
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+    user32.GetMonitorInfoW.argtypes = [
+        wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.ReleaseCapture.argtypes = []
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    user32.SendMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    return user32
 
 class Api:
     def __init__(self, db_path):
@@ -37,9 +132,15 @@ class Api:
         self._is_maximized = False
         
         self._window = None
+        self._snap_state = None
+        self._last_native_drag = 0.0
         self.downloader = Download.MusicDownloader()
         self._ensure_schema()
-        
+        # Stable identity for cross-device resume (generated once, persisted).
+        self._device_id, self._device_label = self._ensure_device_identity()
+        self._resume_spot_last = None
+        self._resume_spot_next_at = 0.0
+
         # Initialize services
         self.playback = PlaybackController(self)
         self.metadata = MetadataManager(self)
@@ -61,6 +162,8 @@ class Api:
                     'crossfade_enabled': 'INTEGER DEFAULT 0',
                     'crossfade_seconds': 'REAL DEFAULT 5',
                     'chapter_skip': 'INTEGER DEFAULT 0',
+                    'device_id': 'TEXT',
+                    'device_label': 'TEXT',
                 }.items():
                     try:
                         conn.execute(f"ALTER TABLE Settings ADD COLUMN {column} {ddl}")
@@ -137,7 +240,52 @@ class Api:
                     pass
         except Exception as e:
             print(f" [Python] Schema migration error: {e}")
-        
+
+    def _ensure_device_identity(self):
+        """Stable device id/label for cross-device resume (write once)."""
+        device_id = device_label = None
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                row = conn.execute(
+                    "SELECT device_id, device_label FROM Settings LIMIT 1"
+                ).fetchone()
+                if row:
+                    device_id = (row[0] or "").strip() or None
+                    device_label = (row[1] or "").strip() or None
+        except Exception as e:
+            print(f" [Python] Device identity read error: {e}")
+        if device_id and device_label:
+            return device_id, device_label
+
+        if not device_id:
+            device_id = str(uuid.uuid4())
+        if not device_label:
+            try:
+                system = (platform.system() or "Desktop").strip()
+            except Exception:
+                system = "Desktop"
+            try:
+                host = (platform.node() or os.getenv("COMPUTERNAME") or "").strip()
+            except Exception:
+                host = ""
+            device_label = (f"{system} - {host}" if host else system)[:64]
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.execute(
+                    "UPDATE Settings SET device_id = ?, device_label = ?",
+                    (device_id, device_label),
+                )
+                if cur.rowcount == 0:
+                    conn.execute(
+                        "INSERT INTO Settings (id, device_id, device_label) "
+                        "VALUES (1, ?, ?)",
+                        (device_id, device_label),
+                    )
+        except Exception as e:
+            print(f" [Python] Device identity save error: {e}")
+        return device_id, device_label
+
     # ==========================
     # Playback & Queue Wrappers
     # ==========================
@@ -171,14 +319,93 @@ class Api:
     def play_button(self, current_song=None, opening=False):
         return self.playback.play_button(current_song, opening)
 
+    # ==========================
+    # Cross-device resume (server playback spots)
+    # ==========================
+    def push_resume_spot(self, file=None, position_secs=None, is_podcast=None):
+        """Upsert this device's paused spot (best effort, never blocks).
+
+        Only paused state is meaningful for resume: pushing live positions
+        would clobber a genuine paused spot on another device.
+        """
+        try:
+            if getattr(self, 'playing', False):
+                return False
+            filename = file or self.current_filename
+            if not filename:
+                return False
+            if position_secs is None:
+                position_secs = self.playback.get_current_pos()
+            if is_podcast is None:
+                is_podcast = bool(
+                    (getattr(self, 'last_song', None) or {}).get('IsPodcast'))
+            from services.api_sync import ApiSyncClient
+            client = ApiSyncClient(self.db_path, timeout=8)
+            client.push_playback(
+                getattr(self, '_device_id', None),
+                getattr(self, '_device_label', None),
+                filename, position_secs, is_podcast)
+            return True
+        except Exception as e:
+            print(f" [Python] Resume push skipped: {e}")
+            return False
+
     def get_resume_spot(self):
-        """Latest foreign playback spot (resume across devices), if any."""
-        # Cross-device resume used to ride the retired remote DB (sync.py).
-        # Re-homing it on the server needs a device-spots table — until
-        # then there is no foreign spot to offer.
-        return None
+        """Latest paused spot from another device, or None.
+
+        Cached briefly so track changes and the 60s UI poll cannot hammer a
+        slow/unreachable sync server; failures back off for a minute.
+        """
+        now = time.time()
+        if now < getattr(self, '_resume_spot_next_at', 0.0):
+            return getattr(self, '_resume_spot_last', None)
+
+        spot = None
+        try:
+            from services.api_sync import ApiSyncClient
+            client = ApiSyncClient(self.db_path, timeout=6)
+            raw = client.get_latest_playback(getattr(self, '_device_id', None))
+            if raw and raw.get('file'):
+                own_id = getattr(self, '_device_id', None)
+                if not (raw.get('userKey') and own_id
+                        and raw.get('userKey') == own_id):
+                    file = raw.get('file')
+                    is_podcast = bool(raw.get('isPodcast'))
+                    spot = {
+                        'file': file,
+                        'position_secs': max(
+                            0.0, float(raw.get('positionSec') or 0)),
+                        'is_podcast': is_podcast,
+                        'device': raw.get('device') or '',
+                        'updated_utc': raw.get('updatedUtc') or '',
+                    }
+                    # Friendly pill text: resolve the local title when we
+                    # already have the file (the web does the same lookup).
+                    try:
+                        table = 'Podcasts' if is_podcast else 'Songs'
+                        with sqlite3.connect(self.db_path) as conn:
+                            row = conn.execute(
+                                f"SELECT title, artist FROM {table} "
+                                "WHERE file = ?",
+                                (file,),
+                            ).fetchone()
+                        if row:
+                            spot['title'] = row[0] or ''
+                            spot['artist'] = row[1] or ''
+                    except Exception:
+                        pass
+        except Exception:
+            # Sync unconfigured/offline: resume is optional, never break UI.
+            self._resume_spot_last = None
+            self._resume_spot_next_at = time.time() + 60
+            return None
+
+        self._resume_spot_last = spot
+        self._resume_spot_next_at = time.time() + (10 if spot else 20)
+        return spot
 
     def resume_spot_play(self, file, position_secs, is_podcast=False):
+
         """Play a synced resume spot at its position. Returns True on success."""
         try:
             table = 'Podcasts' if is_podcast else 'Songs'
@@ -235,6 +462,11 @@ class Api:
         if not self.playing:
             pygame.mixer.music.pause()
             self.playback.pause_time = float(sec)
+            # Seek-while-paused moves this device's resume spot.
+            try:
+                self.playback._push_resume_spot()
+            except Exception:
+                pass
 
     # ==========================
     # Metadata & Files Wrappers
@@ -266,8 +498,18 @@ class Api:
     def search_lyrics(self, track_name, artist_name, album_name=None, duration_seconds=None):
         return self.lyrics.search_lyrics(track_name, artist_name, album_name, duration_seconds)
 
-    def save_lyrics(self, synced, plain):
-        return self.lyrics.save_lyrics_for_current(synced, plain)
+    def save_lyrics(self, synced, plain, chapter_id=None):
+        return self.lyrics.save_lyrics_for_current(synced, plain, chapter_id)
+
+    def delete_lyrics(self, chapter_id=None):
+        return self.lyrics.delete_lyrics_for_current(chapter_id)
+
+    def get_active_chapter(self):
+        """Active podcast chapter for the current track (chapter-aware lyrics)."""
+        try:
+            return self.lyrics._active_chapter(self.current_filename)
+        except Exception:
+            return None
 
     def get_artist_image(self, artist):
         return self.apple.get_artist_image(artist)
@@ -301,15 +543,164 @@ class Api:
             self._window.move(int(x), int(y))
         return True
 
+    def _window_handle(self):
+        """Return the native HWND for the pywebview form, if available."""
+        if not self._window:
+            return None
+        native = getattr(self._window, "native", None)
+        if native is None:
+            return None
+        handle = native.Handle
+        try:
+            return int(handle.ToInt64())
+        except Exception:
+            return int(handle.ToInt32())
+
+    def enable_windows_snap(self):
+        """Enable native resize styles while keeping the UI full-bleed.
+
+        A frameless WinForms window (FormBorderStyle.None) has no
+        WS_THICKFRAME, so Windows will not snap it. We add the style and
+        answer WM_NCCALCSIZE with 0 so the client area still covers the whole
+        window (no 7px native border), then clamp maximized bounds to the
+        monitor work area.
+        """
+        if os.name != "nt":
+            return False
+        hwnd = self._window_handle()
+        if not hwnd:
+            return False
+        if self._snap_state and self._snap_state.get("hwnd") == hwnd:
+            return True
+        log = logging.getLogger("hathor.window")
+        try:
+            user32 = _win_user32()
+            old_proc = user32.GetWindowLongPtrW(hwnd, _GWLP_WNDPROC)
+
+            def _wndproc(h, msg, wp, lp):
+                if msg == _WM_GETMINMAXINFO:
+                    # Re-assert prototypes in case another module configured
+                    # user32 differently; GetMonitorInfoW fails silently with
+                    # a stale prototype and the taskbar would be covered.
+                    u = _win_user32()
+                    result = u.CallWindowProcW(old_proc, h, msg, wp, lp)
+                    info = ctypes.cast(
+                        lp, ctypes.POINTER(_MINMAXINFO)).contents
+                    monitor = u.MonitorFromWindow(
+                        h, _MONITOR_DEFAULTTONEAREST)
+                    mi = _MONITORINFO()
+                    mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                    if monitor and u.GetMonitorInfoW(
+                            monitor, ctypes.byref(mi)):
+                        info.ptMaxPosition.x = (
+                            mi.rcWork.left - mi.rcMonitor.left)
+                        info.ptMaxPosition.y = (
+                            mi.rcWork.top - mi.rcMonitor.top)
+                        info.ptMaxSize.x = (
+                            mi.rcWork.right - mi.rcWork.left)
+                        info.ptMaxSize.y = (
+                            mi.rcWork.bottom - mi.rcWork.top)
+                    return result
+                if msg == _WM_NCCALCSIZE and wp:
+                    # Client rect = window rect. Without this, adding
+                    # WS_THICKFRAME insets the webview by the frame size.
+                    return 0
+                return user32.CallWindowProcW(old_proc, h, msg, wp, lp)
+
+            proc = _WNDPROC(_wndproc)
+            user32.SetWindowLongPtrW(
+                hwnd, _GWLP_WNDPROC, ctypes.cast(proc, ctypes.c_void_p))
+            style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
+            style |= (_WS_THICKFRAME | _WS_MAXIMIZEBOX
+                      | _WS_MINIMIZEBOX | _WS_SYSMENU)
+            user32.SetWindowLongW(hwnd, _GWL_STYLE, style)
+            user32.SetWindowPos(
+                hwnd, None, 0, 0, 0, 0,
+                _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER
+                | _SWP_FRAMECHANGED)
+            self._snap_state = {
+                "hwnd": hwnd,
+                "old_proc": old_proc,
+                "proc": proc,
+                "user32": user32,
+            }
+            log.info("Windows snap enabled (hwnd=%s)", hwnd)
+            return True
+        except Exception:
+            log.exception("enable_windows_snap failed")
+            return False
+
+    def start_window_drag(self):
+        """Start a native caption drag so Windows handles snap and magnetism.
+
+        ``ReleaseCapture`` is thread-scoped, so the whole sequence must run on
+        the WinForms UI thread that owns the webview's mouse capture. Running
+        it on pywebview's worker thread leaves the webview holding capture and
+        the drag loop exits immediately. ``Invoke`` blocks the worker thread
+        until the drop, which is fine because JS does not await this call.
+        """
+        if os.name != "nt":
+            return False
+        hwnd = self._window_handle()
+        native = getattr(self._window, "native", None) if self._window else None
+        if not hwnd or native is None:
+            return False
+
+        def _drag():
+            user32 = _win_user32()
+            user32.ReleaseCapture()
+            self._last_native_drag = time.monotonic()
+            user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
+            self._last_native_drag = time.monotonic()
+            self._sync_native_state()
+
+        try:
+            from System import Action
+            native.Invoke(Action(_drag))
+            return True
+        except Exception:
+            logging.getLogger("hathor.window").exception(
+                "start_window_drag: native invoke failed; trying direct")
+        try:
+            _drag()
+            return True
+        except Exception:
+            logging.getLogger("hathor.window").exception(
+                "start_window_drag failed")
+            return False
+
+    def _sync_native_state(self):
+        """Refresh _is_maximized from the real WinForms window state."""
+        try:
+            native = self._window.native if self._window else None
+            if native is not None:
+                self._is_maximized = str(native.WindowState) == "Maximized"
+        except Exception:
+            pass
+        return bool(getattr(self, "_is_maximized", False))
+
+    def is_window_maximized(self):
+        return self._sync_native_state()
+
+    def should_persist_window_size(self):
+        """Skip saving while maximized or right after a native snap drag."""
+        if self.is_window_maximized():
+            return False
+        last_drag = getattr(self, "_last_native_drag", 0.0)
+        return (time.monotonic() - last_drag) >= 2.0
+
     def toggle_maximize_window(self):
         if not self._window:
             return False
         try:
-            if self._is_maximized:
+            # The native state can change via Aero Snap, so don't trust a
+            # previously cached flag here.
+            maximized = self.is_window_maximized()
+            if maximized:
                 self._window.restore()
             else:
                 self._window.maximize()
-            self._is_maximized = not self._is_maximized
+            self._is_maximized = not maximized
             return True
         except Exception as e:
             print(f" [Python] toggle_maximize_window error: {e}")
@@ -360,6 +751,12 @@ class Api:
 
     def get_songs_by_album(self, album):
         return self.db.get_songs_by_album(album)
+
+    def get_artists(self):
+        return self.db.get_artists()
+
+    def get_albums(self):
+        return self.db.get_albums()
 
     def get_all_songs(self):
         return self.db.get_all_songs()
@@ -470,26 +867,84 @@ class Api:
     def sync_local_songs_to_db(self):
         return self.db.sync_local_songs_to_db()
 
-    def sync_remote_to_local_and_download(self):
-        from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
-        if sync_backend() != "api":
-            return NOT_CONFIGURED
-        try:
-            return ApiSyncClient(self.db_path).pull_once()
-        except Exception as e:
-            print(f" [Python] Pull sync error: {e}")
-            return f"Error: {e}"
+    def _sync_progress(self, library):
+        """Return a callback that mirrors pull progress into Settings.
 
-    def sync_local_to_remote(self):
-        """Manual one-shot push of the local library to the sync server."""
+        Sync runs on a pywebview worker thread; ``evaluate_js`` marshals the
+        update onto the UI thread. Duplicate events are dropped, and a missing
+        Settings view (or a teardown race) must never abort the pull.
+        """
+        log = logging.getLogger("hathor.sync")
+        last = {"key": None}
+
+        def emit(event):
+            if not self._window:
+                return
+            try:
+                payload = dict(event or {})
+                payload["library"] = library
+                phase = str(payload.get("phase") or "")
+                done = int(payload.get("done") or 0)
+                total = int(payload.get("total") or 0)
+                message = str(payload.get("message") or "")
+                key = (phase, done, total, message)
+                if key == last["key"]:
+                    return
+                last["key"] = key
+                self._window.evaluate_js(
+                    "if (window.syncProgress) { window.syncProgress("
+                    + json.dumps(payload) + "); }"
+                )
+            except Exception:
+                log.debug("pull(%s): progress UI update failed", library,
+                          exc_info=True)
+
+        return emit
+
+    def sync_remote_to_local_and_download(self, library="all"):
         from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
+        log = logging.getLogger("hathor.sync")
+        progress = self._sync_progress(library)
         if sync_backend() != "api":
-            return NOT_CONFIGURED
+            log.warning("pull(%s) skipped: sync server not configured", library)
+            progress({"phase": "error", "message": NOT_CONFIGURED})
+            return f"Error: {NOT_CONFIGURED}"
+        log.info("pull(%s) requested from Settings", library)
         try:
-            return ApiSyncClient(self.db_path).push_once()
+            result = ApiSyncClient(self.db_path).pull_once(
+                library, progress=progress)
         except Exception as e:
-            print(f" [Python] Push sync error: {e}")
+            log.exception("pull(%s) crashed", library)
+            progress({"phase": "error", "message": f"Error: {e}"})
             return f"Error: {e}"
+        if isinstance(result, str) and result.startswith("Error"):
+            progress({"phase": "error", "message": result})
+        log.info("pull(%s) result: %s", library, result)
+        return result
+
+    def sync_local_to_remote(self, library="all"):
+        """Scan the selected folder, then push that library to the sync server."""
+        from services.api_sync import sync_backend, ApiSyncClient, NOT_CONFIGURED
+        log = logging.getLogger("hathor.sync")
+        if sync_backend() != "api":
+            log.warning("push(%s) skipped: sync server not configured", library)
+            return f"Error: {NOT_CONFIGURED}"
+        try:
+            # Picking up files added outside the app used to be a separate
+            # "Sync Now" button. Fold it into Push so Settings stays simple.
+            log.info("push(%s) requested from Settings; scanning folders", library)
+            if library != "podcasts":
+                log.info("push(%s) audio scan: %s", library,
+                         self.db.sync_local_songs_to_db())
+            if library in ("all", "podcasts"):
+                log.info("push(%s) podcast scan: %s", library,
+                         self.db.sync_local_podcasts_to_db())
+            result = ApiSyncClient(self.db_path).push_once(library)
+        except Exception as e:
+            log.exception("push(%s) crashed", library)
+            return f"Error: {e}"
+        log.info("push(%s) result: %s", library, result)
+        return result
 
     # ==========================
     # Native Application Logic

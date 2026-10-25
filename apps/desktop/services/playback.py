@@ -430,7 +430,7 @@ class PlaybackController:
             return self._user_volume()
 
     def _push_resume_spot(self):
-        """Snapshot (file, position) to the shared remote table (daemon thread).
+        """Snapshot this device's paused spot to the sync server (daemon).
 
         Pause is the resume signal: pushing live positions on track change
         would clobber genuine paused spots elsewhere. Never raises, never
@@ -440,16 +440,22 @@ class PlaybackController:
             filename = self.api.current_filename
             if not filename:
                 return
+            if getattr(self.api, 'playing', False):
+                return
             position = float(self.get_current_pos())
-            is_podcast = bool((getattr(self.api, 'last_song', None) or {}).get('IsPodcast'))
+            is_podcast = bool(
+                (getattr(self.api, 'last_song', None) or {}).get('IsPodcast'))
         except Exception:
             return
 
         def work():
-            # Resume push used to write the retired remote DB (sync.py).
-            # Re-homing it on the server needs a device-spots table — until
-            # then the pause spot stays local-only.
-            return
+            try:
+                # A resume may have started before this thread ran.
+                if getattr(self.api, 'playing', False):
+                    return
+                self.api.push_resume_spot(filename, position, is_podcast)
+            except Exception as e:
+                print(f" [Python] Resume push failed: {e}")
 
         try:
             threading.Thread(target=work, daemon=True).start()

@@ -162,9 +162,10 @@ def save_window_size(width, height):
 
 def on_resized(width, height):
     global resize_timer
-    # Don't persist the maximized footprint as the restored window size.
+    # Don't persist the maximized footprint or a snapped half/quarter-screen
+    # size as the restored window size.
     try:
-        if getattr(api, '_is_maximized', False):
+        if not api.should_persist_window_size():
             return
     except Exception:
         pass
@@ -250,9 +251,33 @@ def _run_startup_maintenance(window):
         )
 
 
+def _enable_windows_snap_when_ready(window):
+    """Apply native resize/snap styles once the form has been created.
+
+    pywebview runs ``on_start`` on a worker thread before the native form is
+    created, so ``window.native`` is still None at that point.
+    """
+    try:
+        if not window.events.shown.wait(15):
+            print(" [Python] Window did not show; Windows snap not enabled.")
+            return
+        if not api.enable_windows_snap():
+            print(" [Python] Windows snap was not enabled.")
+    except Exception as e:
+        print(f" [Python] Could not enable Windows snap: {e}")
+
+
 def on_start(window):
     pygame.init()
     pygame.mixer.init()
+
+    # pywebview invokes on_start before the native form exists, so wait for
+    # the shown event before touching the HWND. The frameless window lacks
+    # WS_THICKFRAME; restore it (with a full-bleed client area) so Windows
+    # Aero Snap works on titlebar drags.
+    threading.Thread(
+        target=_enable_windows_snap_when_ready, args=(window,), daemon=True
+    ).start()
 
     # Startup maintenance (FFmpeg + yt-dlp updates) in the background.
     threading.Thread(target=_run_startup_maintenance, args=(window,), daemon=True).start()

@@ -1,0 +1,142 @@
+<div class="flex flex-col w-full h-full relative">
+    <!-- Header -->
+    <div class="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4">
+        <button onclick="(window.navigateTo||navigateTo)('home')"
+            class="flex items-center gap-2 text-zinc-400 hover:text-white transition-all duration-200 px-3 py-2 rounded-xl hover:bg-white/10 focus:outline-none cursor-pointer">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="m15 18-6-6 6-6" /></svg>
+            <span class="text-xs font-semibold uppercase tracking-[0.2em] hidden sm:inline">Home</span>
+        </button>
+        <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-orange-500/30">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+            </div>
+            <div class="min-w-0">
+                <h1 class="text-2xl font-bold text-zinc-100 truncate">Albums</h1>
+                <p id="albums-count" class="text-xs text-zinc-500 tracking-wide">Loading…</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search -->
+    <div class="sticky top-0 w-full z-50 backdrop-blur-2xl bg-zinc-900/20 rounded-2xl border-b border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.3)] px-6 sm:px-8 py-4 mt-4 flex justify-end items-center">
+        <div class="relative max-w-5xl mx-auto w-full flex justify-end">
+            <div class="relative group">
+                <svg xmlns="http://www.w3.org/2000/svg"
+                    class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-orange-400 transition-colors duration-300 pointer-events-none"
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" placeholder="Search albums..." id="albums_txt_search" spellcheck="false"
+                    class="w-48 sm:w-64 focus:w-72 lg:focus:w-80 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] bg-zinc-800/50 hover:bg-zinc-700/50 focus:bg-zinc-800/80 backdrop-blur-md border border-white/10 focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/50 rounded-full py-2.5 pl-10 pr-10 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none shadow-inner">
+                <button id="albums_clearBtn"
+                    class="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors duration-200 hidden"
+                    onclick="window.clearAlbumsSearch()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="albums-list" class="max-w-5xl w-full mx-auto px-6 sm:px-8 pb-10 pt-6 flex flex-col gap-1">
+        <div class="py-16 text-center text-zinc-500 text-sm animate-pulse">Loading albums…</div>
+    </div>
+</div>
+
+<script>
+(function () {
+    let allNames = [];
+
+    function fuzzyMatches(name, query) {
+        const hay = (name || '').toLowerCase();
+        const needle = (query || '').trim().toLowerCase();
+        if (!needle) return true;
+        if (hay.indexOf(needle) > -1) return true;
+        let pos = 0;
+        for (const ch of needle) {
+            pos = hay.indexOf(ch, pos);
+            if (pos < 0) return false;
+            pos += 1;
+        }
+        return true;
+    }
+
+    window.clearAlbumsSearch = function () {
+        const input = document.getElementById('albums_txt_search');
+        if (!input) return;
+        input.value = '';
+        const clearBtn = document.getElementById('albums_clearBtn');
+        if (clearBtn) clearBtn.classList.add('hidden');
+        window._renderAlbumsList('');
+        input.focus();
+    };
+
+    window._renderAlbumsList = function (query) {
+        const list = document.getElementById('albums-list');
+        if (!list) return;
+        const visible = allNames.filter(n => fuzzyMatches(n, query));
+        const countEl = document.getElementById('albums-count');
+        if (countEl) {
+            const total = allNames.length;
+            countEl.textContent = query && query.trim()
+                ? `${visible.length} of ${total} album${total === 1 ? '' : 's'}`
+                : `${total} album${total === 1 ? '' : 's'}`;
+        }
+        list.innerHTML = '';
+        if (visible.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'py-16 flex flex-col items-center justify-center text-center opacity-70';
+            empty.innerHTML = allNames.length === 0
+                ? '<p class="text-zinc-400 font-medium text-lg">No albums yet</p><p class="text-sm text-zinc-500 mt-2">Songs with album metadata will appear here.</p>'
+                : '<p class="text-zinc-400 font-medium text-lg">No matching albums</p><p class="text-sm text-zinc-500 mt-2">Try a different search.</p>';
+            list.appendChild(empty);
+            return;
+        }
+        visible.forEach(name => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'group flex items-center gap-4 w-full px-2 py-2.5 rounded-xl text-left hover:bg-white/5 transition-colors duration-200 focus:outline-none cursor-pointer';
+            row.innerHTML = `
+                <span class="w-11 h-11 rounded-xl bg-gradient-to-br from-zinc-700 to-zinc-800 border border-white/10 flex items-center justify-center flex-shrink-0 text-zinc-400 group-hover:from-orange-500/30 group-hover:to-orange-600/20 group-hover:text-orange-300 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" /></svg>
+                </span>
+                <span class="min-w-0 flex-1 truncate text-sm font-medium text-zinc-200 group-hover:text-white"></span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-zinc-600 group-hover:text-orange-400 flex-shrink-0 transition-colors"><path d="m9 18 6-6-6-6" /></svg>`;
+            row.querySelector('span').innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" /></svg>`;
+            row.querySelectorAll('span')[1].textContent = name;
+            row.addEventListener('click', () => {
+                if (typeof window.openAlbumPage === 'function') window.openAlbumPage(name);
+            });
+            list.appendChild(row);
+        });
+    };
+
+    const search = document.getElementById('albums_txt_search');
+    if (search) {
+        search.addEventListener('input', (e) => {
+            const clearBtn = document.getElementById('albums_clearBtn');
+            if (clearBtn) clearBtn.classList.toggle('hidden', !(e.target.value.length > 0));
+            window._renderAlbumsList(e.target.value);
+        });
+    }
+
+    (async () => {
+        try {
+            if (!window.pywebview || !window.pywebview.api) {
+                await new Promise(resolve => window.addEventListener('pywebviewready', resolve, { once: true }));
+            }
+            const py = window.pywebview && window.pywebview.api;
+            allNames = (py && typeof py.get_albums === 'function') ? (await py.get_albums()) || [] : [];
+            window._renderAlbumsList(search ? search.value : '');
+        } catch (e) {
+            console.error('Failed to load albums:', e);
+            const list = document.getElementById('albums-list');
+            if (list) list.innerHTML = '<div class="py-16 text-center text-red-400 text-sm">Failed to load albums.</div>';
+        }
+    })();
+})();
+</script>
