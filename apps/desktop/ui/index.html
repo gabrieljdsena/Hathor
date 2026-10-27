@@ -3287,6 +3287,18 @@
             if (tag === "input" || tag === "textarea" || tag === "select") return;
             if (e.target && e.target.isContentEditable) return;
 
+            // Help overlay owns Escape and suppresses the transport keys
+            // underneath it (same rule as the web dialog guard).
+            const helpOverlay = document.getElementById("shortcut-help");
+            const helpOpen = !!(helpOverlay && helpOverlay.classList.contains("open"));
+            if (helpOpen) {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    if (typeof window.closeShortcutHelp === "function") window.closeShortcutHelp();
+                }
+                return;
+            }
+
             switch (e.code) {
                 case "Space":
                     e.preventDefault();
@@ -3324,6 +3336,62 @@
                 case "MediaPlayPause":
                     e.preventDefault();
                     if (window.toggle_play_pause) await window.toggle_play_pause();
+                    break;
+            }
+
+            // Web-parity keys (n/p are chapter-aware, [ ] chapter-only).
+            switch (e.key) {
+                case "n":
+                case "N": {
+                    const api = window.pywebview && window.pywebview.api;
+                    let moved = false;
+                    if (api && typeof api.chapter_next === "function") {
+                        moved = !!(await api.chapter_next());
+                    }
+                    if (!moved && api && typeof api.play_next === "function") {
+                        await api.play_next();
+                    }
+                    break;
+                }
+                case "p":
+                case "P": {
+                    const api = window.pywebview && window.pywebview.api;
+                    let moved = false;
+                    if (api && typeof api.chapter_prev === "function") {
+                        moved = !!(await api.chapter_prev());
+                    }
+                    if (!moved && api && typeof api.play_prev === "function") {
+                        await api.play_prev();
+                    }
+                    break;
+                }
+                case "]":
+                    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.chapter_next === "function") {
+                        await window.pywebview.api.chapter_next();
+                    }
+                    break;
+                case "[":
+                    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.chapter_prev === "function") {
+                        await window.pywebview.api.chapter_prev();
+                    }
+                    break;
+                case "m":
+                case "M":
+                    if (window.toggle_mute) await window.toggle_mute();
+                    break;
+                case "s":
+                case "S":
+                    if (window.toggle_shuffle) await window.toggle_shuffle();
+                    if (typeof syncNpTogglesFromMain === "function") syncNpTogglesFromMain();
+                    break;
+                case "r":
+                case "R":
+                    if (window.toggle_repeat) await window.toggle_repeat();
+                    if (typeof syncNpTogglesFromMain === "function") syncNpTogglesFromMain();
+                    break;
+                case "?":
+                    e.preventDefault();
+                    if (typeof window.toggleShortcutHelp === "function") window.toggleShortcutHelp();
                     break;
             }
         });
@@ -3805,6 +3873,128 @@
             Add to Playlist
         </button>
     </div>
+
+    <style id="shortcut-help-style">
+        #shortcut-help {
+            position: fixed; inset: 0; z-index: 500; display: none;
+            align-items: center; justify-content: center; padding: 1.5rem;
+            background: rgba(0, 0, 0, 0.62); backdrop-filter: blur(6px);
+        }
+        #shortcut-help.open { display: flex; }
+        #shortcut-help .sh-card {
+            width: 100%; max-width: 30rem; max-height: calc(100vh - 3rem);
+            overflow-y: auto; border-radius: 1rem; padding: 1.5rem;
+            background: rgba(9, 9, 11, 0.97);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.60);
+        }
+        #shortcut-help .sh-head {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 1rem; margin-bottom: 1rem;
+        }
+        #shortcut-help .sh-kicker {
+            margin: 0 0 0.2rem; font-size: 0.65rem; font-weight: 700;
+            letter-spacing: 0.18em; text-transform: uppercase; color: #fb923c;
+        }
+        #shortcut-help h2 {
+            margin: 0; font-size: 1.15rem; font-weight: 700; color: #f4f4f5;
+        }
+        #shortcut-help .sh-close {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+            width: 2rem; height: 2rem; border-radius: 0.6rem; cursor: pointer;
+            color: #a1a1aa; background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            transition: color 0.2s, background 0.2s, border-color 0.2s;
+        }
+        #shortcut-help .sh-close:hover {
+            color: #fb923c; background: rgba(255, 255, 255, 0.10);
+            border-color: rgba(249, 115, 22, 0.45);
+        }
+        #shortcut-help .sh-list { display: flex; flex-direction: column; gap: 0.25rem; }
+        #shortcut-help .sh-row {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 1rem; padding: 0.42rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        #shortcut-help .sh-row:last-child { border-bottom: 0; }
+        #shortcut-help .sh-row span { font-size: 0.85rem; color: #d4d4d8; }
+        #shortcut-help .sh-keys { display: flex; gap: 0.25rem; flex-shrink: 0; }
+        #shortcut-help kbd {
+            min-width: 1.75rem; text-align: center; padding: 0.22rem 0.5rem;
+            border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.72rem; color: #e4e4e7;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+        }
+        #shortcut-help .sh-note {
+            margin: 1rem 0 0; font-size: 0.72rem; line-height: 1.45; color: #71717a;
+        }
+    </style>
+
+    <div id="shortcut-help" role="dialog" aria-modal="true"
+        aria-labelledby="shortcut-help-title" aria-hidden="true">
+        <div class="sh-card">
+            <div class="sh-head">
+                <div>
+                    <p class="sh-kicker">Hathor</p>
+                    <h2 id="shortcut-help-title">Keyboard shortcuts</h2>
+                </div>
+                <button type="button" class="sh-close" title="Close" aria-label="Close"
+                    onclick="window.closeShortcutHelp()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="sh-list">
+                <div class="sh-row"><span>Play / pause</span><span class="sh-keys"><kbd>Space</kbd></span></div>
+                <div class="sh-row"><span>Seek back / forward 10s</span><span class="sh-keys"><kbd>&#8592;</kbd><kbd>&#8594;</kbd></span></div>
+                <div class="sh-row"><span>Volume up / down</span><span class="sh-keys"><kbd>&#8593;</kbd><kbd>&#8595;</kbd></span></div>
+                <div class="sh-row"><span>Next / previous (chapter-aware on podcasts)</span><span class="sh-keys"><kbd>n</kbd><kbd>p</kbd></span></div>
+                <div class="sh-row"><span>Previous / next chapter</span><span class="sh-keys"><kbd>[</kbd><kbd>]</kbd></span></div>
+                <div class="sh-row"><span>Mute / unmute</span><span class="sh-keys"><kbd>m</kbd></span></div>
+                <div class="sh-row"><span>Toggle shuffle</span><span class="sh-keys"><kbd>s</kbd></span></div>
+                <div class="sh-row"><span>Toggle repeat</span><span class="sh-keys"><kbd>r</kbd></span></div>
+                <div class="sh-row"><span>This shortcut list</span><span class="sh-keys"><kbd>?</kbd></span></div>
+            </div>
+            <p class="sh-note">Shortcuts pause while typing or when a dialog is open. On podcasts with chapters, track keys jump chapters first.</p>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const overlay = document.getElementById('shortcut-help');
+            if (!overlay) return;
+            let lastFocus = null;
+            function setOpen(open) {
+                if (open) lastFocus = document.activeElement;
+                // Move focus out before hiding the dialog from assistive
+                // tech; Chromium blocks aria-hidden on a focused subtree.
+                if (!open && overlay.contains(document.activeElement)) {
+                    document.activeElement.blur();
+                }
+                overlay.classList.toggle('open', open);
+                overlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+                if (open) {
+                    const closeBtn = overlay.querySelector('.sh-close');
+                    if (closeBtn) closeBtn.focus();
+                } else if (lastFocus && typeof lastFocus.focus === 'function') {
+                    lastFocus.focus();
+                    lastFocus = null;
+                }
+            }
+            window.openShortcutHelp = function () { setOpen(true); };
+            window.closeShortcutHelp = function () { setOpen(false); };
+            window.toggleShortcutHelp = function () {
+                setOpen(!overlay.classList.contains('open'));
+            };
+            overlay.addEventListener('click', function (e) {
+                if (e.target === overlay) setOpen(false);
+            });
+        })();
+    </script>
 
 </body>
 

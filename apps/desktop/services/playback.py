@@ -370,6 +370,8 @@ class PlaybackController:
         queued (songs only, web parity) so the library converges as you
         listen instead of blocking play on a full-file loudnorm pass.
         """
+        if not getattr(settings, 'normalize_volume', True):
+            return 1.0
         filename = (song or {}).get('File') if isinstance(song, dict) else None
         if not filename:
             return 1.0
@@ -384,6 +386,15 @@ class PlaybackController:
             return loudness_mod.gain_for_lufs(value)
         except Exception:
             return 1.0
+
+    def refresh_track_gain(self, song=None):
+        """Recompute the active track gain after a settings change."""
+        try:
+            target = song if song is not None else getattr(self.api, 'last_song', None)
+            self._track_gain = self._track_gain_for(target)
+        except Exception:
+            self._track_gain = 1.0
+        return self._track_gain
 
     def _queue_loudness_analysis(self, filename):
         """Daemon-thread loudnorm measure + persist, once per file. Never raises."""
@@ -971,6 +982,59 @@ class PlaybackController:
         if not self.api.playing:
             pygame.mixer.music.pause()
             self.pause_time = float(sec)
+
+    def chapter_seek(self, direction):
+        """Seek to the next/previous podcast chapter. True when it moved.
+
+        Mirrors the web transport: next is the next boundary after a small
+        epsilon; previous restarts the current chapter when more than three
+        seconds in, otherwise jumps to the previous boundary. False means no
+        chapter applies (callers fall back to track next/prev).
+        """
+        try:
+            song = getattr(self.api, 'last_song', None) or {}
+            if not song.get('IsPodcast'):
+                return False
+            filename = song.get('File')
+            if not filename or filename != getattr(self.api, 'current_filename', None):
+                return False
+            db = getattr(self.api, 'db', None)
+            if db is None:
+                return False
+            chapters = sorted(
+                float(c.get('startSecs') or 0)
+                for c in (db.get_podcast_chapters(filename) or [])
+            )
+            if not chapters:
+                return False
+            pos = float(self.get_current_pos() or 0)
+            target = None
+            if direction > 0:
+                for start in chapters:
+                    if start > pos + 0.5:
+                        target = start
+                        break
+            else:
+                current = None
+                previous = None
+                for start in chapters:
+                    if start > pos + 0.25:
+                        break
+                    previous = current
+                    current = start
+                if current is None:
+                    return False
+                if pos - current > 3.0:
+                    target = current
+                elif previous is not None:
+                    target = previous
+            if target is None:
+                return False
+            self._seek_to_seconds(target)
+            return True
+        except Exception as e:
+            print(f" [Python] Chapter seek error: {e}")
+            return False
 
     def _maybe_start_at_first_chapter(self, song):
         """Web parity: timestamped episodes start at the first chapter."""

@@ -62,6 +62,14 @@ def analyze_file(ffmpeg_exe, path, timeout_secs=180):
         text = proc.stderr.decode("utf-8", errors="ignore")
     except Exception:
         return None
-    # The JSON block trails the progress lines: parse from the last '{'.
+    # The JSON block trails the progress lines. Newer ffmpeg builds print an
+    # output summary *after* it, so slice out just the loudnorm object instead
+    # of parsing everything from the last '{' to EOF.
+    marker = text.rfind('"input_i"')
+    if marker >= 0:
+        start = text.rfind("{", 0, marker)
+        end = text.find("}", marker)
+        if start >= 0 and end >= 0:
+            return parse_loudnorm_output(text[start:end + 1])
     idx = text.rfind("{")
     return parse_loudnorm_output(text[idx:] if idx >= 0 else text)

@@ -162,6 +162,7 @@ class Api:
                     'crossfade_enabled': 'INTEGER DEFAULT 0',
                     'crossfade_seconds': 'REAL DEFAULT 5',
                     'chapter_skip': 'INTEGER DEFAULT 0',
+                    'normalize_volume': 'INTEGER DEFAULT 1',
                     'device_id': 'TEXT',
                     'device_label': 'TEXT',
                 }.items():
@@ -315,6 +316,14 @@ class Api:
     
     def toggle_shuffle(self):
         return self.playback.toggle_shuffle()
+
+    def chapter_next(self):
+        """Seek to the next podcast chapter; False when none applies."""
+        return self.playback.chapter_seek(1)
+
+    def chapter_prev(self):
+        """Seek to the previous podcast chapter; False when none applies."""
+        return self.playback.chapter_seek(-1)
 
     def play_button(self, current_song=None, opening=False):
         return self.playback.play_button(current_song, opening)
@@ -852,6 +861,10 @@ class Api:
     def get_daily_mix(self):
         return self.db.get_daily_mix()
 
+    def regenerate_daily_mix(self):
+        """Force a fresh mix for today (web parity: Regenerate button)."""
+        return self.db.regenerate_daily_mix()
+
     def get_recently_played(self, limit=15):
         return self.db.get_recently_played(limit)
 
@@ -977,8 +990,12 @@ class Api:
             skip = bool(getattr(settings, 'chapter_skip', False))
         except Exception:
             skip = False
+        try:
+            normalize = bool(getattr(settings, 'normalize_volume', True))
+        except Exception:
+            normalize = True
         return {'crossfade_enabled': enabled, 'crossfade_seconds': seconds,
-                'chapter_skip': skip}
+                'chapter_skip': skip, 'normalize_volume': normalize}
 
     def set_crossfade(self, enabled, seconds):
         """Persist crossfade prefs and apply them live."""
@@ -1008,6 +1025,28 @@ class Api:
         if enabled and seconds > 0:
             return f"Crossfade on ({seconds:g}s). Gapless handoff always on."
         return "Crossfade off. Gapless handoff always on."
+
+    def set_normalize_volume(self, enabled):
+        """Persist loudness normalization and apply it to the current track."""
+        if isinstance(enabled, str):
+            enabled = enabled.lower() in ('1', 'true', 'on', 'yes')
+        else:
+            enabled = bool(enabled)
+        settings.normalize_volume = enabled
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "UPDATE Settings SET normalize_volume = ?",
+                    (int(enabled),),
+                )
+        except Exception as e:
+            print(f" [Python] Database error: {e}")
+        try:
+            self.playback.refresh_track_gain(getattr(self, 'last_song', None))
+            self.playback.sync_output_volume()
+        except Exception:
+            pass
+        return enabled
 
     def update_download_limit(self, limit):
         settings.limit_downloads = str(limit)
@@ -1071,6 +1110,62 @@ class Api:
         except Exception as e:
             print(f" [Python] Library status error: {e}")
             return []
+
+    def get_system_status(self):
+        """Offline-safe FFmpeg + installed YouTube-library status."""
+        try:
+            ffmpeg = self.get_ffmpeg_status()
+        except Exception:
+            ffmpeg = {'found': False, 'exe': None, 'dir': None}
+        libraries = []
+        try:
+            for package in startup_maintenance.installed_youtube_libs():
+                current = startup_maintenance.get_current_version(package)
+                libraries.append({
+                    'package': package,
+                    'current': current,
+                    'status': 'installed' if current else 'missing',
+                })
+        except Exception as e:
+            print(f" [Python] System status error: {e}")
+        return {'ffmpeg': ffmpeg, 'libraries': libraries}
+
+    def backfill_loudness(self, limit=20):
+        """Measure up to `limit` songs missing loudness (resumable)."""
+        try:
+            limit = max(1, min(100, int(limit)))
+        except (TypeError, ValueError):
+            limit = 20
+        try:
+            files = self.db.get_files_missing_loudness(limit)
+        except Exception as e:
+            return {'scanned': 0, 'remaining': 0, 'error': str(e)}
+        try:
+            remaining = self.db.count_files_missing_loudness()
+        except Exception:
+            remaining = 0
+        if not files:
+            return {'scanned': 0, 'remaining': remaining}
+        found = startup_maintenance.find_ffmpeg()
+        exe = found.get('exe') if found.get('found') else None
+        if not exe:
+            return {'scanned': 0, 'remaining': remaining,
+                    'error': 'FFmpeg not found.'}
+        from services import loudness
+        scanned = 0
+        for file_name in files:
+            file_path = os.path.join(settings.path, file_name)
+            if not os.path.isfile(file_path):
+                continue
+            value = loudness.analyze_file(exe, file_path)
+            if value is not None:
+                self.db.set_song_loudness(file_name, value)
+                scanned += 1
+        try:
+            remaining = self.db.count_files_missing_loudness()
+        except Exception:
+            remaining = max(0, remaining - scanned)
+        return {'scanned': scanned, 'remaining': remaining}
 
     def run_startup_maintenance(self):
         """Blocking re-run of the startup checks (Retry button). Pushes progress to UI."""

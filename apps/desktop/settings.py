@@ -23,6 +23,7 @@ current_playlist = None
 crossfade_enabled = False
 crossfade_seconds = 5.0
 chapter_skip = False
+normalize_volume = True
 
 
 if os.path.exists(db_path):
@@ -54,6 +55,8 @@ if os.path.exists(db_path):
                         pass
                 if 'chapter_skip' in data.keys() and data['chapter_skip'] is not None:
                     chapter_skip = bool(data['chapter_skip'])
+                if 'normalize_volume' in data.keys() and data['normalize_volume'] is not None:
+                    normalize_volume = bool(data['normalize_volume'])
 
         except sqlite3.OperationalError:
             pass

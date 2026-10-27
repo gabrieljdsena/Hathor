@@ -23,6 +23,16 @@
                     </div>
                 </div>
                 <div class="ml-auto flex items-center gap-2">
+                    <button id="daily-regenerate-btn" title="Regenerate mix"
+                        class="flex items-center gap-2 h-11 px-4 bg-white/5 text-zinc-300 rounded-full hover:bg-white/10 hover:text-white transition-all duration-300 hover:scale-105 active:scale-95 border border-white/5 focus:outline-none cursor-pointer">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-4 h-4">
+                            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                            <path d="M21 3v6h-6" />
+                        </svg>
+                        <span class="text-xs font-semibold uppercase tracking-[0.2em] hidden sm:inline">Regenerate</span>
+                    </button>
                     <button id="daily-shuffle-btn" title="Shuffle play"
                         class="flex items-center justify-center w-11 h-11 bg-white/5 text-zinc-300 rounded-full hover:bg-white/10 hover:text-white transition-all duration-300 hover:scale-105 active:scale-95 border border-white/5 focus:outline-none cursor-pointer">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
@@ -294,6 +304,59 @@
             const body = document.getElementById("daily-table-body");
             if (body) body.innerHTML = `<div class="py-16 text-center text-red-400 text-sm">Failed to load Daily Mix.</div>`;
         }
+    })();
+
+    // Regenerate: force a fresh mix for today, then re-render in place.
+    window._dailyApplyMix = function (mix) {
+        const songs = (mix && mix.songs) || [];
+        window._dailyMixDate = (mix && mix.date) || null;
+        if (window._coverCache) window._coverCache.clear();
+        window._dailySongsData = songs;
+        window._dailyRenderSorted();
+
+        const countEl = document.getElementById("daily-mix-count");
+        if (countEl) {
+            let dateStr = window._dailyMixDate || '';
+            try {
+                if (dateStr) dateStr = new Date(dateStr + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            } catch (err) {}
+            countEl.textContent = `${songs.length} songs${dateStr ? ' \u2014 ' + dateStr : ''}${mix && mix.cached ? '' : ' \u2014 fresh'}`;
+        }
+        const badge = document.getElementById("daily-date-badge");
+        if (badge && window._dailyMixDate) {
+            try {
+                badge.textContent = new Date(window._dailyMixDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            } catch (err) {}
+        }
+    };
+
+    (function initDailyRegenerate() {
+        const btn = document.getElementById('daily-regenerate-btn');
+        if (!btn) return;
+        btn.addEventListener('click', async function () {
+            if (btn.disabled) return;
+            const original = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            btn.textContent = 'Regenerating...';
+            try {
+                let py = window.pywebview && window.pywebview.api;
+                if (!py) {
+                    await new Promise(resolve => window.addEventListener('pywebviewready', resolve, { once: true }));
+                    py = window.pywebview.api;
+                }
+                const mix = await py.regenerate_daily_mix();
+                window._dailyApplyMix(mix);
+                if (typeof notyf !== 'undefined') notyf.success('Daily Mix regenerated.');
+            } catch (e) {
+                console.error('Failed to regenerate daily mix:', e);
+                if (typeof notyf !== 'undefined') notyf.error('Could not regenerate Daily Mix.');
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = original;
+            }
+        });
     })();
 
     fetch('modals/edit_song.html')

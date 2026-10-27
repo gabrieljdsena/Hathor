@@ -51,6 +51,12 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
+                    <button id="measureLoudnessBtn"
+                        onclick="measureLoudness()"
+                        title="Measure loudness for up to 20 unmeasured songs"
+                        class="px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-60 disabled:cursor-wait">
+                        Measure
+                    </button>
                     <button id="sync-push-songs"
                         onclick="syncLibrary('songs', 'push')"
                         class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-orange-300 bg-orange-500/10 hover:bg-orange-500 hover:text-white border border-orange-500/30 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
@@ -227,6 +233,34 @@
                 Save
             </button>
         </div>
+        <!-- Playback: Normalize volume -->
+        <div
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex items-center gap-4">
+                <div
+                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M11 5 6 9H3v6h3l5 4V5Z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5a5 5 0 0 1 0 7M18 6a9 9 0 0 1 0 12" />
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-zinc-200 font-medium">Normalize volume</h3>
+                    <p class="text-xs text-zinc-500 mt-0.5">Even out loud and quiet tracks using each song's measured loudness. Instant, no save needed.</p>
+                    <div class="flex items-center gap-3 mt-2">
+                        <span class="flex items-center gap-2 text-xs text-zinc-400 select-none">
+                            <input id="normalize_volume_enabled" type="checkbox" class="hidden" tabindex="-1">
+                            <button id="normalize_volume_toggle" type="button" role="switch" aria-checked="false"
+                                aria-label="Enable volume normalization" data-on="0" class="xf-switch">
+                                <span class="xf-knob"></span>
+                            </button>
+                            Enabled
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <span class="text-xs text-zinc-600 uppercase tracking-widest shrink-0">Instant</span>
+        </div>
         <!-- Playback: Chapter auto-skip (podcasts) -->
         <div
             class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
@@ -256,6 +290,31 @@
                 onclick="if(window.pywebview && window.pywebview.api) { const en = document.getElementById('chapter_skip_enabled').checked; window.pywebview.api.set_chapter_skip(en).then(on => { if(typeof notyf !== 'undefined') notyf.success(on ? 'Chapter auto-skip on' : 'Chapter auto-skip off'); }); }"
                 class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md">
                 Save
+            </button>
+        </div>
+        <!-- System status: bundled FFmpeg + managed yt-dlp -->
+        <div
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex items-start gap-4 min-w-0">
+                <div
+                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M12 16V4m0 0L8 8m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                    </svg>
+                </div>
+                <div class="min-w-0">
+                    <h3 class="text-zinc-200 font-medium">System status</h3>
+                    <p class="text-xs text-zinc-500 mt-0.5">FFmpeg and the YouTube downloader (yt-dlp) used for downloads.</p>
+                    <div class="flex flex-col gap-1 mt-2 text-xs font-mono text-zinc-400 min-w-0">
+                        <span id="sys-ffmpeg-status" class="truncate">FFmpeg: checking...</span>
+                        <span id="sys-libs-status" class="truncate">yt-dlp: checking...</span>
+                    </div>
+                </div>
+            </div>
+            <button id="sysCheckBtn" onclick="checkSystemUpdates()"
+                class="px-5 py-2.5 shrink-0 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-60 disabled:cursor-wait">
+                Check for updates
             </button>
         </div>
     </div>
@@ -624,6 +683,146 @@
             window.addEventListener('pywebviewready', load, { once: true });
         }
     })();
+
+    // Normalize volume: persisted setting, applied to the current track live.
+    (function initNormalizeRow() {
+        const checkbox = document.getElementById('normalize_volume_enabled');
+        const toggle = document.getElementById('normalize_volume_toggle');
+        if (!checkbox || !toggle) return;
+        window.paintNormalizeToggle = function (on) {
+            on = !!on;
+            checkbox.checked = on;
+            toggle.dataset.on = on ? '1' : '0';
+            toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+        };
+        toggle.addEventListener('click', async function (e) {
+            e.preventDefault();
+            const next = !checkbox.checked;
+            window.paintNormalizeToggle(next);
+            const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+            if (!api || typeof api.set_normalize_volume !== 'function') return;
+            try {
+                const on = await api.set_normalize_volume(next);
+                window.paintNormalizeToggle(!!on);
+                if (typeof notyf !== 'undefined') {
+                    notyf.success(on ? 'Volume normalization on' : 'Volume normalization off');
+                }
+            } catch (err) {
+                window.paintNormalizeToggle(!next);
+                if (typeof notyf !== 'undefined') notyf.error('Could not update normalization.');
+                console.error('Normalization update failed:', err);
+            }
+        });
+        async function load() {
+            try {
+                const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+                if (!api || typeof api.get_playback_settings !== 'function') return;
+                const prefs = await api.get_playback_settings();
+                const value = (prefs && prefs.normalize_volume !== undefined) ? !!prefs.normalize_volume : true;
+                window.paintNormalizeToggle(value);
+            } catch (e) {
+                console.error('Failed to load normalization setting:', e);
+            }
+        }
+        if (window.pywebview && window.pywebview.api) load();
+        else window.addEventListener('pywebviewready', load, { once: true });
+    })();
+
+    // Loudness backfill: 20 unmeasured songs per click, resumable.
+    async function measureLoudness() {
+        const btn = document.getElementById('measureLoudnessBtn');
+        if (!btn) return;
+        const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        if (!api || typeof api.backfill_loudness !== 'function') {
+            if (typeof notyf !== 'undefined') notyf.error('Loudness measurement is unavailable.');
+            return;
+        }
+        const label = btn.textContent.trim();
+        btn.disabled = true;
+        btn.textContent = 'Measuring...';
+        try {
+            const res = await api.backfill_loudness(20) || {};
+            if (res.error) {
+                if (typeof notyf !== 'undefined') notyf.error(res.error);
+            } else if (res.remaining > 0) {
+                if (typeof notyf !== 'undefined') {
+                    notyf.success(`Measured ${res.scanned || 0} songs, ${res.remaining} to go - run again.`);
+                }
+            } else if (typeof notyf !== 'undefined') {
+                notyf.success(`Loudness measured for ${res.scanned || 0} songs. Library complete.`);
+            }
+        } catch (e) {
+            if (typeof notyf !== 'undefined') notyf.error('Loudness measurement failed.');
+            console.error('Loudness backfill failed:', e);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = label || 'Measure';
+        }
+    }
+
+    // System status: offline-safe installed versions + a runtime update check.
+    async function loadSystemStatus() {
+        const ffEl = document.getElementById('sys-ffmpeg-status');
+        const libEl = document.getElementById('sys-libs-status');
+        const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        if (!api || typeof api.get_system_status !== 'function') return;
+        try {
+            const status = await api.get_system_status() || {};
+            const ff = status.ffmpeg || {};
+            if (ffEl) {
+                ffEl.textContent = ff.found
+                    ? 'FFmpeg: ready'
+                    : 'FFmpeg: missing (downloads on update check)';
+                ffEl.title = ff.exe || '';
+            }
+            if (libEl) {
+                const libs = status.libraries || [];
+                if (libs.length === 0) {
+                    libEl.textContent = 'yt-dlp: not detected';
+                    libEl.title = '';
+                } else {
+                    libEl.textContent = libs.map(function (r) {
+                        return (r.package || 'library') + ': ' + (r.current || 'missing');
+                    }).join('  \u00b7  ');
+                    libEl.title = libEl.textContent;
+                }
+            }
+        } catch (e) {
+            if (ffEl) ffEl.textContent = 'FFmpeg: status unavailable';
+            if (libEl) libEl.textContent = 'yt-dlp: status unavailable';
+            console.error('System status failed:', e);
+        }
+    }
+
+    async function checkSystemUpdates() {
+        const btn = document.getElementById('sysCheckBtn');
+        if (!btn) return;
+        const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        if (!api || typeof api.run_startup_maintenance !== 'function') {
+            if (typeof notyf !== 'undefined') notyf.error('Update check is unavailable.');
+            return;
+        }
+        const label = btn.textContent.trim();
+        btn.disabled = true;
+        btn.textContent = 'Checking...';
+        try {
+            const summary = await api.run_startup_maintenance();
+            if (typeof notyf !== 'undefined') {
+                if (summary && summary.all_ok) notyf.success('Everything is up to date.');
+                else notyf.success('Update check finished. See the status toast for details.');
+            }
+        } catch (e) {
+            if (typeof notyf !== 'undefined') notyf.error('Update check failed.');
+            console.error('Update check failed:', e);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = label || 'Check for updates';
+            loadSystemStatus();
+        }
+    }
+
+    if (window.pywebview && window.pywebview.api) loadSystemStatus();
+    else window.addEventListener('pywebviewready', loadSystemStatus, { once: true });
 
     // Re-apply the busy state when this view is re-created (the sync keeps
     // running while the user is on another tab).
