@@ -81,10 +81,33 @@ _WNDPROC = ctypes.WINFUNCTYPE(
     ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
     wintypes.WPARAM, wintypes.LPARAM)
 
+_USER32 = None
+
+
+def _file_dialog_type(open_dialog=True):
+    """Return the current pywebview dialog enum, falling back for old versions."""
+    import webview
+    file_dialog = getattr(webview, "FileDialog", None)
+    if file_dialog is not None:
+        return file_dialog.OPEN if open_dialog else file_dialog.FOLDER
+    return webview.OPEN_DIALOG if open_dialog else webview.FOLDER_DIALOG
+
 
 def _win_user32():
-    """Configure 64-bit-safe prototypes once and return user32."""
-    user32 = ctypes.windll.user32
+    """Configure 64-bit-safe prototypes once and return a private user32.
+
+    Uses a dedicated WinDLL instead of the process-wide ``ctypes.windll``
+    singleton: mutating the shared function prototypes also rewrites what
+    pywebview's winforms backend sees, and its ``move()`` intentionally
+    passes ``None`` for the SetWindowPos size arguments (NULL = keep size).
+    With our ``c_int`` prototypes installed on the shared object that call
+    raises ``ctypes.ArgumentError: argument 5: TypeError: wrong type`` and
+    can destabilize the pythonnet bridge.
+    """
+    global _USER32
+    if _USER32 is not None:
+        return _USER32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetWindowLongW.restype = ctypes.c_long
     user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.SetWindowLongW.restype = ctypes.c_long
@@ -113,6 +136,7 @@ def _win_user32():
     user32.SendMessageW.restype = ctypes.c_ssize_t
     user32.SendMessageW.argtypes = [
         wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    _USER32 = user32
     return user32
 
 class Api:
@@ -1412,10 +1436,9 @@ class Api:
             return []
 
     def pick_folder(self):
-        import webview
         if self._window:
             result = self._window.create_file_dialog(
-                webview.FOLDER_DIALOG,
+                _file_dialog_type(open_dialog=False),
                 allow_multiple=False
             )
             if result and len(result) > 0:
@@ -1424,10 +1447,9 @@ class Api:
         return None
 
     def pick_podcasts_folder(self):
-        import webview
         if self._window:
             result = self._window.create_file_dialog(
-                webview.FOLDER_DIALOG,
+                _file_dialog_type(open_dialog=False),
                 allow_multiple=False
             )
             if result and len(result) > 0:
@@ -1436,10 +1458,9 @@ class Api:
         return None
 
     def pick_background(self):
-        import webview
         if self._window:
             result = self._window.create_file_dialog(
-                webview.OPEN_DIALOG,
+                _file_dialog_type(),
                 allow_multiple=False,
                 file_types=('Image Files (*.bmp;*.jpg;*.jpeg;*.gif;*.png)', 'All files (*.*)')
             )
@@ -1449,10 +1470,9 @@ class Api:
         return None
 
     def pick_playlist_image(self):
-        import webview
         if self._window:
             result = self._window.create_file_dialog(
-                webview.OPEN_DIALOG,
+                _file_dialog_type(),
                 allow_multiple=False,
                 file_types=('Image Files (*.bmp;*.jpg;*.jpeg;*.gif;*.png)', 'All files (*.*)')
             )
