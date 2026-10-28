@@ -169,4 +169,246 @@ public sealed class DiscoverRankerTests
     [InlineData("Nirvana", "Pearl Jam", false)]
     public void IsSameArtist_IgnoresCaseAndSpace(string a, string b, bool expected) =>
         DiscoverRanker.IsSameArtist(a, b).Should().Be(expected);
+
+    private static TasteProfile Taste(params (string Artist, double Weight)[] artists) =>
+        new(artists.Select(a => new TasteArtist(a.Artist, (long)(a.Weight * 10), a.Weight)).ToList(),
+            [], []);
+
+    private static TasteProfile TasteWithTags(params string[] tags) => new([], [], tags);
+
+    [Fact]
+    public void Rank_PrefersSimilarOpenDataSource_OverChart()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Chart Hit", "Nobody", DiscoverSources.Chart),
+            Cand("Deep Cut", "Slowdive", DiscoverSources.Similar) with
+            {
+                Similarity = 1.0,
+                SeedArtist = "M83",
+            },
+        };
+
+        var ranked = DiscoverRanker.Rank(Taste(("M83", 10)), candidates, [], []);
+
+        ranked[0].Title.Should().Be("Deep Cut");
+        ranked[0].Reason.Should().Be("Because you play M83");
+    }
+
+    [Fact]
+    public void Rank_DismissedItem_IsExcluded()
+    {
+        var candidates = new List<DiscoverCandidate> { Cand("Midnight City", "M83") };
+        var dismissed = new List<(string, string)> { ("Midnight City", "M83") };
+
+        DiscoverRanker.Rank(Taste(("M83", 10)), candidates, [], [], dismissed)
+            .Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Rank_LongTailPopularity_BeatsBlockbuster()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Blockbuster", "A", DiscoverSources.Similar) with
+            {
+                Similarity = 1.0,
+                Popularity = 50_000_000,
+            },
+            Cand("Long Tail", "B", DiscoverSources.Similar) with
+            {
+                Similarity = 1.0,
+                Popularity = 100_000,
+            },
+        };
+
+        var ranked = DiscoverRanker.Rank(Taste(("Seed", 10)), candidates, [], []);
+
+        ranked[0].Title.Should().Be("Long Tail");
+    }
+
+    private static DiscoverFeedbackSignals Signals(
+        IEnumerable<string>? dismissedKeys = null,
+        IEnumerable<string>? dismissedArtists = null,
+        IEnumerable<string>? likedArtists = null,
+        IEnumerable<string>? likedSeeds = null,
+        IEnumerable<string>? engagedArtists = null,
+        IReadOnlyDictionary<string, double>? sourcePriors = null,
+        IReadOnlyDictionary<string, double>? artistBoosts = null,
+        IReadOnlyDictionary<string, double>? seedBoosts = null) =>
+        new(
+            new HashSet<string>(dismissedKeys ?? [], StringComparer.Ordinal),
+            new HashSet<string>(dismissedArtists ?? [], StringComparer.Ordinal),
+            new HashSet<string>(likedArtists ?? [], StringComparer.Ordinal),
+            new HashSet<string>(likedSeeds ?? [], StringComparer.Ordinal),
+            new HashSet<string>(engagedArtists ?? [], StringComparer.Ordinal),
+            sourcePriors ?? new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase),
+            artistBoosts ?? new Dictionary<string, double>(StringComparer.Ordinal),
+            seedBoosts ?? new Dictionary<string, double>(StringComparer.Ordinal));
+
+    [Fact]
+    public void Rank_FeedbackDismissesArtist()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Alison", "Slowdive"),
+            Cand("Midnight City", "M83"),
+        };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [],
+            feedback: Signals(dismissedArtists: [MediaKeys.Normalize("Slowdive")]));
+
+        ranked.Should().ContainSingle(i => i.Title == "Midnight City");
+    }
+
+    [Fact]
+    public void Rank_LikedSeed_BoostsMatchingCandidate()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Other Song", "Other Artist") with { SeedArtist = "Other" },
+            Cand("Alison", "Slowdive") with { SeedArtist = "M83" },
+        };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [],
+            feedback: Signals(likedSeeds: [MediaKeys.Normalize("M83")]));
+
+        ranked[0].Title.Should().Be("Alison");
+    }
+
+    [Fact]
+    public void Rank_LikedArtist_BoostsMatchingCandidate()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Other Song", "Other Artist"),
+            Cand("Alison", "Slowdive"),
+        };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [],
+            feedback: Signals(likedArtists: [MediaKeys.Normalize("Slowdive")]));
+
+        ranked[0].Title.Should().Be("Alison");
+    }
+
+    [Fact]
+    public void Rank_ReturnsUpToFiftyItems()
+    {
+        var candidates = new List<DiscoverCandidate>();
+        for (var i = 0; i < 30; i++)
+        {
+            candidates.Add(Cand($"Song {i}a", $"Artist {i}"));
+            candidates.Add(Cand($"Song {i}b", $"Artist {i}"));
+        }
+
+        var ranked = DiscoverRanker.Rank(Taste(("Seed", 10)), candidates, [], []);
+
+        ranked.Should().HaveCount(DiscoverRanker.MaxItems);
+        ranked.GroupBy(i => i.Artist).Should().OnlyContain(g => g.Count() <= 2);
+    }
+
+    [Fact]
+    public void Rank_FuzzyGenreMatch_BeatsUnrelatedTag()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Alt Rock", "Artist A") with { Tags = ["alternative rock"] },
+            Cand("Jazz", "Artist B") with { Tags = ["jazz"] },
+        };
+
+        var ranked = DiscoverRanker.Rank(TasteWithTags("Rock"), candidates, [], []);
+
+        ranked[0].Title.Should().Be("Alt Rock");
+    }
+
+    [Fact]
+    public void Rank_PopularityProfile_PrefersUserBand()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Mainstream", "Artist A") with { Popularity = 50_000_000 },
+            Cand("In Band", "Artist B") with { Popularity = 100_000 },
+        };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [],
+            popularity: new PopularityProfile(5.0, 5));
+
+        ranked[0].Title.Should().Be("In Band");
+    }
+
+    [Fact]
+    public void Rank_AudioSimilarity_ChangesOrder()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("No Audio", "Artist A"),
+            Cand("Audio Match", "Artist B") with { AudioSimilarity = 1.0 },
+        };
+
+        var ranked = DiscoverRanker.Rank(Taste(("Seed", 10)), candidates, [], []);
+
+        ranked[0].Title.Should().Be("Audio Match");
+    }
+
+    [Fact]
+    public void Rank_LearnedSourcePrior_CanFlipStaticOrdering()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Graph Song", "A", DiscoverSources.Graph),
+            Cand("Tag Song", "B", DiscoverSources.Tag),
+        };
+        var priors = new Dictionary<string, double>
+        {
+            [DiscoverSources.Graph] = 0.1,
+            [DiscoverSources.Tag] = 1.0,
+        };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [],
+            feedback: Signals(sourcePriors: priors));
+
+        ranked[0].Title.Should().Be("Tag Song");
+    }
+
+    [Fact]
+    public void Rank_LearnedArtistBoost_ReordersCandidates()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("A Song", "A"),
+            Cand("B Song", "B"),
+        };
+        var boosts = new Dictionary<string, double>
+        {
+            [MediaKeys.Normalize("A")] = 0.10,
+            [MediaKeys.Normalize("B")] = -0.10,
+        };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [],
+            feedback: Signals(artistBoosts: boosts));
+
+        ranked[0].Title.Should().Be("A Song");
+    }
+
+    [Fact]
+    public void Rank_Mmr_KeepsArtistDiversity()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("A1", "A", DiscoverSources.Similar) with { Similarity = 1.0 },
+            Cand("A2", "A", DiscoverSources.Similar) with { Similarity = 1.0 },
+            Cand("B1", "B", DiscoverSources.Similar) with { Similarity = 0.9 },
+        };
+
+        var ranked = DiscoverRanker.Rank(Taste(("Seed", 10)), candidates, [], []);
+
+        ranked.Select(i => i.Artist).Distinct().Should().HaveCount(2);
+        ranked.Select(i => i.Title).Should().Contain(["A1", "B1"]);
+    }
 }

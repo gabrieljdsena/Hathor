@@ -98,6 +98,9 @@ export interface AudioSourceLike {
 export interface AudioContextLike {
   readonly destination: unknown
   readonly state: string
+  readonly sampleRate?: number
+  readonly baseLatency?: number
+  readonly outputLatency?: number
   createGain(): GainNodeLike
   createDynamicsCompressor(): DynamicsCompressorLike
   createMediaElementSource(el: AudioElementLike): AudioSourceLike
@@ -196,6 +199,7 @@ export class AudioEngine {
   private normalizer: DynamicsCompressorLike | null = null
   private normalizeEnabled = false
   private graphOk = true
+  private contextReported = false
   private a: Slot
   private b: Slot
   private active: Slot
@@ -240,6 +244,17 @@ export class AudioEngine {
         this.lastReportAt = this.deps.now()
         this.onReport(message)
       }
+    } catch {
+      /* reporting must never break playback */
+    }
+  }
+
+  // One-time lifecycle diagnostics (graph creation): bypass the 10s report
+  // throttle so the first playback still forwards later warnings.
+  private reportOnce(message: string) {
+    try {
+      if (typeof console !== 'undefined' && console.warn) console.warn(`[audio] ${message}`)
+      this.onReport?.(message)
     } catch {
       /* reporting must never break playback */
     }
@@ -503,7 +518,24 @@ export class AudioEngine {
       })
     const contextFactory =
       deps?.createContext ??
-      (() => new AudioContext() as unknown as AudioContextLike)
+      ((): AudioContextLike => {
+        // Music playback does not need the tiny interactive buffer: a
+        // larger render quantum makes Android/Bluetooth headphone routing
+        // far less likely to underrun. Pinning the context to the library's
+        // 48 kHz source rate also skips one media-element resampling stage.
+        try {
+          return new AudioContext({
+            latencyHint: 'playback',
+            sampleRate: 48000,
+          }) as unknown as AudioContextLike
+        } catch {
+          try {
+            return new AudioContext({ latencyHint: 'playback' }) as unknown as AudioContextLike
+          } catch {
+            return new AudioContext() as unknown as AudioContextLike
+          }
+        }
+      })
     this.deps = {
       createElement,
       createContext: contextFactory,
@@ -663,11 +695,22 @@ export class AudioEngine {
       this.master = master
       this.applyNormalize()
       if (ctx.state === 'suspended') void ctx.resume()
+      if (!this.contextReported) {
+        this.contextReported = true
+        this.reportOnce(
+          `audio graph ready rate=${ctx.sampleRate ?? '?'}Hz ` +
+            `base=${ctx.baseLatency ?? '?'}s out=${ctx.outputLatency ?? '?'}s state=${ctx.state}`,
+        )
+      }
     } catch {
       // No Web Audio: bypass mode (plain elements, no fades).
       this.graphOk = false
       this.a.el.volume = this.volume
       this.b.el.volume = this.volume
+      if (!this.contextReported) {
+        this.contextReported = true
+        this.reportOnce('audio graph unavailable, using plain element playback')
+      }
     }
   }
 

@@ -28,6 +28,18 @@ const payload: DiscoverPayload = {
       source: 'chart',
       score: 0.4,
     },
+    {
+      title: 'Alison',
+      artist: 'Slowdive',
+      album: 'Souvlaki',
+      year: '1993',
+      genre: 'Shoegaze',
+      artworkUrl: 'http://art/slowdive.jpg',
+      source: 'similar',
+      score: 0.8,
+      mbid: 'mb-alison',
+      reason: 'Because you play M83',
+    },
   ],
 }
 
@@ -64,6 +76,81 @@ describe('Discover view', () => {
     expect(await screen.findByText('Midnight City')).toBeInTheDocument()
     expect(screen.getAllByText('From your artists')).toHaveLength(2) // chip + card badge
     expect(screen.getByRole('button', { name: 'Trending' })).toBeInTheDocument()
+  })
+
+  it('renders open-data source badges and the recommendation reason', async () => {
+    stubFetch(() => payload)
+    renderDiscover()
+
+    expect(await screen.findByText('Alison')).toBeInTheDocument()
+    expect(screen.getAllByText('Similar tracks')).toHaveLength(2) // chip + card badge
+    expect(screen.getByText('Because you play M83')).toBeInTheDocument()
+  })
+
+  it('dismisses a suggestion and posts dismiss feedback', async () => {
+    const calls = stubFetch((input) =>
+      String(input).endsWith('/discover/feedback') ? {} : payload,
+    )
+    renderDiscover()
+    await screen.findByText('Alison')
+
+    fireEvent.click(screen.getByLabelText('Not interested in Alison by Slowdive'))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Alison')).not.toBeInTheDocument()
+    })
+    const feedback = calls.find((c) =>
+      String(c.input).endsWith('/discover/feedback'),
+    )
+    expect(feedback?.init?.method).toBe('POST')
+    expect(String(feedback?.init?.body)).toContain('"event":"dismiss"')
+    expect(String(feedback?.init?.body)).toContain('"mbid":"mb-alison"')
+  })
+
+  it('posts download feedback after a successful queue', async () => {
+    const calls = stubFetch((input) =>
+      String(input).endsWith('/downloads') ? { qid: 'abc' } : payload,
+    )
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    await screen.findByText('Download queued: Midnight City')
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            String(c.input).endsWith('/discover/feedback') &&
+            String(c.init?.body).includes('"event":"download"'),
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('posts preview feedback when a preview is requested', async () => {
+    const calls = stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: null }
+      }
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            String(c.input).endsWith('/discover/feedback') &&
+            String(c.init?.body).includes('"event":"preview"'),
+        ),
+      ).toBe(true)
+    })
   })
 
   it('filters by source chip', async () => {

@@ -1235,3 +1235,38 @@ describe('AudioEngine seek budget + unload re-attach', () => {
     expect(s.els[0].paused).toBe(false)
   })
 })
+
+describe('AudioEngine context options', () => {
+  it('uses the playback latency hint and 48 kHz source rate', () => {
+    const options: AudioContextOptions[] = []
+    class StubAudioContext {
+      destination = {}
+      state = 'running'
+      sampleRate = 48000
+      baseLatency = 0.01
+      outputLatency = 0.02
+      constructor(opts?: AudioContextOptions) {
+        options.push(opts ?? {})
+      }
+      createGain() {
+        return new FakeGain()
+      }
+      createDynamicsCompressor() {
+        return new FakeComp()
+      }
+      createMediaElementSource() {
+        return { connect() {} }
+      }
+      resume() {}
+    }
+    vi.stubGlobal('AudioContext', StubAudioContext)
+    const engine = new AudioEngine({ createElement: () => new FakeEl(), now: () => 0 })
+    try {
+      engine.load(track('a.mp3'), true)
+      expect(options[0]).toMatchObject({ latencyHint: 'playback', sampleRate: 48000 })
+    } finally {
+      engine.load(null, false)
+      vi.unstubAllGlobals()
+    }
+  })
+})

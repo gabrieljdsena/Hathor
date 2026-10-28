@@ -49,6 +49,27 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
     private static string? ToDataUrl(SongCoverDto? art) =>
         art is null ? null : $"data:{art.Mime};base64,{Convert.ToBase64String(art.Bytes)}";
 
+    [HttpPost("playback-events")]
+    [Authorize(Policy = ScopeAuthorization.PlayerControl)]
+    public async Task<IActionResult> PlaybackEvent(
+        [FromBody] PlaybackEventRequest? body, CancellationToken ct)
+    {
+        if (body is null)
+            return BadRequest(new { message = "Playback event body is required." });
+        try
+        {
+            await mediator.Send(new RecordPlaybackEventCommand(
+                UserId, body.SegmentId, body.File, body.PositionSec,
+                body.DurationSec, body.Completed, body.Skipped,
+                body.StartedAtUtc), ct);
+            return NoContent();
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("play")]
     [Authorize(Policy = ScopeAuthorization.PlayerControl)]
     public async Task<ActionResult<PlayerStateDto>> Play(

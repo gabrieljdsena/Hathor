@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, deviceId, deviceLabel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { pushResumeSpot, usePlayer } from '../store/player'
+import { pushResumeSpot, startPlayerTelemetry, usePlayer } from '../store/player'
 import { engine } from '../audio/engine'
 import { handleShortcutKey } from '../utils/shortcuts'
 import { createUnloadPause } from '../utils/unloadPause'
@@ -67,6 +67,7 @@ export default function Shell() {
   // Converge this tab on every control mutation from anywhere (other tabs,
   // phone, headless clients) — no-op until logged in.
   usePlayerHub(username)
+  useEffect(() => startPlayerTelemetry(), [])
   const [queueOpen, setQueueOpen] = useState(false)
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false)

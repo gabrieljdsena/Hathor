@@ -17,6 +17,14 @@ public sealed class TempLibraryFixture : IAsyncLifetime
     private WebApplicationFactory<Program> _base = null!;
     private string _libDir = "";
     private string _database = "";
+    private readonly IReadOnlyDictionary<string, string?> _overrides;
+
+    // Tests that exercise the replay grace opt in explicitly; the default 0
+    // keeps rotation strict so a replayed token burns the session family.
+    public TempLibraryFixture(IReadOnlyDictionary<string, string?>? overrides = null)
+    {
+        _overrides = overrides ?? new Dictionary<string, string?>();
+    }
 
     public async Task InitializeAsync()
     {
@@ -37,27 +45,34 @@ public sealed class TempLibraryFixture : IAsyncLifetime
         // build, i.e. above appsettings files AND the dev secrets file):
         // the whole Database layer is pinned to this fixture so lower
         // layers (dev secrets with a Host part) can never hijack it.
-        Factory = _base.WithWebHostBuilder(b => b
-            .UseSetting("Library:SongsPath", SongsDir)
-            .UseSetting("Library:PodcastsPath", PodcastsDir)
-            .UseSetting("Database:Provider", "postgres")
-            .UseSetting("Database:ConnectionString", connectionString)
-            .UseSetting("Database:Host", "")
-            .UseSetting("Database:Password", testPassword)
-            // Keep the lab-Postgres sink a no-op in tests (no shared logs
-            // DB required); sink behavior is covered by dedicated tests.
-            .UseSetting("Logging:ConnectionString", "")
-            .ConfigureAppConfiguration((_, cfg) => cfg.Add(new DictSource(
-                new Dictionary<string, string?>
-                {
-                    ["Library:SongsPath"] = SongsDir,
-                    ["Library:PodcastsPath"] = PodcastsDir,
-                    ["Database:Provider"] = "postgres",
-                    ["Database:ConnectionString"] = connectionString,
-                    ["Database:Host"] = "",
-                    ["Database:Password"] = testPassword,
-                    ["Logging:ConnectionString"] = "",
-                }))));
+        var settings = new Dictionary<string, string?>
+        {
+            ["Library:SongsPath"] = SongsDir,
+            ["Library:PodcastsPath"] = PodcastsDir,
+            ["Database:Provider"] = "postgres",
+            ["Database:ConnectionString"] = connectionString,
+            ["Database:Host"] = "",
+            ["Database:Password"] = testPassword,
+            ["Logging:ConnectionString"] = "",
+            ["Auth:RefreshReuseGraceSeconds"] = "0",
+        };
+        foreach (var (key, value) in _overrides) settings[key] = value;
+        Factory = _base.WithWebHostBuilder(b =>
+        {
+            b.UseSetting("Library:SongsPath", SongsDir)
+                .UseSetting("Library:PodcastsPath", PodcastsDir)
+                .UseSetting("Database:Provider", "postgres")
+                .UseSetting("Database:ConnectionString", connectionString)
+                .UseSetting("Database:Host", "")
+                .UseSetting("Database:Password", testPassword)
+                // Keep the lab-Postgres sink a no-op in tests (no shared
+                // logs DB required); sink behavior is covered by dedicated
+                // tests.
+                .UseSetting("Logging:ConnectionString", "");
+            foreach (var (key, value) in settings)
+                b.UseSetting(key, value);
+            b.ConfigureAppConfiguration((_, cfg) => cfg.Add(new DictSource(settings)));
+        });
         Client = Factory.CreateClient();
     }
 

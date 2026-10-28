@@ -147,7 +147,7 @@ function SessionRow({
 
 export default function Settings() {
   const queryClient = useQueryClient()
-  const { logout } = useAuth()
+  const { logout, signOutLocal } = useAuth()
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [limit, setLimit] = useState(3)
@@ -583,8 +583,10 @@ export default function Settings() {
               run(
                 'sessions-all',
                 api.logoutEverywhere().then(() => {
-                  void queryClient.invalidateQueries({ queryKey: ['sessions'] })
-                  return 'Logged out everywhere. This device is signed out too — please sign in again.'
+                  // logout-all revoked this session too: drop local tokens
+                  // now instead of waiting for the access token to expire.
+                  signOutLocal()
+                  return 'Logged out everywhere.'
                 }),
               )
             }

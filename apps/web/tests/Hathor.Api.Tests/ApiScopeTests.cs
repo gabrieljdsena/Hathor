@@ -90,6 +90,12 @@ public sealed class ApiScopeTests : IAsyncLifetime
         (await GetAsync("/api/v1/songs?page=1&pageSize=1", key)).Should().Be(HttpStatusCode.OK);
         (await SendAsync(HttpMethod.Post, "/api/v1/discover/refresh", key, new { }))
             .Should().Be(HttpStatusCode.OK);
+        (await SendAsync(HttpMethod.Post, "/api/v1/discover/feedback", key,
+            new { title = "Song", artist = "Artist", source = "similar", @event = "dismiss" }))
+            .Should().Be(HttpStatusCode.NoContent);
+        (await SendAsync(HttpMethod.Post,
+                "/api/v1/discover/tuning?windowDays=30&k=10", key, new { }))
+            .Should().Be(HttpStatusCode.OK);
         (await SendAsync(HttpMethod.Post, "/api/v1/songs/loudness/backfill?limit=1", key, new { }))
             .Should().Be(HttpStatusCode.OK);
         (await SendAsync(HttpMethod.Post, "/api/v1/playlists", key, new { Title = "Nope" }))
@@ -108,6 +114,34 @@ public sealed class ApiScopeTests : IAsyncLifetime
             .Should().Be(HttpStatusCode.Created);
         (await SendAsync(HttpMethod.Post, "/api/v1/downloads/nope/retry", key))
             .Should().Be(HttpStatusCode.NotFound);
+        (await SendAsync(HttpMethod.Post, "/api/v1/player/playback-events", key,
+            new
+            {
+                segmentId = "seg-1",
+                file = "song.mp3",
+                positionSec = 10,
+                durationSec = 200,
+                completed = false,
+                skipped = true,
+            })).Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task PlayerRead_Cannot_Report_Playback()
+    {
+        var jwt = await JwtAsync();
+        var key = await MintAsync(jwt, "ro-play", "player:read");
+
+        (await SendAsync(HttpMethod.Post, "/api/v1/player/playback-events", key,
+            new
+            {
+                segmentId = "seg-1",
+                file = "song.mp3",
+                positionSec = 10,
+                durationSec = 200,
+                completed = false,
+                skipped = true,
+            })).Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]

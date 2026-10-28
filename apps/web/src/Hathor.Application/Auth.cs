@@ -121,6 +121,12 @@ public sealed class LoginHandler(
     }
 }
 
+// Refresh-token replay grace: concurrent tabs (and a refresh response lost
+// in flight) can present an already-rotated token seconds after rotation.
+// Inside this window the replacement chain is followed instead of burning
+// the whole family; outside it replay still means theft.
+public sealed record AuthOptions(TimeSpan RefreshReuseGrace);
+
 // POST /api/v1/auth/refresh (rotation with reuse detection: presenting an
 // already-rotated token revokes every session — token theft response)
 public sealed record RefreshCommand(string RefreshToken) : IRequest<AuthTokensDto>;
@@ -128,36 +134,68 @@ public sealed record RefreshCommand(string RefreshToken) : IRequest<AuthTokensDt
 public sealed class RefreshHandler(
     IUserRepository users,
     ISessionRepository sessions,
-    IJwtTokenService jwt) : IRequestHandler<RefreshCommand, AuthTokensDto>
+    IJwtTokenService jwt,
+    AuthOptions options) : IRequestHandler<RefreshCommand, AuthTokensDto>
 {
     public async Task<AuthTokensDto> Handle(RefreshCommand cmd, CancellationToken ct)
     {
         var hash = AuthHelpers.Hash(cmd.RefreshToken);
         var stored = await sessions.GetByHashAsync(hash, ct)
             ?? throw new UnauthorizedAccessException("Invalid refresh token.");
-        if (stored.RevokedAtUtc is not null || stored.ExpiresAtUtc <= DateTime.UtcNow)
+        var now = DateTime.UtcNow;
+        if (stored.RevokedAtUtc is not null || stored.ExpiresAtUtc <= now)
         {
-            if (stored.ReplacedById is not null)
+            var replay = await FindReplayableAsync(stored, now, ct);
+            if (replay is null)
             {
-                // Rotated token replayed — assume theft, burn all sessions.
-                await sessions.RevokeAllAsync(stored.UserId, ct);
-                await sessions.SaveChangesAsync(ct);
+                if (stored.ReplacedById is not null)
+                {
+                    // Rotated token replayed — assume theft, burn all sessions.
+                    await sessions.RevokeAllAsync(stored.UserId, ct);
+                    await sessions.SaveChangesAsync(ct);
+                }
+                throw new UnauthorizedAccessException("Invalid refresh token.");
             }
-            throw new UnauthorizedAccessException("Invalid refresh token.");
+            // Benign duplicate (second tab / retry): rotate the active head
+            // of this chain so both callers end up with a valid session.
+            stored = replay;
         }
 
         var user = await users.GetByIdAsync(stored.UserId, ct)
             ?? throw new UnauthorizedAccessException("User no longer exists.");
 
-        stored.RevokedAtUtc = DateTime.UtcNow;
+        stored.RevokedAtUtc = now;
         var (refresh, freshId) = await AuthHelpers.IssueSessionAsync(
             sessions, user.Id, stored.RememberMe, stored.DeviceLabel, stored.IpAddress, ct);
         var fresh = await sessions.GetByHashAsync(AuthHelpers.Hash(refresh), ct);
         if (fresh is not null) stored.ReplacedById = fresh.Id;
-        stored.LastUsedAtUtc = DateTime.UtcNow;
+        stored.LastUsedAtUtc = now;
         await sessions.SaveChangesAsync(ct);
         var access = jwt.CreateAccessToken(user.Id, user.Username, Scopes.Full, freshId);
         return new AuthTokensDto(access, refresh, user.Username);
+    }
+
+    // Follow ReplacedById from a just-rotated token to the active chain head.
+    // Returns null when the replay is outside the grace window, the chain is
+    // broken, or the head is already dead (theft response).
+    private async Task<Session?> FindReplayableAsync(Session stored, DateTime now, CancellationToken ct)
+    {
+        if (options.RefreshReuseGrace <= TimeSpan.Zero || stored.ReplacedById is null) return null;
+        if (stored.RevokedAtUtc is not { } revokedAt ||
+            now - revokedAt > options.RefreshReuseGrace) return null;
+        var current = stored;
+        // Back-to-back concurrent refreshes can rotate more than once inside
+        // the same window; bound the walk so a corrupt chain cannot loop.
+        for (var i = 0; i < 4 && current.ReplacedById is { } nextId; i++)
+        {
+            var next = await sessions.GetByIdAsync(nextId, ct);
+            if (next is null || next.UserId != stored.UserId) return null;
+            if (next.RevokedAtUtc is null && next.ExpiresAtUtc > now) return next;
+            if (next.RevokedAtUtc is not { } nextRevokedAt ||
+                now - nextRevokedAt > options.RefreshReuseGrace) return null;
+            current = next;
+        }
+        return null;
     }
 }
 

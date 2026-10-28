@@ -137,7 +137,8 @@ public sealed class ITunesClientImpl(IHttpClientFactory httpFactory, ILogger<ITu
                     Str("collectionName") ?? "",
                     (Str("releaseDate") ?? "").Length >= 4 ? Str("releaseDate")![..4] : "",
                     Str("primaryGenreName") ?? "",
-                    art100.Replace("100x100bb", "600x600bb")));
+                    art100.Replace("100x100bb", "600x600bb"),
+                    Str("previewUrl")));
             }
             return out_;
         }

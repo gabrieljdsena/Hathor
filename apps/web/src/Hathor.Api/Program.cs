@@ -1,5 +1,6 @@
 using System.Text;
 using System.Threading.RateLimiting;
+using Hathor.Api;
 using Hathor.Api.Auth;
 using Hathor.Api.History;
 using Hathor.Api.Hubs;
@@ -61,6 +62,7 @@ builder.Services.AddMemoryCache(options => options.SizeLimit = 1024);
 builder.Services.AddHathorInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<IPlaybackHub, SignalRPlaybackHub>();
 builder.Services.AddScoped<TokenValidator>();
+builder.Services.AddHostedService<SessionCleanupService>();
 
 // Smart scheme: hth_ tokens go to the ApiKey handler, everything else to JWT.
 // Sockets cannot set headers, so ?access_token= routes the same way.

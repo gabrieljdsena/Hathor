@@ -222,6 +222,17 @@ export interface DailyMix {
   cached: boolean
 }
 
+export type DiscoverSource =
+  | 'artist'
+  | 'chart'
+  | 'llm'
+  | 'similar'
+  | 'cf'
+  | 'graph'
+  | 'tag'
+  | 'audio'
+  | 'popular'
+
 export interface DiscoverItem {
   title: string
   artist: string
@@ -229,14 +240,73 @@ export interface DiscoverItem {
   year: string
   genre: string
   artworkUrl: string
-  source: 'artist' | 'chart' | 'llm'
+  source: DiscoverSource
   score: number
+  mbid?: string | null
+  reason?: string | null
+  seedArtist?: string | null
 }
 
 export interface Discover {
   date: string
   items: DiscoverItem[]
   cached: boolean
+}
+
+export interface DiscoverSourceInsight {
+  source: string
+  downloads: number
+  dismissals: number
+  previews: number
+  clicks: number
+  conversionRate: number
+  learnedPrior: number
+}
+
+export interface DiscoverInsights {
+  windowDays: number
+  downloads: number
+  dismissals: number
+  previews: number
+  clicks: number
+  conversionRate: number
+  completedPlays: number
+  skippedPlays: number
+  playbackCompletionRate: number
+  uniqueArtists: number
+  sources: DiscoverSourceInsight[]
+}
+
+export interface DiscoverTuningWeights {
+  similarity: number
+  tag: number
+  affinity: number
+  popularity: number
+  source: number
+  audio: number
+}
+
+export interface DiscoverTuning {
+  applied: boolean
+  insufficientData: boolean
+  preset: string | null
+  snapshots: number
+  labeled: number
+  currentScore: number
+  bestScore: number
+  weights: DiscoverTuningWeights | null
+}
+
+export type DiscoverFeedbackEvent = 'dismiss' | 'preview' | 'click' | 'download'
+
+export interface DiscoverFeedback {
+  title: string
+  artist: string
+  mbid?: string | null
+  source: DiscoverSource
+  event: DiscoverFeedbackEvent
+  seedArtist?: string | null
+  score?: number | null
 }
 
 export interface VideoHit {
@@ -274,6 +344,16 @@ export interface LyricsHit {
   plainLyrics: string | null
 }
 
+export interface PlaybackEventPayload {
+  segmentId: string
+  file: string
+  positionSec: number
+  durationSec: number
+  completed: boolean
+  skipped: boolean
+  startedAtUtc: string
+}
+
 export interface PlayerState {
   currentSong: Song | null
   isPlaying: boolean
@@ -296,45 +376,62 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-// Single-flight silent refresh: on 401 (non-auth endpoints only),
-// rotate via the stored refresh token once, then retry the request.
-// Returns false when there is nothing to refresh with (logged out).
+// Endpoints that are legitimately allowed to answer 401 without a session
+// (bad credentials, malformed refresh token). Every other auth endpoint
+// (/auth/me, /sessions, /logout, logout-all, change-password) needs the
+// same silent-refresh path as the rest of the API.
+const ANONYMOUS_AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/status']
+
+function isAnonymousAuthPath(path: string): boolean {
+  return ANONYMOUS_AUTH_PATHS.some((p) => path === p || path.startsWith(`${p}?`))
+}
+
+// Single-flight silent refresh: on 401, rotate via the stored refresh token
+// once, then retry the request. Returns 'rejected' only when the server
+// explicitly invalidated the token; network/5xx/429 keep the session so a
+// temporary outage never logs the user out.
 type RefreshResult = 'ok' | 'rejected' | 'unavailable'
 let refreshFlight: Promise<RefreshResult> | null = null
 
-function refreshTokens(): Promise<RefreshResult> {
-  const refreshToken = localStorage.getItem('hathor:refresh')
-  if (!refreshToken) return Promise.resolve('rejected')
-  refreshFlight ??= fetch(`${BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  })
-    .then(async (res) => {
-      // Explicit rejection means the session is gone. Network/5xx is
-      // transient: the audio retry loop must not log the user out because
-      // the server was temporarily unreachable.
-      if (res.status === 400 || res.status === 401 || res.status === 403) return 'rejected' as const
-      if (!res.ok) return 'unavailable' as const
-      const tokens = (await res.json()) as { accessToken: string; refreshToken: string }
-      localStorage.setItem('hathor:token', tokens.accessToken)
-      localStorage.setItem('hathor:refresh', tokens.refreshToken)
-      return 'ok' as const
+async function postRefresh(refreshToken: string): Promise<RefreshResult> {
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
     })
-    .catch(() => 'unavailable' as const)
-    .finally(() => {
-      refreshFlight = null
-    })
-  return refreshFlight
+    if (res.status === 400 || res.status === 401 || res.status === 403) return 'rejected'
+    if (!res.ok) return 'unavailable'
+    const tokens = (await res.json()) as { accessToken: string; refreshToken: string }
+    localStorage.setItem('hathor:token', tokens.accessToken)
+    localStorage.setItem('hathor:refresh', tokens.refreshToken)
+    return 'ok'
+  } catch {
+    return 'unavailable'
+  }
 }
 
-function tryRefresh(): Promise<boolean> {
-  return refreshTokens().then((result) => {
-    if (result === 'ok') return true
-    localStorage.removeItem('hathor:token')
-    localStorage.removeItem('hathor:refresh')
-    return false
-  })
+function refreshTokens(): Promise<RefreshResult> {
+  refreshFlight ??= (async (): Promise<RefreshResult> => {
+    try {
+      const started = localStorage.getItem('hathor:refresh')
+      if (!started) return 'rejected'
+      const rotate = async (): Promise<RefreshResult> => {
+        const current = localStorage.getItem('hathor:refresh')
+        if (!current) return 'rejected'
+        // Another tab rotated while this one waited for the lock: its new
+        // access token is already in shared storage, so reuse it instead of
+        // replaying the old refresh token (which would trip reuse detection
+        // and revoke every session).
+        if (current !== started) return 'ok'
+        return postRefresh(current)
+      }
+      return navigator.locks ? await navigator.locks.request('hathor:refresh', rotate) : await rotate()
+    } finally {
+      refreshFlight = null
+    }
+  })()
+  return refreshFlight
 }
 
 // JWT exp check for media URLs: streams bypass request(), so a 15-minute
@@ -351,10 +448,11 @@ export function tokenExpiresWithin(token: string, seconds: number): boolean {
   }
 }
 
-// Token for stream retries. Refreshes when close to expiry; on a transient
-// refresh failure it still returns the current token so the retry loop can
-// try again with backoff instead of killing playback/session.
-async function streamToken(): Promise<string> {
+// Token for transports that bypass request() (media URLs, SignalR
+// reconnects). Refreshes when close to expiry; on a transient refresh
+// failure it still returns the current token so callers can retry instead
+// of killing playback/session.
+export async function authToken(): Promise<string> {
   let token = ''
   try {
     token = localStorage.getItem('hathor:token') ?? ''
@@ -375,6 +473,7 @@ async function streamToken(): Promise<string> {
 function logoutLocal() {
   localStorage.removeItem('hathor:token')
   localStorage.removeItem('hathor:refresh')
+  localStorage.removeItem('hathor:username')
   if (!location.pathname.startsWith('/login')) location.href = '/login'
 }
 
@@ -383,14 +482,24 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
     ...init,
     headers: { 'Content-Type': 'application/json', ...authHeaders(), ...init?.headers },
   })
-  if (res.status === 401 && retry && !path.startsWith('/auth/')) {
-    if (await tryRefresh()) return request<T>(path, init, false)
-    logoutLocal()
-    throw new Error('Unauthorized')
+  if (res.status === 401 && retry && !isAnonymousAuthPath(path)) {
+    const result = await refreshTokens()
+    if (result === 'ok') return request<T>(path, init, false)
+    if (result === 'rejected') {
+      logoutLocal()
+      throw new Error('Unauthorized')
+    }
+    // Transient refresh failure: keep the stored session and let the caller
+    // retry once the server is reachable again.
+    throw new Error('Session refresh unavailable — check your connection and retry.')
   }
   if (res.status === 401) {
-    logoutLocal()
-    throw new Error('Unauthorized')
+    if (!isAnonymousAuthPath(path)) {
+      logoutLocal()
+      throw new Error('Unauthorized')
+    }
+    const body = await res.text().catch(() => '')
+    throw new Error(body || 'Unauthorized')
   }
   if (res.status === 429) {
     const retryAfter = res.headers.get('Retry-After')
@@ -483,6 +592,14 @@ export const api = {
 
   // player state + headless controls (plan §4 — same surface external clients use)
   playerState: () => request<PlayerState>('/player/state'),
+  // Playback segment telemetry (completion/skip quality for Discover).
+  // keepalive lets the pagehide flush survive a tab close.
+  recordPlaybackEvent: (event: PlaybackEventPayload, keepalive = false) =>
+    request<void>('/player/playback-events', {
+      method: 'POST',
+      body: JSON.stringify(event),
+      keepalive,
+    }),
   play: (file?: string, isPodcast?: boolean, instanceId?: string | null) =>
     request<PlayerState>('/player/play', {
       method: 'POST',
@@ -581,7 +698,19 @@ export const api = {
 
   // discover (out-of-library recommendations, packages/contracts/discover.md)
   discover: () => request<Discover>('/discover'),
+  discoverInsights: (windowDays = 90) =>
+    request<DiscoverInsights>(`/discover/insights?windowDays=${windowDays}`),
+  tuneDiscover: (windowDays = 90) =>
+    request<DiscoverTuning>(
+      `/discover/tuning?windowDays=${windowDays}&k=10`,
+      { method: 'POST' },
+    ),
   refreshDiscover: () => request<Discover>('/discover/refresh', { method: 'POST' }),
+  submitDiscoverFeedback: (feedback: DiscoverFeedback) =>
+    request<void>('/discover/feedback', {
+      method: 'POST',
+      body: JSON.stringify(feedback),
+    }),
 
   // ingest
   youtubeSearch: (q: string, limit = 5) =>
@@ -687,7 +816,7 @@ export const api = {
   // first. The cached streamUrl above cannot do this — media requests never
   // pass through request()'s 401 path.
   freshStreamUrl: async (file: string, isPodcast = false) => {
-    const token = await streamToken()
+    const token = await authToken()
     return `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/stream?token=${encodeURIComponent(token)}`
   },
 

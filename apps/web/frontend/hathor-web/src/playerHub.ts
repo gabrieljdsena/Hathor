@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { hasInflightTransport, hasPendingPlaybackIntent, usePlayer } from './store/player'
-import type { PlayerState, Song } from './api/client'
+import { authToken, type PlayerState, type Song } from './api/client'
 
 // Multi-tab transport sync: every control mutation (toggle, play, next,
 // prev, seek, queue edits — from any tab, phone, or headless client) makes
@@ -24,13 +24,9 @@ export function usePlayerHub(username: string | null) {
     try {
       const built = new HubConnectionBuilder()
         .withUrl('/hubs/player', {
-          accessTokenFactory: () => {
-            try {
-              return localStorage.getItem('hathor:token') ?? ''
-            } catch {
-              return ''
-            }
-          },
+          // Reconnects can happen long after the 15-minute access token
+          // expired: refresh near expiry instead of replaying a dead token.
+          accessTokenFactory: () => authToken(),
         })
         .withAutomaticReconnect()
         .configureLogging(LogLevel.Warning)

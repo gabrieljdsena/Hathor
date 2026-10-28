@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api, deviceId, deviceLabel, type PlayerState, type QueueSource, type Song } from '../api/client'
+import { recordEndedPlayback, startPlaybackTelemetry } from '../audio/telemetry'
 import { engine, type EngineTrack } from '../audio/engine'
 
 // Client playback store. Server PlaybackState is the source of truth
@@ -360,6 +361,9 @@ engine.onReport = (message) => {
 }
 
 engine.onEnded(() => {
+  // Completion telemetry is exact here, before the advance response swaps
+  // the engine to the next track.
+  recordEndedPlayback(engine.time(), engine.duration())
   // Classify while the element still holds the outgoing track (the advance
   // response hasn't applied yet): played to a sane end, or real media time
   // observed, means a genuine finish and resets the chain.
@@ -730,4 +734,12 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
 export function formatTime(sec: number) {
   const s = Math.max(0, Math.floor(sec || 0))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+// Started by Shell so tests (and logged-out screens) never emit telemetry.
+export function startPlayerTelemetry(): () => void {
+  return startPlaybackTelemetry(
+    () => usePlayer.getState(),
+    () => ({ position: engine.time(), duration: engine.duration() }),
+  )
 }

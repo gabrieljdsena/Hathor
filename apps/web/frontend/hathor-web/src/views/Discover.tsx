@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type DiscoverItem, type DownloadJob } from '../api/client'
+import {
+  api,
+  type Discover as DiscoverPayload,
+  type DiscoverFeedbackEvent,
+  type DiscoverItem,
+  type DownloadJob,
+} from '../api/client'
+import DiscoverInsightsCard from '../components/DiscoverInsightsCard'
 import CoverArt from '../components/ui/CoverArt'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Icon from '../components/ui/icons'
@@ -16,7 +23,17 @@ import ViewHeader from '../components/ui/ViewHeader'
 // While a card's download runs, its download button morphs into a progress
 // pill fed by the shared download-jobs query (same polling rule as the
 // Download view: quiet when nothing is in flight).
-type SourceFilter = 'all' | 'artist' | 'chart' | 'llm'
+type SourceFilter =
+  | 'all'
+  | 'similar'
+  | 'cf'
+  | 'graph'
+  | 'tag'
+  | 'audio'
+  | 'popular'
+  | 'artist'
+  | 'chart'
+  | 'llm'
 
 type PreviewState = {
   ids: string[]
@@ -26,12 +43,24 @@ type PreviewState = {
 }
 
 const SOURCE_LABEL: Record<Exclude<SourceFilter, 'all'>, string> = {
+  similar: 'Similar tracks',
+  cf: 'Similar listeners',
+  graph: 'Related artists',
+  tag: 'From your genres',
+  audio: 'Sounds like yours',
+  popular: 'Popular',
   artist: 'From your artists',
   chart: 'Trending',
   llm: 'Picked for you',
 }
 
 const SOURCE_BADGE: Record<Exclude<SourceFilter, 'all'>, string> = {
+  similar: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
+  cf: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
+  graph: 'text-sky-400 border-sky-500/30 bg-sky-500/10',
+  tag: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
+  audio: 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10',
+  popular: 'text-zinc-300 border-white/15 bg-white/5',
   artist: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
   chart: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
   llm: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
@@ -54,6 +83,7 @@ function DiscoverCard({
   progress,
   onDownload,
   onPreview,
+  onDismiss,
 }: {
   item: DiscoverItem
   pending: boolean
@@ -62,6 +92,7 @@ function DiscoverCard({
   progress: number | null
   onDownload: () => void
   onPreview: () => void
+  onDismiss: () => void
 }) {
   return (
     <div className="group relative rounded-2xl overflow-hidden bg-zinc-900/40 border border-white/5 hover:border-orange-500/40 transition-all duration-300">
@@ -88,6 +119,14 @@ function DiscoverCard({
           className="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 hover:bg-orange-500 disabled:bg-zinc-700 flex items-center justify-center text-white backdrop-blur-md transition-all duration-300 cursor-pointer disabled:cursor-default"
         >
           <Icon name="play" className="w-4 h-4 ml-0.5" />
+        </button>
+        <button
+          onClick={onDismiss}
+          title={`Not interested in ${item.title}`}
+          aria-label={`Not interested in ${item.title} by ${item.artist}`}
+          className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-black/60 hover:bg-red-500 flex items-center justify-center text-white backdrop-blur-md opacity-60 hover:opacity-100 transition-all duration-300 cursor-pointer"
+        >
+          <Icon name="x" className="w-4 h-4" />
         </button>
         {progress === null ? (
           <button
@@ -124,8 +163,13 @@ function DiscoverCard({
         </div>
         <div className="text-xs text-zinc-500 truncate mt-0.5">{item.artist}</div>
         <div className="text-[11px] text-zinc-600 truncate mt-0.5">
-          {[item.album, item.year].filter(Boolean).join(' · ') || ' '}
+          {[item.album, item.year].filter(Boolean).join(' · ') || ' '}
         </div>
+        {item.reason && (
+          <div className="text-[10px] text-zinc-500 truncate mt-1" title={item.reason}>
+            {item.reason}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -217,7 +261,52 @@ export default function Discover() {
       })
   }
 
+  const sendFeedback = (item: DiscoverItem, event: DiscoverFeedbackEvent) => {
+    void api
+      .submitDiscoverFeedback({
+        title: item.title,
+        artist: item.artist,
+        mbid: item.mbid ?? null,
+        source: item.source,
+        event,
+        seedArtist: item.seedArtist ?? null,
+        score: item.score,
+      })
+      .catch(() => {
+        // Feedback is best-effort; never block playback/download UI.
+      })
+  }
+
+  const dismiss = (item: DiscoverItem) => {
+    const key = `${item.title} — ${item.artist}`
+    queryClient.setQueryData<DiscoverPayload>(['discover'], (prev) =>
+      prev
+        ? {
+            ...prev,
+            items: prev.items.filter(
+              (i) => `${i.title} — ${i.artist}` !== key,
+            ),
+          }
+        : prev,
+    )
+    void api
+      .submitDiscoverFeedback({
+        title: item.title,
+        artist: item.artist,
+        mbid: item.mbid ?? null,
+        source: item.source,
+        event: 'dismiss',
+        seedArtist: item.seedArtist ?? null,
+        score: item.score,
+      })
+      .catch((err: unknown) => {
+        setNotice(err instanceof Error ? err.message : 'Could not save feedback.')
+        void queryClient.invalidateQueries({ queryKey: ['discover'] })
+      })
+  }
+
   const previewItem = async (item: DiscoverItem) => {
+    sendFeedback(item, 'preview')
     const key = `${item.title} — ${item.artist}`
     setPreviewing((prev) => new Set(prev).add(key))
     try {
@@ -256,6 +345,7 @@ export default function Discover() {
     const key = `${item.title} — ${item.artist}`
     try {
       await api.submitDownload(`${item.title} ${item.artist} audio`, item.title, item.artist, false)
+      sendFeedback(item, 'download')
       setNotice(`Download queued: ${item.title}`)
       trackedRef.current.set(cardKey(item.title, item.artist), item.title)
       void queryClient.invalidateQueries({ queryKey: ['download-jobs'] })
@@ -348,7 +438,7 @@ export default function Discover() {
         <div className="flex items-center gap-3 mt-4 flex-wrap">
           <SearchInput value={search} onChange={setSearch} placeholder="Search suggestions..." id="discover_txt_search" />
           <div className="flex items-center gap-1.5">
-            {(['all', 'artist', 'chart', 'llm'] as const).map((s) => (
+            {(['all', 'similar', 'graph', 'tag', 'popular', 'artist', 'chart', 'llm'] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setSource(s)}
@@ -363,6 +453,7 @@ export default function Discover() {
             ))}
           </div>
         </div>
+        <DiscoverInsightsCard />
         {notice && (
           <div className="mt-4 text-sm text-zinc-300 bg-zinc-900/60 border border-white/10 rounded-xl px-4 py-2.5">
             {notice}
@@ -403,6 +494,7 @@ export default function Discover() {
                 progress={progressFor(item)}
                 onDownload={() => void download(item)}
                 onPreview={() => void previewItem(item)}
+                onDismiss={() => dismiss(item)}
               />
             ))}
           </div>

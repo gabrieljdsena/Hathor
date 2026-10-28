@@ -19,6 +19,7 @@ public interface ISessionRepository
 {
     Task AddAsync(Session session, CancellationToken ct = default);
     Task<Session?> GetByHashAsync(string tokenHash, CancellationToken ct = default);
+    Task<Session?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<IReadOnlyList<Session>> ListActiveAsync(Guid userId, CancellationToken ct = default);
     Task RevokeAsync(Guid id, Guid userId, CancellationToken ct = default);
     Task RevokeAllAsync(Guid userId, CancellationToken ct = default);
@@ -81,8 +82,76 @@ public interface IDailyMixRepository
 public interface IDiscoverCacheRepository
 {
     Task<DiscoverCache?> GetAsync(Guid userId, string date, CancellationToken ct = default);
-    Task SaveAsync(Guid userId, string date, string itemsJson, CancellationToken ct = default);
+    Task SaveAsync(Guid userId, string date, string modelVersion, string itemsJson,
+        CancellationToken ct = default);
     Task PruneOthersAsync(Guid userId, string today, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+public sealed record PlaybackSummary(int Total, int Completed, int Skipped);
+
+// Per-user tuned ranker weights (EF). Absent/stale falls back to defaults.
+public interface IRankingModelRepository
+{
+    Task<RankingModel?> GetAsync(Guid userId, CancellationToken ct = default);
+    Task UpsertAsync(RankingModel model, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+// Global recording popularity cache (EF): public LB listen counts by MBID.
+public interface ITrackPopularityRepository
+{
+    Task<IReadOnlyDictionary<string, long>> GetManyAsync(
+        IEnumerable<string> mbids, CancellationToken ct = default);
+    Task UpsertAsync(IReadOnlyDictionary<string, long> counts,
+        CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+// CLAP embedding cache (EF): per-user library/preview vectors. Missing rows
+// are filled by the background embedding worker.
+public interface ITrackEmbeddingRepository
+{
+    Task<TrackEmbedding?> GetAsync(Guid userId, string ownerType, string ownerKey,
+        string model, CancellationToken ct = default);
+    Task<IReadOnlyList<TrackEmbedding>> GetManyAsync(Guid userId, string ownerType,
+        IEnumerable<string> ownerKeys, string model, CancellationToken ct = default);
+    Task<IReadOnlyList<TrackEmbedding>> GetAllAsync(Guid userId, string ownerType,
+        string model, CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetMissingSongFilesAsync(Guid userId, string model,
+        int limit, CancellationToken ct = default);
+    Task SaveAsync(TrackEmbedding embedding, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+// Playback telemetry (EF): one row per music playback segment. SegmentId
+// dedupes unload/retry reports; only the user's own rows are ever queried.
+public interface IPlaybackEventRepository
+{
+    Task AddAsync(PlaybackEvent playbackEvent, CancellationToken ct = default);
+    Task<PlaybackSummary> GetSummaryAsync(
+        Guid userId, DateTime sinceUtc, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+// Discover feedback writes/reads (EF): user-scoped implicit signals for the
+// local ranker. Only the user's own rows are ever queried.
+public interface IDiscoverFeedbackRepository
+{
+    Task AddAsync(DiscoverFeedback feedback, CancellationToken ct = default);
+    Task<IReadOnlyList<DiscoverFeedback>> GetSinceAsync(
+        Guid userId, DateTime sinceUtc, int limit, CancellationToken ct = default);
+    Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+// Discover ranker snapshots (EF): daily top-N with feature values for
+// offline evaluation/re-ranking. User-scoped, no cross-user queries.
+public interface IDiscoverImpressionRepository
+{
+    Task SaveAsync(Guid userId, string date, string modelVersion, string itemsJson,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<DiscoverImpression>> GetSinceAsync(
+        Guid userId, string sinceDate, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 

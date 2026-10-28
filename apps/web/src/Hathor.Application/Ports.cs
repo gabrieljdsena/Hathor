@@ -1,4 +1,5 @@
 using Hathor.Application.Dtos;
+using Hathor.Domain.Services;
 
 namespace Hathor.Application.Ports;
 
@@ -56,12 +57,18 @@ public interface IPlaylistReadModel
     Task<PlaylistDto?> GetAsync(Guid userId, long id, CancellationToken ct = default);
 }
 
-// Discover taste read-model port (Dapper): top artists by history plays,
-// owned title/artist pairs, and in-flight download pairs for dedupe
-// (packages/contracts/discover.md rules 1-2).
+// Discover taste read-model port (Dapper): recency-weighted top artists /
+// tracks / tags, owned title+artist pairs, and in-flight download pairs for
+// dedupe (packages/contracts/discover.md rules 1-2). Local-only signals.
 public interface IDiscoverTasteReadModel
 {
-    Task<IReadOnlyList<(string Artist, long Plays)>> GetTopArtistsAsync(
+    Task<IReadOnlyList<Hathor.Domain.Services.TasteArtist>> GetTopArtistsAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<Hathor.Domain.Services.TasteTrack>> GetTopTracksAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetTopTagsAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<TasteFile>> GetTopPlayedFilesAsync(
         Guid userId, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<(string Title, string Artist)>> GetLibraryPairsAsync(
         Guid userId, CancellationToken ct = default);
@@ -240,6 +247,109 @@ public interface IDiscoverySuggester
     Task<IReadOnlyList<(string Title, string Artist)>> SuggestAsync(
         IReadOnlyList<(string Artist, long Plays)> taste, int maxSuggestions,
         CancellationToken ct = default);
+}
+
+// Open-data candidate source (packages/contracts/discover.md): each source
+// contributes candidates from raw public data; the local ranker decides the
+// final order. Sources never call a provider's recommendation endpoint.
+public interface ICandidateSource
+{
+    string Name { get; }
+    // Fallback sources run only when the open-data pool is empty or too
+    // small (cold start), so charts/same-artist expansion never dominate.
+    bool IsFallback { get; }
+    Task<IReadOnlyList<DiscoverCandidate>> GetCandidatesAsync(
+        TasteProfile taste, int limit, CancellationToken ct = default);
+}
+
+// Fills artwork/catalog metadata for ranked candidates (iTunes is a
+// resolver here, never a recommendation source).
+public interface ICandidateResolver
+{
+    Task<DiscoverCandidate> ResolveAsync(
+        DiscoverCandidate candidate, CancellationToken ct = default);
+}
+
+// MusicBrainz catalog/graph client (CC0 core data). Callers see parsed
+// records only; HTTP/rate-limit/caching details stay in Infrastructure.
+public interface IMusicBrainzClient
+{
+    Task<MbArtistDto?> SearchArtistAsync(string name, CancellationToken ct = default);
+    Task<MbRecordingDto?> SearchRecordingAsync(
+        string title, string artist, CancellationToken ct = default);
+    Task<MbRecordingDto?> GetRecordingAsync(string mbid, CancellationToken ct = default);
+    Task<IReadOnlyList<MbRecordingDto>> GetArtistRecordingsAsync(
+        string artistMbid, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<MbArtistDto>> GetRelatedArtistsAsync(
+        string artistMbid, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<MbRecordingDto>> GetTagRecordingsAsync(
+        string tag, int limit, CancellationToken ct = default);
+}
+
+// ListenBrainz Labs public similarity + open listen counts. No user token,
+// no profile: queries carry seed MBIDs only.
+public interface IListenBrainzClient
+{
+    Task<IReadOnlyList<SimilarArtistDto>> GetSimilarArtistsAsync(
+        string artistMbid, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<SimilarRecordingDto>> GetSimilarRecordingsAsync(
+        string recordingMbid, int limit, CancellationToken ct = default);
+    // Global listen counts for a batch of recordings (main ListenBrainz API,
+    // POST /1/popularity/recording). Known counts only.
+    Task<IReadOnlyDictionary<string, long>> GetRecordingPopularityAsync(
+        IReadOnlyList<string> recordingMbids, CancellationToken ct = default);
+}
+
+// Batch audio embedding provider (CLAP sidecar). Returns null entries when
+// the sidecar/model is unavailable; callers treat that as "no audio signal".
+public interface IEmbeddingProvider
+{
+    Task<IReadOnlyList<float[]?>> EmbedFilesAsync(
+        IReadOnlyList<string> paths, CancellationToken ct = default);
+}
+
+// Adds content similarity to candidates that have cached CLAP embeddings.
+// Best-effort: missing embeddings/model leave candidates unchanged.
+public interface IAudioSimilarityScorer
+{
+    Task<IReadOnlyList<DiscoverCandidate>> ScoreAsync(
+        Guid userId, TasteProfile taste, IReadOnlyList<DiscoverCandidate> candidates,
+        CancellationToken ct = default);
+}
+
+// Global recording popularity (LB listen counts), cached by MBID.
+public interface ITrackPopularityService
+{
+    Task<IReadOnlyDictionary<string, long>> GetAsync(
+        IReadOnlyList<string> recordingMbids, CancellationToken ct = default);
+}
+
+// Builds the user's historical popularity band from top played tracks.
+public interface IPopularityProfileBuilder
+{
+    Task<PopularityProfile?> BuildAsync(
+        Guid userId, IReadOnlyList<TasteTrack> tracks, CancellationToken ct = default);
+}
+
+// Resolves the ranker weights for a user: tuned model when fresh/valid,
+// otherwise defaults. CacheVersion changes when a tuned model is applied so
+// the daily Discover cache invalidates immediately.
+public sealed record RankingOptionsSnapshot(
+    DiscoverRankingOptions Options, string CacheVersion, string? PresetName);
+
+public interface IRankingOptionsProvider
+{
+    Task<RankingOptionsSnapshot> GetAsync(
+        Guid userId, CancellationToken ct = default);
+}
+
+// Postgres-backed cache for public-data HTTP responses (survives restarts
+// and keeps MusicBrainz/ListenBrainz calls inside their rate limits).
+public interface IRecommendationCache
+{
+    Task<T?> GetAsync<T>(string key, CancellationToken ct = default) where T : class;
+    Task SetAsync<T>(string key, T value, TimeSpan ttl, CancellationToken ct = default)
+        where T : class;
 }
 
 // Loudness analyzer port (ffmpeg loudnorm): integrated LUFS for a file,
