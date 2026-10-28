@@ -4,7 +4,7 @@ import android.content.Context
 import com.musicplayer.android.data.api.SyncApi
 import com.musicplayer.android.data.api.SyncApiException
 import com.musicplayer.android.data.api.SyncConfig
-import com.musicplayer.android.data.db.AppDatabase
+import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.remote.RemoteWriter
 import com.musicplayer.android.engine.DownloadEngine
 import kotlinx.coroutines.Dispatchers

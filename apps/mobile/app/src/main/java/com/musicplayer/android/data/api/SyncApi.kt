@@ -239,7 +239,7 @@ class SyncApi(val baseUrl: String, private val token: String) {
         return true
     }
 
-    fun putFile(file: String, library: String, bytes: ByteArray) {
+    fun putFile(file: String, library: String, src: File) {
         if (file.isBlank() || '/' in file || '\\' in file) return
         val conn = open(
             "PUT", "/files/${URLEncoder.encode(file, "UTF-8")}",
@@ -247,7 +247,12 @@ class SyncApi(val baseUrl: String, private val token: String) {
         )
         try {
             conn.doOutput = true
-            conn.outputStream.use { it.write(bytes) }
+            // Stream from disk: episodes regularly exceed typical Android
+            // heap sizes, so readBytes() would OOM on large podcasts.
+            conn.setFixedLengthStreamingMode(src.length())
+            src.inputStream().use { input ->
+                conn.outputStream.use { output -> input.copyTo(output, 256 * 1024) }
+            }
             val code = conn.responseCode
             if (code == 404) throw SyncApiException(serverMissing)
             if (code !in 200..299) throw SyncApiException("File upload failed ($code): $file")

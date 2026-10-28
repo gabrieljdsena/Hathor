@@ -51,6 +51,7 @@ create table if not exists Settings(
     crossfade_enabled integer DEFAULT 0,
     crossfade_seconds real DEFAULT 5,
     chapter_skip integer DEFAULT 0,
+    normalize_volume integer DEFAULT 1,
     FOREIGN KEY (current_song) REFERENCES Songs(file)
 );
 

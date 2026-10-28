@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.musicplayer.android.data.db.AppDatabase
+import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.remote.RemoteSync.summary
 import com.musicplayer.android.engine.DownloadEngine
 import kotlinx.coroutines.Dispatchers

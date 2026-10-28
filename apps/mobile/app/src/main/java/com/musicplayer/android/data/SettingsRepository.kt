@@ -7,8 +7,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import com.musicplayer.android.data.api.SyncConfig
-import com.musicplayer.android.data.db.AppDatabase
-import com.musicplayer.android.data.db.SongEntity
+import com.musicplayer.android.data.local.AppDatabase
+import com.musicplayer.android.data.local.SongEntity
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.PlaybackSource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -127,10 +127,18 @@ class SettingsRepository(
             var added = 0
             var updated = 0
             for (f in files) {
-                val row = db.songDao().byFile(f.name)
+                val row = db.songDao().getByFile(f.name)
                 if (row == null) {
                     db.songDao().insertIgnore(
-                        SongEntity(f.name, null, f.nameWithoutExtension, f.lastModified(), null),
+                        SongEntity(
+                            file = f.name,
+                            downloadedLink = null,
+                            title = f.nameWithoutExtension,
+                            dateDownload = java.text.SimpleDateFormat(
+                                "yyyy-MM-dd", java.util.Locale.US,
+                            ).format(java.util.Date()),
+                            artist = null,
+                        ),
                     )
                     added++
                 }

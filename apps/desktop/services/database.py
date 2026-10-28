@@ -423,6 +423,35 @@ class DatabaseManager:
         except Exception as e:
             print(f" [Python] Error saving loudness: {str(e)}")
 
+    def _missing_loudness_files(self):
+        """Live song files whose row has no measured loudness yet."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self._ensure_loudness_schema(conn)
+                rows = conn.execute(
+                    "SELECT file FROM Songs WHERE loudness_db IS NULL ORDER BY file"
+                ).fetchall()
+        except Exception as e:
+            print(f" [Python] Error listing unmeasured songs: {str(e)}")
+            return []
+        files = []
+        for (file_name,) in rows:
+            if file_name and os.path.exists(os.path.join(settings.path, file_name)):
+                files.append(file_name)
+        return files
+
+    def get_files_missing_loudness(self, limit=20):
+        """First `limit` live files still missing a loudness measurement."""
+        try:
+            limit = max(1, int(limit))
+        except (TypeError, ValueError):
+            limit = 20
+        return self._missing_loudness_files()[:limit]
+
+    def count_files_missing_loudness(self):
+        """How many live files still need a loudness measurement."""
+        return len(self._missing_loudness_files())
+
     def get_playlist_songs(self, playlist_id):
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -466,14 +495,33 @@ class DatabaseManager:
             print(f" [Python] Error fetching date_download for artist: {e}")
 
         songs = []
+        artist_key = artist.lower()
         for f in path.iterdir():
             if f.is_file() and f.suffix.lower() == '.mp3':
                 song_data = self.api.metadata.get_song_metadata(str(f), f.name)
-                if (song_data.get('Artist') or '') == artist:
+                if (song_data.get('Artist') or '').strip().lower() == artist_key:
                     song_data['DateDownload'] = date_lookup.get(f.name, None)
                     songs.append(song_data)
         songs.sort(key=lambda s: ((s.get('Album') or '').lower(), (s.get('Title') or '').lower()))
         return songs
+
+    def get_artists(self):
+        """Distinct artist names for the Artists directory (web parity)."""
+        return self._distinct_metadata_names('Artist')
+
+    def get_albums(self):
+        """Distinct album names for the Albums directory (web parity)."""
+        return self._distinct_metadata_names('Album')
+
+    def _distinct_metadata_names(self, field):
+        """Non-blank names, minus "Unknown", deduped case-insensitively."""
+        names = {}
+        for song in self.get_all_songs():
+            name = (song.get(field) or '').strip()
+            if not name or name == 'Unknown':
+                continue
+            names.setdefault(name.lower(), name)
+        return sorted(names.values(), key=lambda n: n.lower())
 
     def get_songs_by_album(self, album):
         """Return all songs whose metadata Album matches the given album (metadata-only)."""
@@ -495,10 +543,11 @@ class DatabaseManager:
             print(f" [Python] Error fetching date_download for album: {e}")
 
         songs = []
+        album_key = album.lower()
         for f in path.iterdir():
             if f.is_file() and f.suffix.lower() == '.mp3':
                 song_data = self.api.metadata.get_song_metadata(str(f), f.name)
-                if (song_data.get('Album') or '') == album:
+                if (song_data.get('Album') or '').strip().lower() == album_key:
                     song_data['DateDownload'] = date_lookup.get(f.name, None)
                     songs.append(song_data)
         songs.sort(key=lambda s: ((s.get('Artist') or '').lower(), (s.get('Title') or '').lower()))
@@ -859,6 +908,22 @@ class DatabaseManager:
         except Exception as e:
             print(f" [Python] Error generating daily mix: {e}")
             return {"date": today, "songs": [], "cached": False}
+
+    def regenerate_daily_mix(self):
+        """Force a fresh mix for today, then return it (web parity)."""
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS Daily_Mix ("
+                    "mix_date varchar(10) PRIMARY KEY, song_files text not null, "
+                    "created_at datetime default CURRENT_TIMESTAMP)"
+                )
+                conn.execute("DELETE FROM Daily_Mix WHERE mix_date = ?", (today,))
+        except Exception as e:
+            print(f" [Python] Error clearing daily mix: {e}")
+        return self.get_daily_mix()
 
     def get_recently_played(self, limit=15):
         """Most recently played unique songs, newest first (home strip)."""

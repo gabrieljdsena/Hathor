@@ -94,8 +94,8 @@ Two paginated lists:
 
 ## Settings
 
-- **Songs folder** – browse to a different library folder, plus a manual "Sync Now" rescan.
-- **Podcasts folder** – same for the podcasts library (browse + rescan).
+- **Audios row** – click the folder path or **Change** to pick the songs folder. **Push** scans that folder into the DB, then uploads songs, playlists, lyrics, and history to the server. **Pull** downloads the audio delta and any missing files.
+- **Podcasts row** – click the folder path or **Change** to pick the podcasts folder. **Push** rescans podcasts, then uploads episodes, tags, and chapters. **Pull** fetches the podcast delta and missing files.
 - **Background** – pick a custom background image or remove it.
 - **Download limit** – maximum simultaneous downloads.
 - **Volume** – default playback volume.
@@ -103,11 +103,11 @@ Two paginated lists:
 
 ## Server sync (manual)
 
-There is **no background auto-sync**. Both directions run only when you click:
+There is **no background auto-sync**. Each library row has its own **Push** and **Pull**, scoped to that library only:
 
-- **Push to Server** – one-shot upload of songs, podcasts, playlists, lyrics, and history rows plus new file bytes to the server.
-- **Sync from Server** (pull) – downloads the incremental delta into SQLite and fetches missing files straight from the server (songs → songs folder, podcasts → podcasts folder). Pulling also adopts the server daily mix of the day.
-- **Sync Local Songs to Database** – rescans the songs folder into the DB (see Podcasts folder row for the podcast equivalent).
+- **Push** – scans the selected folder first (no separate rescan button), then uploads that library's rows plus new file bytes. Pending deletions for the other library are left untouched.
+- **Pull** – downloads that library's incremental delta into SQLite and fetches missing files straight from the server (audios → songs folder, podcasts → podcasts folder). Pulling also adopts the server daily mix of the day.
+- Each library keeps its own delta cursor, so pushing/pulling one never skips changes in the other.
 
 ## Windows media keys / overlay
 

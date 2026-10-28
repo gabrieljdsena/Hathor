@@ -412,7 +412,7 @@ private fun LyricsSheet(
         suggestions = emptyList()
         editText = null
         saveMsg = null
-        lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec)
+        lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec.toInt())
         offsetMs = lyrics.loadOffset(file.name)
     }
     // Icon mode switch: entering Edit prefills the editor with what's on
@@ -483,7 +483,7 @@ private fun LyricsSheet(
                     player = player,
                     offsetMs = offsetMs,
                     onRetry = {
-                        scope.launch { lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec) }
+                        scope.launch { lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec.toInt()) }
                     }
                 )
                 1 -> LyricsSearch(
@@ -500,7 +500,7 @@ private fun LyricsSheet(
                             suggestions = lyrics.searchSuggestions(
                                 searchTrack, searchArtist,
                                 meta.album.takeIf { it != "Unknown" } ?: "",
-                                meta.durationSec
+                                meta.durationSec.toInt()
                             )
                             searching = false
                         }

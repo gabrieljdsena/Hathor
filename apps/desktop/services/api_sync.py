@@ -41,6 +41,7 @@ server binds case-insensitively) with ISO-8601 UTC datetimes.
 
 import datetime
 import json
+import logging
 import os
 import sqlite3
 import urllib.error
@@ -49,6 +50,8 @@ import urllib.request
 
 API_URL_ENV = "HATHOR_API_URL"
 API_KEY_ENV = "HATHOR_API_KEY"
+
+_log = logging.getLogger("hathor.sync")
 
 NOT_CONFIGURED = (
     "No sync server configured. "
@@ -117,6 +120,123 @@ SECTION_MAP = {
     "deletions": "deletions",
 }
 
+# Per-library sync scopes. The Settings screen exposes one row per library, so
+# pressing Push/Pull for "Audios" must not drag the podcast catalog along
+# (and vice versa). "all" remains for the first-run prompt and older clients.
+AUDIO_SNAPSHOT_KEYS = frozenset({
+    "songs", "playlists", "song_playlist", "lyrics", "music_history",
+    "playlist_history", "daily_mix", "deletions",
+})
+PODCAST_SNAPSHOT_KEYS = frozenset({
+    "podcasts", "podcast_tags", "podcast_tag_links", "podcast_chapters",
+    "deletions",
+})
+AUDIO_PAYLOAD_KEYS = frozenset({
+    "Songs", "Playlists", "SongLinks", "Lyrics", "MusicHistory",
+    "PlaylistHistory", "DailyMix", "Deletions",
+})
+PODCAST_PAYLOAD_KEYS = frozenset({
+    "Podcasts", "PodcastTags", "PodcastTagLinks", "PodcastChapters",
+    "Deletions",
+})
+AUDIO_DELETION_TABLES = frozenset({
+    "songs", "playlists", "lyrics", "music_history", "playlist_history",
+})
+PODCAST_DELETION_TABLES = frozenset({
+    "podcasts", "podcast_tags", "podcast_chapters",
+})
+
+
+def normalize_library(library):
+    """Accept UI/legacy spellings and return 'songs' | 'podcasts' | 'all'."""
+    value = (library or "all").strip().lower()
+    if value in ("audio", "audios", "song", "songs", "music"):
+        return "songs"
+    if value in ("podcast", "podcasts"):
+        return "podcasts"
+    return "all"
+
+
+def _snapshot_keys(library):
+    if library == "songs":
+        return AUDIO_SNAPSHOT_KEYS
+    if library == "podcasts":
+        return PODCAST_SNAPSHOT_KEYS
+    return None
+
+
+def _payload_keys(library):
+    if library == "songs":
+        return AUDIO_PAYLOAD_KEYS
+    if library == "podcasts":
+        return PODCAST_PAYLOAD_KEYS
+    return None
+
+
+def _deletion_tables(library):
+    if library == "songs":
+        return AUDIO_DELETION_TABLES
+    if library == "podcasts":
+        return PODCAST_DELETION_TABLES
+    return AUDIO_DELETION_TABLES | PODCAST_DELETION_TABLES
+
+
+def _filter_snapshot(snap, library):
+    keys = _snapshot_keys(library)
+    if keys is None:
+        return snap
+    return {key: value for key, value in snap.items()
+            if key in keys or key == "cursor"}
+
+
+def _filter_payload(payload, library):
+    keys = _payload_keys(library)
+    if keys is None:
+        return payload
+    filtered = {key: value for key, value in payload.items() if key in keys}
+    allowed = _deletion_tables(library)
+    filtered["Deletions"] = [
+        row for row in payload.get("Deletions", [])
+        if (row.get("TableName") or "").lower() in allowed
+    ]
+    return filtered
+
+
+def _emit_progress(progress, library, phase, done=0, total=0, message=""):
+    """Push one pull-progress event, never letting UI failures break sync."""
+    if not progress:
+        return
+    try:
+        progress({
+            "library": library,
+            "phase": phase,
+            "done": int(done),
+            "total": int(total),
+            "message": message,
+        })
+    except Exception:
+        _log.exception("pull(%s): progress callback failed", library)
+
+
+def _pending_files(snap, library):
+    """Return (folder, filename, library) rows whose bytes are absent."""
+    import settings
+
+    folders = []
+    if library in ("all", "songs"):
+        folders.append((settings.path, "songs"))
+    if library in ("all", "podcasts"):
+        folders.append((settings.podcasts_path, "podcasts"))
+    pending = []
+    for folder, kind in folders:
+        for row in snap.get(kind) or []:
+            filename = row.get("file")
+            if not filename or "/" in filename or "\\" in filename:
+                continue
+            if not os.path.exists(os.path.join(folder, filename)):
+                pending.append((folder, filename, kind))
+    return pending
+
 
 def _norm_section(rows, mapping):
     """Map one delta section's rows to local snake_case field names."""
@@ -136,26 +256,42 @@ def _norm_section(rows, mapping):
 
 
 def _norm_snapshot(snap):
-    """Normalize a delta/export payload to local section + field names."""
+    """Normalize a delta/export payload to local section + field names.
+
+    ``/sync/delta`` wraps the snapshot as ``{cursor, snapshot:{...}}`` while
+    ``/sync/export`` returns the snapshot itself; accept both shapes.
+    """
+    outer = snap or {}
+    sections = outer
+    for key in ("snapshot", "Snapshot"):
+        if isinstance(outer.get(key), dict):
+            sections = outer[key]
+            break
+
     normed = {}
     for server_section, local_section in SECTION_MAP.items():
         for candidate in (local_section, server_section,
                           server_section[0].upper() + server_section[1:]):
-            if candidate in snap and isinstance(snap[candidate], list):
+            if candidate in sections and isinstance(sections[candidate], list):
                 normed[local_section] = _norm_section(
-                    snap[candidate], FIELD_MAPS[local_section])
+                    sections[candidate], FIELD_MAPS[local_section])
                 break
     for key in ("cursor", "Cursor"):
-        if snap.get(key):
-            normed["cursor"] = snap[key]
+        if outer.get(key):
+            normed["cursor"] = outer[key]
             break
     return normed
 
 
 def _iso(dt):
-    """'YYYY-MM-DD HH:MM:SS' (UTC, local DB shape) -> ISO-8601 UTC."""
+    """'YYYY-MM-DD HH:MM:SS' (UTC, local DB shape) -> ISO-8601 UTC.
+
+    The server DTOs take a non-nullable DateTime: an explicit JSON null
+    rejects the WHOLE import with 400, so undated rows push as "now"
+    (mobile does the same). Older local rows can have a null date_download.
+    """
     if not dt:
-        return None
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     s = str(dt).strip()
     if " " in s and "T" not in s:
         s = s.replace(" ", "T", 1)
@@ -164,22 +300,27 @@ def _iso(dt):
     return s
 
 
-def cursor_path(db_path):
-    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "sync_cursor.txt")
+def cursor_path(db_path, library="all"):
+    """Each library keeps its own delta cursor so separate Push/Pull buttons
+    never skip changes belonging to the other library."""
+    library = normalize_library(library)
+    suffix = "" if library == "all" else "_" + library
+    return os.path.join(
+        os.path.dirname(os.path.abspath(db_path)), f"sync_cursor{suffix}.txt")
 
 
-def read_cursor(db_path):
+def read_cursor(db_path, library="all"):
     try:
-        with open(cursor_path(db_path), "r", encoding="utf-8") as f:
+        with open(cursor_path(db_path, library), "r", encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return ""
 
 
-def write_cursor(db_path, cursor):
+def write_cursor(db_path, cursor, library="all"):
     if not cursor:
         return
-    with open(cursor_path(db_path), "w", encoding="utf-8") as f:
+    with open(cursor_path(db_path, library), "w", encoding="utf-8") as f:
         f.write(cursor)
 
 
@@ -236,48 +377,114 @@ class ApiSyncClient:
     def get_delta(self, cursor):
         return self._request("GET", "/delta", query={"cursor": cursor} if cursor else {})
 
-    # -- pull -----------------------------------------------------------
-    def pull_once(self):
-        import settings
+    # -- cross-device resume --------------------------------------------
+    def push_playback(self, device_id, device_label, file, position_secs, is_podcast):
+        """Upsert this device's paused spot (server keeps one row per device)."""
+        return self._request("POST", "/playback", payload={
+            "deviceId": device_id,
+            "deviceLabel": device_label,
+            "file": file,
+            "positionSec": max(0.0, float(position_secs or 0)),
+            "isPodcast": bool(is_podcast),
+        })
 
-        cursor = read_cursor(self.db_path)
+    def get_latest_playback(self, device_id):
+        """Newest paused spot from another device (server excludes ours)."""
+        query = {"excludeDevice": device_id} if device_id else {}
+        return self._request("GET", "/playback", query=query)
+
+    # -- pull -----------------------------------------------------------
+    def pull_once(self, library="all", progress=None):
+        library = normalize_library(library)
+        cursor = read_cursor(self.db_path, library)
+        _log.info("pull(%s) start; cursor=%s", library,
+                  "set" if cursor else "empty")
+        _emit_progress(progress, library, "contacting")
         try:
-            snap = _norm_snapshot(self.get_delta(cursor))
-        except ApiSyncError:
+            snap = _filter_snapshot(
+                _norm_snapshot(self.get_delta(cursor)), library)
+        except ApiSyncError as e:
+            _log.error("pull(%s) failed: %s", library, e)
+            _emit_progress(progress, library, "error", message=str(e))
             raise
         except Exception as e:
-            return f"Error contacting sync server: {e}"
+            _log.exception("pull(%s): delta request failed", library)
+            message = f"Error contacting sync server: {e}"
+            _emit_progress(progress, library, "error", message=message)
+            return message
+
+        counts = {key: len(value) for key, value in snap.items()
+                  if isinstance(value, list)}
+        _log.info("pull(%s) delta rows: %s", library, counts)
+        _emit_progress(progress, library, "merging")
 
         added = {"songs": 0, "podcasts": 0}
         downloaded = {"songs": 0, "podcasts": 0}
         try:
             with sqlite3.connect(self.db_path) as conn:
                 self._ensure_tables(conn)
-                self._apply_deletions(conn, snap.get("deletions") or [])
-                added["songs"] = self._merge_songs(conn, snap.get("songs") or [])
-                added["podcasts"] = self._merge_podcasts(conn, snap.get("podcasts") or [])
+                self._apply_deletions(
+                    conn, snap.get("deletions") or [], library)
+                if library in ("all", "songs"):
+                    added["songs"] = self._merge_songs(
+                        conn, snap.get("songs") or [])
+                if library in ("all", "podcasts"):
+                    added["podcasts"] = self._merge_podcasts(
+                        conn, snap.get("podcasts") or [])
                 self._merge_rest(conn, snap)
         except Exception as e:
-            return f"Error syncing to local DB: {e}"
+            _log.exception("pull(%s): local DB merge failed", library)
+            message = f"Error syncing to local DB: {e}"
+            _emit_progress(progress, library, "error", message=message)
+            return message
 
         # Fetch missing bytes straight from the server (exact filenames).
-        for row in snap.get("songs") or []:
-            if self._fetch_missing(settings.path, row.get("file"), "songs"):
-                downloaded["songs"] += 1
-        for row in snap.get("podcasts") or []:
-            if self._fetch_missing(settings.podcasts_path, row.get("file"), "podcasts"):
-                downloaded["podcasts"] += 1
+        # The pending list also drives the progress bar, so the denominator
+        # is known before the first (possibly slow) download starts.
+        pending = _pending_files(snap, library)
+        total = len(pending)
+        if not total:
+            _emit_progress(progress, library, "downloading", 0, 0,
+                           message="No new files to download")
+        try:
+            for index, (folder, filename, kind) in enumerate(pending, 1):
+                _emit_progress(progress, library, "downloading",
+                               index - 1, total, message=filename)
+                if self._fetch_missing(folder, filename, kind):
+                    downloaded[kind] += 1
+                _emit_progress(progress, library, "downloading",
+                               index, total, message=filename)
+        except ApiSyncError as e:
+            _emit_progress(progress, library, "error", message=str(e))
+            raise
 
-        write_cursor(self.db_path, snap.get("cursor", ""))
-        msg = (
-            f"Synced {added['songs']} new songs from server. "
-            f"Downloaded {downloaded['songs']} files."
-        )
-        if added["podcasts"] or downloaded["podcasts"]:
-            msg += (
-                f" Podcasts: {added['podcasts']} new entries, "
-                f"{downloaded['podcasts']} files downloaded."
+        write_cursor(self.db_path, snap.get("cursor", ""), library)
+        if library == "songs":
+            msg = (
+                f"Synced {added['songs']} new audio tracks from server. "
+                f"Downloaded {downloaded['songs']} files."
             )
+        elif library == "podcasts":
+            msg = (
+                f"Synced {added['podcasts']} new podcasts from server. "
+                f"Downloaded {downloaded['podcasts']} files."
+            )
+        else:
+            msg = (
+                f"Synced {added['songs']} new songs from server. "
+                f"Downloaded {downloaded['songs']} files."
+            )
+            if added["podcasts"] or downloaded["podcasts"]:
+                msg += (
+                    f" Podcasts: {added['podcasts']} new entries, "
+                    f"{downloaded['podcasts']} files downloaded."
+                )
+        _log.info(
+            "pull(%s) done: songs_added=%d podcasts_added=%d "
+            "songs_downloaded=%d podcasts_downloaded=%d",
+            library, added["songs"], added["podcasts"],
+            downloaded["songs"], downloaded["podcasts"])
+        _emit_progress(progress, library, "done", total, total, message=msg)
         return msg
 
     def _fetch_missing(self, folder, filename, library="songs"):
@@ -289,6 +496,7 @@ class ApiSyncClient:
             return False
         os.makedirs(folder, exist_ok=True)
         tmp = dest + ".hathor-part"
+        _log.info("download %s/%s", library, filename)
         req = urllib.request.Request(
             self.base + "/files/" + urllib.parse.quote(filename)
             + "?" + urllib.parse.urlencode({"library": library}),
@@ -306,55 +514,96 @@ class ApiSyncClient:
                         break
                     f.write(chunk)
         except urllib.error.HTTPError as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
             if e.code == 404:
+                _log.warning("download %s/%s: server has no file",
+                             library, filename)
                 raise ApiSyncError(SERVER_MISSING)
+            _log.error("download %s/%s failed: HTTP %s",
+                       library, filename, e.code)
             raise ApiSyncError(f"File download failed ({e.code}): {filename}")
         except urllib.error.URLError as e:
             try:
                 os.remove(tmp)
             except OSError:
                 pass
+            _log.error("download %s/%s failed: %s", library, filename, e.reason)
             raise ApiSyncError(f"File download failed: {e.reason}")
         os.replace(tmp, dest)
+        _log.info("downloaded %s/%s (%d bytes)", library, filename,
+                  os.path.getsize(dest))
         return True
 
     # -- push -----------------------------------------------------------
-    def push_once(self):
+    def push_once(self, library="all"):
+        library = normalize_library(library)
+        _log.info("push(%s) start", library)
         try:
-            payload = self._collect_local()
+            payload = self._collect_local(library)
         except Exception as e:
+            _log.exception("push(%s): reading local DB failed", library)
             return f"Error reading local DB: {e}"
+        counts = {key: len(value) for key, value in payload.items()
+                  if isinstance(value, list)}
+        _log.info("push(%s) payload rows: %s", library, counts)
         try:
             resp = self._request("POST", "/import", payload=payload)
-        except ApiSyncError:
+        except ApiSyncError as e:
+            _log.error("push(%s) failed: %s", library, e)
             raise
         except Exception as e:
+            _log.exception("push(%s): import request failed", library)
             return f"Error contacting sync server: {e}"
 
         uploaded = 0
         try:
             missing = (resp.get("missing_files") or resp.get("missingFiles")
                        or resp.get("MissingFiles") or [])
+            if missing:
+                _log.info("push(%s): server missing %d file(s)",
+                          library, len(missing))
             for filename in missing:
-                if self._upload_local_file(filename):
+                if self._upload_local_file(filename, library):
                     uploaded += 1
-        except ApiSyncError:
+        except ApiSyncError as e:
+            _log.error("push(%s) file upload failed: %s", library, e)
             raise
         except Exception as e:
+            _log.exception("push(%s): uploading files failed", library)
             return f"Error uploading files: {e}"
 
-        # Tombstones only clear once the server accepted them.
+        # Tombstones only clear once the server accepted them. A scoped push
+        # must leave the other library's pending deletions untouched.
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("DELETE FROM Sync_Deletions")
+                if library == "all":
+                    conn.execute("DELETE FROM Sync_Deletions")
+                else:
+                    tables = sorted(_deletion_tables(library))
+                    placeholders = ", ".join("?" for _ in tables)
+                    conn.execute(
+                        "DELETE FROM Sync_Deletions "
+                        f"WHERE lower(table_name) IN ({placeholders})",
+                        tables,
+                    )
         except Exception as e:
+            _log.exception("push(%s): clearing tombstones failed", library)
             return f"Push accepted but could not clear tombstones: {e}"
-        msg = "Push complete: library rows sent to server."
+        if library == "songs":
+            msg = "Push complete: audios sent to server."
+        elif library == "podcasts":
+            msg = "Push complete: podcasts sent to server."
+        else:
+            msg = "Push complete: library rows sent to server."
         if uploaded:
             msg += f" Uploaded {uploaded} new file(s)."
+        _log.info("push(%s) done: uploaded=%d", library, uploaded)
         return msg
 
-    def _collect_local(self):
+    def _collect_local(self, library="all"):
         """Local rows shaped as the server's SyncSnapshot (PascalCase keys,
         ISO-8601 UTC datetimes). Missing tables read as [] (old installs)."""
         payload = {}
@@ -437,24 +686,30 @@ class ApiSyncClient:
                 {"TableName": r.get("table_name"), "RowKey": r.get("row_key")}
                 for r in rows("SELECT table_name, row_key FROM Sync_Deletions")
             ]
-        return payload
+        return _filter_payload(payload, normalize_library(library))
 
-    def _upload_local_file(self, filename):
+    def _upload_local_file(self, filename, library="all"):
         """PUT one local MP3 the server lacks. Returns True when uploaded."""
         import settings
 
         if not filename or "/" in filename or "\\" in filename:
             return False
-        library = "songs"
-        for folder in (settings.path, settings.podcasts_path):
+        library = normalize_library(library)
+        folders = []
+        if library in ("all", "songs"):
+            folders.append((settings.path, "songs"))
+        if library in ("all", "podcasts"):
+            folders.append((settings.podcasts_path, "podcasts"))
+        for folder, kind in folders:
             src = os.path.join(folder, filename)
             if os.path.exists(src):
-                library = "podcasts" if folder == settings.podcasts_path else "songs"
+                library = kind
                 break
         else:
             return False
         with open(src, "rb") as f:
             data = f.read()
+        _log.info("upload %s/%s (%d bytes)", library, filename, len(data))
         req = urllib.request.Request(
             self.base + "/files/" + urllib.parse.quote(filename)
             + "?" + urllib.parse.urlencode({"library": library}),
@@ -674,14 +929,15 @@ class ApiSyncClient:
             )
 
     @staticmethod
-    def _apply_deletions(conn, deletions):
+    def _apply_deletions(conn, deletions, library="all"):
         """Apply server-authoritative tombstones (delta only lists them)."""
         import settings as _settings
 
+        allowed = _deletion_tables(normalize_library(library))
         for d in deletions:
             table = (d.get("table_name") or "").lower()
             key = d.get("row_key")
-            if not key:
+            if not key or table not in allowed:
                 continue
             try:
                 if table == "songs":
@@ -711,7 +967,8 @@ class ApiSyncClient:
                 elif table == "podcast_chapters":
                     conn.execute("DELETE FROM Podcast_Chapters WHERE podcast_file = ?", (key,))
             except Exception as e:
-                print(f" [Sync] Could not apply deletion {table}/{key}: {e}")
+                _log.warning("pull: could not apply deletion %s/%s: %s",
+                             table, key, e)
 
 
 def _remove_file(folder, filename):
@@ -722,4 +979,4 @@ def _remove_file(folder, filename):
         if os.path.exists(path):
             os.remove(path)
     except OSError as e:
-        print(f" [Sync] Could not remove deleted file {filename}: {e}")
+        _log.warning("pull: could not remove deleted file %s: %s", filename, e)

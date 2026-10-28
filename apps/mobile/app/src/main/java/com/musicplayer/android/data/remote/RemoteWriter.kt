@@ -3,9 +3,12 @@ package com.musicplayer.android.data.remote
 import android.util.Log
 import com.musicplayer.android.data.api.SyncApi
 import com.musicplayer.android.data.api.SyncApiException
-import com.musicplayer.android.data.db.AppDatabase
+import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.engine.DownloadEngine
 import java.io.File
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -16,6 +19,10 @@ import org.json.JSONObject
 // lacks come back as missingFiles and are uploaded as raw bytes via PUT.
 // Tombstones clear only after the server accepts them, so a failed push
 // retries everything idempotently next time.
+//
+// Reads data.local (music_player.db) — the same Room database the library
+// screens use — so what the user sees is exactly what gets pushed. It used
+// to read data.db/hathor.db, a second instance the UI never displayed.
 object RemoteWriter {
     private const val TAG = "RemoteWriter"
 
@@ -29,32 +36,33 @@ object RemoteWriter {
     suspend fun pushSongs(db: AppDatabase, engine: DownloadEngine, api: SyncApi): PushReport {
         val payload = JSONObject()
         var rows = 0
-        payload.put("Songs", JSONArray(db.songDao().all().map { fileRowJson(it.file, it.downloadedLink, it.title, it.dateDownloadMillis, it.artist) }.also { rows += it.size() }))
-        val playlists = db.playlistDao().all()
-        payload.put("Playlists", JSONArray(playlists.map {
+        payload.put("Songs", JSONArray(db.songDao().getAll().map {
+            fileRowJson(it.file, it.downloadedLink, it.title, it.dateDownload, it.artist)
+        }.also { rows += it.size }))
+        payload.put("Playlists", JSONArray(db.playlistDao().getPlaylists().map {
             JSONObject().put("Id", it.id).put("Title", it.title)
                 .put("Description", it.description).put("Thumbnail", it.thumbnail)
-        }.also { rows += it.size() }))
-        payload.put("SongLinks", JSONArray(db.songPlaylistDao().all().map {
+        }.also { rows += it.size }))
+        payload.put("SongLinks", JSONArray(db.playlistDao().allSongLinks().map {
             JSONObject().put("Id", it.id).put("SongFile", it.songFile)
-                .put("PlaylistId", it.playlistId).put("DateAddedUtc", SyncApi.isoNow(it.dateAddedMillis))
-        }.also { rows += it.size() }))
-        payload.put("Lyrics", JSONArray(db.lyricDao().all().map {
+                .put("PlaylistId", it.playlistId)
+                .put("DateAddedUtc", isoDate(it.dateAdded))
+        }.also { rows += it.size }))
+        payload.put("Lyrics", JSONArray(db.playlistDao().allLyrics().map {
             JSONObject().put("Id", it.id).put("SongFile", it.songFile)
                 .put("LyricsJson", it.lyrics).put("OffsetMs", it.offsetMs)
-        }.also { rows += it.size() }))
-        payload.put("MusicHistory", JSONArray(db.musicHistoryDao().allOrdered().map {
+        }.also { rows += it.size }))
+        payload.put("MusicHistory", JSONArray(db.playlistDao().allMusicHistoryOrdered().map {
             JSONObject().put("Id", it.id).put("SongFile", it.songFile)
-                .put("DatePlayedUtc", SyncApi.isoNow(it.datePlayedMillis))
-        }.also { rows += it.size() }))
-        payload.put("PlaylistHistory", JSONArray(db.playlistHistoryDao().allOrdered().map {
+                .put("DatePlayedUtc", isoDate(it.datePlayed))
+        }.also { rows += it.size }))
+        payload.put("PlaylistHistory", JSONArray(db.playlistDao().allPlaylistHistoryOrdered().map {
             JSONObject().put("Id", it.id).put("PlaylistId", it.playlistId)
-                .put("DatePlayedUtc", SyncApi.isoNow(it.datePlayedMillis))
-        }.also { rows += it.size() }))
-        val mixes = db.dailyMixDao().all()
-        payload.put("DailyMix", JSONArray(mixes.map {
-            JSONObject().put("MixDate", it.mixDate).put("SongFilesJson", it.songFilesJson)
-        }.also { rows += it.size() }))
+                .put("DatePlayedUtc", isoDate(it.datePlayed))
+        }.also { rows += it.size }))
+        payload.put("DailyMix", JSONArray(db.dailyMixDao().getAll().map {
+            JSONObject().put("MixDate", it.mixDate).put("SongFilesJson", it.songFiles)
+        }.also { rows += it.size }))
         payload.put("Deletions", deletionsJson(db, songTables))
 
         val result = try {
@@ -71,19 +79,19 @@ object RemoteWriter {
     suspend fun pushPodcasts(db: AppDatabase, engine: DownloadEngine, api: SyncApi): PushReport {
         val payload = JSONObject()
         var rows = 0
-        payload.put("Podcasts", JSONArray(db.podcastDao().all().map {
-            fileRowJson(it.file, it.downloadedLink, it.title, it.dateDownloadMillis, it.artist)
-        }.also { rows += it.size() }))
-        payload.put("PodcastTags", JSONArray(db.podcastTagDao().all().map {
+        payload.put("Podcasts", JSONArray(db.podcastDao().getAll().map {
+            fileRowJson(it.file, it.downloadedLink, it.title, it.dateDownload, it.artist)
+        }.also { rows += it.size }))
+        payload.put("PodcastTags", JSONArray(db.podcastTagDao().getTags().map {
             JSONObject().put("Id", it.id).put("Name", it.name)
-        }.also { rows += it.size() }))
-        payload.put("PodcastTagLinks", JSONArray(db.podcastTagLinkDao().all().map {
+        }.also { rows += it.size }))
+        payload.put("PodcastTagLinks", JSONArray(db.podcastTagLinkDao().getLinks().map {
             JSONObject().put("Id", it.id).put("PodcastFile", it.podcastFile).put("TagId", it.tagId)
-        }.also { rows += it.size() }))
+        }.also { rows += it.size }))
         payload.put("PodcastChapters", JSONArray(db.podcastChapterDao().all().map {
             JSONObject().put("Id", it.id).put("PodcastFile", it.podcastFile)
                 .put("Name", it.name).put("StartSecs", it.startSecs).put("EndSecs", it.endSecs)
-        }.also { rows += it.size() }))
+        }.also { rows += it.size }))
         payload.put("Deletions", deletionsJson(db, podcastTables))
 
         val result = try {
@@ -98,12 +106,12 @@ object RemoteWriter {
     }
 
     private fun fileRowJson(
-        file: String, downloadedLink: String?, title: String, dateMillis: Long, artist: String?,
+        file: String, downloadedLink: String?, title: String, localDate: String?, artist: String?,
     ): JSONObject = JSONObject()
         .put("File", file)
         .put("DownloadedLink", downloadedLink)
         .put("Title", title)
-        .put("DateDownloadUtc", SyncApi.isoNow(dateMillis))
+        .put("DateDownloadUtc", isoDate(localDate))
         .put("Artist", artist)
 
     private suspend fun deletionsJson(db: AppDatabase, tables: List<String>): JSONArray =
@@ -126,12 +134,33 @@ object RemoteWriter {
                 continue
             }
             try {
-                api.putFile(file, library, src.readBytes())
+                api.putFile(file, library, src)
                 uploaded++
             } catch (e: SyncApiException) {
                 throw IllegalStateException(e.message)
             }
         }
         return uploaded
+    }
+
+    // Local rows keep desktop text dates ("yyyy-MM-dd" for date_download,
+    // "yyyy-MM-dd HH:mm:ss" for links/history, UTC). The server DTOs take a
+    // non-nullable DateTime, so always emit ISO-8601 UTC and fall back to
+    // "now" for blank/unparseable values instead of failing the import.
+    private fun isoDate(raw: String?): String {
+        val s = raw?.trim().orEmpty()
+        if (s.isBlank()) return Instant.now().toString()
+        return try {
+            if (s.length >= 19) {
+                val normalized = s.replace(' ', 'T')
+                val zoned = normalized.endsWith("Z") || '+' in normalized.substring(10) ||
+                    '-' in normalized.substring(11)
+                Instant.parse(if (zoned) normalized else normalized + "Z")
+            } else {
+                LocalDate.parse(s).atStartOfDay().toInstant(ZoneOffset.UTC)
+            }.toString()
+        } catch (_: Exception) {
+            Instant.now().toString()
+        }
     }
 }

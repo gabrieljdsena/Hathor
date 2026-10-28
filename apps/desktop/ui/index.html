@@ -237,6 +237,32 @@
                     </svg>
                     <span class="nav-text font-medium tracking-wide">Download</span>
                 </a>
+                <a href="#" data-target="artists"
+                    class="nav-link group flex items-center p-3 rounded-xl text-zinc-400 hover:text-white group-[.active-nav]:text-white group-[.active-nav]:bg-orange-500/10 hover:bg-orange-500/10 transition-all duration-300 relative overflow-hidden"
+                    title="Artists">
+                    <div
+                        class="nav-indicator absolute left-0 top-1/4 bottom-1/4 w-1 bg-orange-500 rounded-r-full scale-y-0 group-hover:scale-y-100 group-[.active-nav]:scale-y-100 transition-transform duration-300 origin-center">
+                    </div>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                        class="w-6 h-6 mr-3 flex-shrink-0 transition-transform duration-300 group-hover:scale-110 group-[.active-nav]:scale-110 group-hover:text-orange-400 group-[.active-nav]:text-orange-400">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                    </svg>
+                    <span class="nav-text font-medium tracking-wide">Artists</span>
+                </a>
+                <a href="#" data-target="albums"
+                    class="nav-link group flex items-center p-3 rounded-xl text-zinc-400 hover:text-white group-[.active-nav]:text-white group-[.active-nav]:bg-orange-500/10 hover:bg-orange-500/10 transition-all duration-300 relative overflow-hidden"
+                    title="Albums">
+                    <div
+                        class="nav-indicator absolute left-0 top-1/4 bottom-1/4 w-1 bg-orange-500 rounded-r-full scale-y-0 group-hover:scale-y-100 group-[.active-nav]:scale-y-100 transition-transform duration-300 origin-center">
+                    </div>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                        class="w-6 h-6 mr-3 flex-shrink-0 transition-transform duration-300 group-hover:scale-110 group-[.active-nav]:scale-110 group-hover:text-orange-400 group-[.active-nav]:text-orange-400">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                    </svg>
+                    <span class="nav-text font-medium tracking-wide">Albums</span>
+                </a>
                 <a href="#" data-target="podcasts"
                     class="nav-link group flex items-center p-3 rounded-xl text-zinc-400 hover:text-white group-[.active-nav]:text-white group-[.active-nav]:bg-orange-500/10 hover:bg-orange-500/10 transition-all duration-300 relative overflow-hidden"
                     title="Podcasts">
@@ -394,22 +420,15 @@
         </div>
     </div>
 
-    <!-- Resume across devices: another device's paused spot (explicit tap only) -->
-    <div id="resume_spot_bar" style="display: none;"
-        class="fixed bottom-28 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-200 text-sm hover:bg-sky-500/20 transition-colors cursor-pointer max-w-[90vw]">
-        <span>&#9654;</span>
-        <span id="resume_spot_text" class="truncate"></span>
-    </div>
-
     <!-- The fixed controller is outside the main flex container to avoid affecting its layout -->
-    <div class="fixed bottom-0 left-0 right-0 flex flex-row items-center justify-between h-28 border-t border-orange-500/10 bg-black/40 backdrop-blur-2xl px-6 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
+    <div class="fixed bottom-0 left-0 right-0 flex flex-row items-center justify-between h-28 border-t border-orange-500/10 bg-black/40 backdrop-blur-2xl px-4 lg:px-6 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
         id="controls">
 
         <div id="song_plaiyng_div" class="flex-1 flex items-center min-w-0 cursor-pointer rounded-xl px-2 py-1 -ml-2 hover:bg-white/5 transition-colors group/np" title="Open Now Playing"></div>
 
         <!-- Center: Buttons and Progress Slider -->
-        <div class="flex flex-col items-center justify-center flex-[2] max-w-3xl gap-2">
-            <div class="flex flex-row items-center justify-center gap-6 sm:gap-8 w-full">
+        <div class="flex flex-col items-center justify-center flex-[2] max-w-3xl min-w-0 gap-2">
+            <div class="flex flex-row items-center justify-center gap-4 sm:gap-6 lg:gap-8 w-full">
                 <button id="repeatBtn" onclick="window.toggle_repeat();"
                     class="hover:cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5"
                     title="Toggle Repeat">
@@ -470,10 +489,10 @@
         </div>
 
         <!-- Right Side: Volume -->
-        <div class="flex-1 flex items-center justify-end gap-2 min-w-0">
+        <div class="flex-1 flex items-center justify-end gap-1.5 lg:gap-2 min-w-0">
             <!-- Lyrics Button -->
             <button id="toggle-lyrics-btn"
-                class="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none"
+                class="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-1.5 lg:p-2 rounded-full hover:bg-white/5 focus:outline-none"
                 title="Toggle Lyrics">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24"
                     stroke="currentColor">
@@ -485,7 +504,7 @@
 
             <!-- Queue Button -->
             <button id="toggle-queue-btn"
-                class="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none"
+                class="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-1.5 lg:p-2 rounded-full hover:bg-white/5 focus:outline-none"
                 title="Toggle Queue">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24"
                     stroke="currentColor">
@@ -496,7 +515,7 @@
 
             <!-- Volume Icon Button -->
             <button id="muteBtn" onclick="window.toggle_mute()"
-                class="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none">
+                class="cursor-pointer text-zinc-400 hover:text-white transition-all duration-300 hover:scale-110 active:scale-95 p-1.5 lg:p-2 rounded-full hover:bg-white/5 focus:outline-none">
                 <svg id="volumeIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
                     <path
                         d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.5A2.25 2.25 0 0 0 2.25 9.75v4.5a2.25 2.25 0 0 0 2.25 2.25h2.44l4.5 4.5c.944.945 2.56.276 2.56-1.06V4.06ZM18.75 12c0-1.24-.51-2.35-1.34-3.14a.75.75 0 1 0-1.03 1.1c.41.38.67.92.67 1.51s-.26 1.13-.67 1.51a.75.75 0 1 0 1.03 1.1c.83-.79 1.34-1.9 1.34-3.14Zm2.25 0c0-2.32-.94-4.42-2.45-5.94a.75.75 0 1 0-1.06 1.06A6.73 6.73 0 0 1 19.5 12c0 1.91-.79 3.63-2.06 4.88a.75.75 0 1 0 1.06 1.06A8.23 8.23 0 0 0 21 12Z" />
@@ -505,7 +524,33 @@
 
             <!-- Volume Slider -->
             <input type="range" id="volumeSlider" min="0" max="1" step="0.01"
-                class="w-20 sm:w-28 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0">
+                class="flex-1 min-w-0 max-w-28 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0">
+
+            <!-- Resume across devices: icon opens the saved spot above it -->
+            <div class="relative flex items-center">
+                <button type="button" id="resume_spot_dock" style="display: none;"
+                    onclick="event.stopPropagation(); if (typeof window.toggleResumeSpot === 'function') window.toggleResumeSpot();"
+                    class="flex-shrink-0 items-center justify-center p-1.5 lg:p-2 rounded-full bg-orange-500/10 text-orange-400/90 hover:text-orange-300 hover:bg-orange-500/20 transition-colors cursor-pointer"
+                    aria-label="Resume from another device" aria-expanded="false"
+                    title="Resume from another device">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                        class="w-5 h-5 flex-shrink-0" aria-hidden="true">
+                        <path fill-rule="evenodd"
+                            d="M4.5 5.653c0-1.427 1.529-2.38 2.831-1.643L20.5 12 7.331 20.007c-1.302.737-2.831-.216-2.831-1.643V5.653Z"
+                            clip-rule="evenodd" />
+                    </svg>
+                </button>
+                <div id="resume_spot_bar" style="display: none;"
+                    class="absolute bottom-full right-0 mb-3 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-200 text-sm hover:bg-orange-500/20 transition-colors cursor-pointer max-w-[90vw]">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                        class="w-4 h-4 flex-shrink-0" aria-hidden="true">
+                        <path fill-rule="evenodd"
+                            d="M4.5 5.653c0-1.427 1.529-2.38 2.831-1.643L20.5 12 7.331 20.007c-1.302.737-2.831-.216-2.831-1.643V5.653Z"
+                            clip-rule="evenodd" />
+                    </svg>
+                    <span id="resume_spot_text" class="truncate"></span>
+                </div>
+            </div>
         </div>
     </div> <!-- FIX: Added missing closing div tag here -->
 
@@ -1243,7 +1288,10 @@
             // Keep sidebar active state in sync for programmatic navigation
             // (e.g. home dashboard cards -> all_songs / daily_mix).
             try {
-                const sidebarTarget = (page === "all_songs" || page === "daily_mix") ? "home" : page;
+                const sidebarTarget = (page === "all_songs" || page === "daily_mix") ? "home"
+                    : (page === "artist") ? "artists"
+                    : (page === "album") ? "albums"
+                    : page;
                 document.querySelectorAll(".nav-link").forEach(el => {
                     if (el.getAttribute("data-target") === sidebarTarget) {
                         el.classList.add("active-nav");
@@ -1394,37 +1442,38 @@
             }
 
             if (titlebar) {
-                // Drag the window by grabbing the titlebar
-                let drag = null;
-                titlebar.addEventListener('pointerdown', async function (e) {
+                // Hand the drag to Windows (ReleaseCapture + WM_NCLBUTTONDOWN
+                // with HTCAPTION). A JS move_window loop cannot produce Aero
+                // Snap, snap layouts, or edge/corner magnetism; a native
+                // caption drag can. The Python call blocks until the drop, so
+                // it is deliberately not awaited here.
+                let lastTitleClick = { t: 0, x: 0, y: 0 };
+                titlebar.addEventListener('mousedown', function (e) {
                     if (e.target.closest('.win-ctrl-btn')) return;
+                    if (e.button !== 0) return;
                     e.preventDefault();
-                    await refreshWinFrame();
-                    if (!winFrame.known) return;
-                    const s = physScale();
-                    drag = { sx: e.screenX * s, sy: e.screenY * s, bx: winFrame.x, by: winFrame.y };
-                    try { titlebar.setPointerCapture(e.pointerId); } catch (err) { }
-                });
-                titlebar.addEventListener('pointermove', async function (e) {
                     const api = winApi();
-                    if (!drag || !api || !api.move_window) return;
-                    const s = physScale();
-                    const nx = Math.round(drag.bx + (e.screenX * s - drag.sx));
-                    const ny = Math.round(drag.by + (e.screenY * s - drag.sy));
-                    try {
-                        await api.move_window(nx, ny);
-                        winFrame.x = nx;
-                        winFrame.y = ny;
-                    } catch (err) { }
+                    if (!api) return;
+                    const now = Date.now();
+                    const isDouble = e.detail >= 2 || (
+                        now - lastTitleClick.t < 450 &&
+                        Math.abs(e.screenX - lastTitleClick.x) < 6 &&
+                        Math.abs(e.screenY - lastTitleClick.y) < 6
+                    );
+                    if (isDouble) {
+                        lastTitleClick.t = 0;
+                        if (api.toggle_maximize_window) api.toggle_maximize_window();
+                        return;
+                    }
+                    lastTitleClick = { t: now, x: e.screenX, y: e.screenY };
+                    if (api.start_window_drag) api.start_window_drag();
                 });
-                titlebar.addEventListener('pointerup', function () { drag = null; });
-                titlebar.addEventListener('pointercancel', function () { drag = null; });
 
-                // Double-click toggles maximize/restore
+                // Double-click is handled above before the native drag starts,
+                // so suppress the browser's default activation here.
                 titlebar.addEventListener('dblclick', function (e) {
                     if (e.target.closest('.win-ctrl-btn')) return;
-                    const api = winApi();
-                    if (api && api.toggle_maximize_window) api.toggle_maximize_window();
+                    e.preventDefault();
                 });
             }
 
@@ -1591,9 +1640,16 @@
                             }
                         }
                         if (typeof window.updateHighlightedLine === 'function' && !document.getElementById("lyrics-container-view").classList.contains("hidden")) {
-                            const _off = (window.lyricsOffsetFile === (window.current_playing_song && window.current_playing_song.File))
+                            const _file = window.current_playing_song && window.current_playing_song.File;
+                            const _off = (window.lyricsOffsetFile === _file)
                                 ? (window.lyricsOffsetMs || 0) / 1000 : 0;
-                            window.updateHighlightedLine(pos + _off);
+                            const _chapter = (window.lyricsChapterFile === _file)
+                                ? (window.lyricsChapterStart || 0) : 0;
+                            window.updateHighlightedLine(pos - _chapter + _off);
+                        }
+                        if (Date.now() - (window._lyricsChapterCheckedAt || 0) > 4000) {
+                            window._lyricsChapterCheckedAt = Date.now();
+                            if (typeof window.checkLyricsChapterChange === 'function') window.checkLyricsChapterChange();
                         }
                     }
                 } catch (err) {
@@ -1606,6 +1662,7 @@
         // Clean up background polling when the user closes the window
         window.addEventListener("beforeunload", function () {
             if (progressTimer) clearInterval(progressTimer);
+            if (window._resumeSpotTimer) clearInterval(window._resumeSpotTimer);
         });
 
         window.plaiyng_info = function (data) {
@@ -1641,12 +1698,91 @@
         }
 
         // Resume across devices: show another device's paused spot (polled
-        // on track change + once at startup). Tapping plays it here at its
-        // position explicitly — nothing auto-plays. Never throws.
+        // every 60s, on track change, and once at startup). Tapping plays it
+        // here at its position explicitly - nothing auto-plays. Never throws.
         window.resumeSpotDismissed = null;
+        window._resumeSpotCurrent = null;
+        window._resumeSpotLabel = '';
+        window._resumeSpotKey = '';
+        window._resumeSpotOpen = false;
         window.fmtResumeTime = function (secs) {
             const s = Math.max(0, Math.floor(Number(secs) || 0));
             return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        };
+        window.hideResumeSpotUi = function () {
+            window._resumeSpotOpen = false;
+            const bar = document.getElementById('resume_spot_bar');
+            if (bar) bar.style.display = 'none';
+            const dock = document.getElementById('resume_spot_dock');
+            if (dock) {
+                dock.style.display = 'none';
+                dock.setAttribute('aria-expanded', 'false');
+            }
+        };
+        // Compact in-dock button (web PlayerBar parity), icon-only so the
+        // resume text stays hidden until the user opens it. playing_view
+        // replaces the card HTML, so repaint from the cached label instead of
+        // refetching the spot on every metadata refresh.
+        window.paintResumeSpotDock = function (songFile) {
+            const dock = document.getElementById('resume_spot_dock');
+            const bar = document.getElementById('resume_spot_bar');
+            if (!dock) return;
+            const spot = window._resumeSpotCurrent;
+            const cur = songFile || (window.current_playing_song
+                ? (typeof window.current_playing_song === 'string'
+                    ? window.current_playing_song.split(/[\\/]/).pop()
+                    : window.current_playing_song.File)
+                : null);
+            if (!spot || !spot.file || spot.file === cur ||
+                (spot.file + spot.updated_utc) === window.resumeSpotDismissed) {
+                window._resumeSpotOpen = false;
+                if (bar) bar.style.display = 'none';
+                dock.style.display = 'none';
+                dock.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            dock.title = (window._resumeSpotLabel || 'Resume from another device') +
+                (spot.updated_utc ? ` (saved ${spot.updated_utc})` : '');
+            dock.setAttribute('aria-label', window._resumeSpotLabel || 'Resume from another device');
+            dock.setAttribute('aria-expanded', window._resumeSpotOpen ? 'true' : 'false');
+            dock.style.display = 'flex';
+            if (bar) {
+                bar.style.display = window._resumeSpotOpen ? 'flex' : 'none';
+                if (window._resumeSpotOpen) {
+                    const text = document.getElementById('resume_spot_text');
+                    if (text) text.textContent = window._resumeSpotLabel || '';
+                }
+            }
+        };
+        window.toggleResumeSpot = function () {
+            const spot = window._resumeSpotCurrent;
+            if (!spot) return;
+            window._resumeSpotOpen = !window._resumeSpotOpen;
+            const dock = document.getElementById('resume_spot_dock');
+            if (dock) dock.setAttribute('aria-expanded', window._resumeSpotOpen ? 'true' : 'false');
+            const bar = document.getElementById('resume_spot_bar');
+            if (!bar) return;
+            if (window._resumeSpotOpen) {
+                const text = document.getElementById('resume_spot_text');
+                if (text) text.textContent = window._resumeSpotLabel || '';
+                bar.style.display = 'flex';
+            } else {
+                bar.style.display = 'none';
+            }
+        };
+        window.resumeSpotPlay = async function () {
+            const spot = window._resumeSpotCurrent;
+            if (!spot) return;
+            window.resumeSpotDismissed = spot.file + spot.updated_utc;
+            window._resumeSpotCurrent = null;
+            window._resumeSpotLabel = '';
+            window.hideResumeSpotUi();
+            try {
+                const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+                if (api && typeof api.resume_spot_play === 'function') {
+                    await api.resume_spot_play(spot.file, spot.position_secs, !!spot.is_podcast);
+                }
+            } catch (e) { /* resume must never break the player */ }
         };
         window.checkResumeSpot = async function () {
             try {
@@ -1660,22 +1796,35 @@
                     : null;
                 if (!spot || !spot.file || spot.file === curFile ||
                     (spot.file + spot.updated_utc) === window.resumeSpotDismissed) {
-                    bar.style.display = 'none';
+                    window._resumeSpotCurrent = null;
+                    window._resumeSpotLabel = '';
+                    window._resumeSpotKey = '';
+                    window.hideResumeSpotUi();
                     return;
                 }
-                bar.style.display = 'flex';
-                document.getElementById('resume_spot_text').textContent =
-                    `Resume ${spot.file} at ${window.fmtResumeTime(spot.position_secs)}` +
+                const spotName = spot.title
+                    ? spot.title + ((spot.artist && spot.artist !== 'Unknown')
+                        ? ` - ${spot.artist}` : '')
+                    : spot.file;
+                const spotKey = spot.file + spot.updated_utc;
+                if (spotKey !== window._resumeSpotKey) {
+                    // A newer spot arrives collapsed; the dock button reveals it.
+                    window._resumeSpotOpen = false;
+                    window._resumeSpotKey = spotKey;
+                }
+                window._resumeSpotCurrent = spot;
+                window._resumeSpotLabel =
+                    `Resume ${spotName} at ${window.fmtResumeTime(spot.position_secs)}` +
                     (spot.device ? ` from ${spot.device}` : '');
-                bar.onclick = async () => {
-                    bar.style.display = 'none';
-                    window.resumeSpotDismissed = spot.file + spot.updated_utc;
-                    try {
-                        await api.resume_spot_play(spot.file, spot.position_secs, !!spot.is_podcast);
-                    } catch (e) { /* resume must never break the player */ }
-                };
+                document.getElementById('resume_spot_text').textContent =
+                    window._resumeSpotLabel;
+                bar.onclick = window.resumeSpotPlay;
+                window.paintResumeSpotDock(curFile);
             } catch (e) { /* resume must never break the player */ }
         };
+        window._resumeSpotTimer = setInterval(
+            () => { if (typeof window.checkResumeSpot === 'function') window.checkResumeSpot(); },
+            60000);
         setTimeout(() => { if (typeof window.checkResumeSpot === 'function') window.checkResumeSpot(); }, 4000);
 
         // Pull the current song from Python if the early startup push
@@ -1776,6 +1925,10 @@
             const container = document.getElementById("song_plaiyng_div");
             if (container) container.innerHTML = html;
             if (typeof window.syncNowPlaying === 'function') window.syncNowPlaying(current_song);
+            // The card was just replaced; restore the compact resume row.
+            if (typeof window.paintResumeSpotDock === 'function') {
+                window.paintResumeSpotDock(current_song.File);
+            }
         }
 
         // ── Fullscreen Now Playing ──
@@ -2232,7 +2385,14 @@
                 p.innerText = line.text;
                 p.onclick = () => {
                     if (window.pywebview && window.pywebview.api) {
-                        window.pywebview.api.progress_slider_click(line.time);
+                        // Chapter lyrics are chapter-relative; the web seeks
+                        // to chapter start + line time.
+                        const _file = window.current_playing_song
+                            && window.current_playing_song.File;
+                        const _chapter = (window.lyricsChapterFile === _file)
+                            ? (window.lyricsChapterStart || 0) : 0;
+                        window.pywebview.api.progress_slider_click(
+                            (Number(line.time) || 0) + _chapter);
                     }
                 };
                 container.appendChild(p);
@@ -2305,7 +2465,11 @@
                 btn.appendChild(title);
                 btn.appendChild(sub);
                 btn.addEventListener('click', async () => {
-                    await window.pywebview.api.save_lyrics(s.syncedLyrics || null, s.plainLyrics || null);
+                    await window.pywebview.api.save_lyrics(
+                        s.syncedLyrics || null,
+                        s.plainLyrics || null,
+                        (s.chapterId != null ? s.chapterId : window.lyricsChapterId) || null
+                    );
                     window.fetchLyricsForCurrentSong(window.current_playing_song);
                 });
 
@@ -2328,6 +2492,11 @@
             // Persisted highlight-timing correction (web parity, ms ±20000).
             window.lyricsOffsetMs = 0;
             window.lyricsOffsetFile = songData.File || null;
+            // Chapter context: line times are absolute, so the highlighter
+            // subtracts the active chapter start (web parity).
+            window.lyricsChapterId = null;
+            window.lyricsChapterStart = 0;
+            window.lyricsChapterFile = songData.File || null;
             try {
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.get_lyrics_offset && songData.File) {
                     const off = await window.pywebview.api.get_lyrics_offset(songData.File);
@@ -2351,6 +2520,11 @@
 
                 if (window.lyricsFetchId !== currentFetchId) {
                     return; // Another fetch has started, ignore these results
+                }
+
+                if (lyricsData && lyricsData.chapter_id != null) {
+                    window.lyricsChapterId = lyricsData.chapter_id;
+                    window.lyricsChapterStart = Number(lyricsData.chapter_start_secs) || 0;
                 }
 
                 if (lyricsData && lyricsData.synced) {
@@ -2413,6 +2587,21 @@
                     }
                 }
             } catch (e) { /* painted optimistically; next fetch reloads */ }
+        };
+
+        window.checkLyricsChapterChange = async function () {
+            if (!window.current_playing_song || !window.current_playing_song.IsPodcast) return;
+            const view = document.getElementById('lyrics-container-view');
+            if (!view || view.classList.contains('hidden')) return;
+            try {
+                if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.get_active_chapter !== 'function') return;
+                const active = await window.pywebview.api.get_active_chapter();
+                const activeId = (active && active.id != null) ? active.id : null;
+                const shownId = (window.lyricsChapterId != null) ? window.lyricsChapterId : null;
+                if (activeId !== shownId) {
+                    window.fetchLyricsForCurrentSong(window.current_playing_song);
+                }
+            } catch (e) { /* chapter poll is best-effort */ }
         };
 
         window.update_queue_ui = function () {
@@ -2509,6 +2698,9 @@
                     toggleLyricsBtn.classList.add("text-orange-500", "hover:text-orange-400");
                     if (window.current_playing_song && window.parsedLyrics.length === 0) {
                         window.fetchLyricsForCurrentSong(window.current_playing_song);
+                    } else if (typeof window.checkLyricsChapterChange === 'function') {
+                        // Chapter may have moved while the panel was closed.
+                        window.checkLyricsChapterChange();
                     }
                 } else {
                     lyricsView.classList.add("hidden");
@@ -3095,6 +3287,18 @@
             if (tag === "input" || tag === "textarea" || tag === "select") return;
             if (e.target && e.target.isContentEditable) return;
 
+            // Help overlay owns Escape and suppresses the transport keys
+            // underneath it (same rule as the web dialog guard).
+            const helpOverlay = document.getElementById("shortcut-help");
+            const helpOpen = !!(helpOverlay && helpOverlay.classList.contains("open"));
+            if (helpOpen) {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    if (typeof window.closeShortcutHelp === "function") window.closeShortcutHelp();
+                }
+                return;
+            }
+
             switch (e.code) {
                 case "Space":
                     e.preventDefault();
@@ -3132,6 +3336,62 @@
                 case "MediaPlayPause":
                     e.preventDefault();
                     if (window.toggle_play_pause) await window.toggle_play_pause();
+                    break;
+            }
+
+            // Web-parity keys (n/p are chapter-aware, [ ] chapter-only).
+            switch (e.key) {
+                case "n":
+                case "N": {
+                    const api = window.pywebview && window.pywebview.api;
+                    let moved = false;
+                    if (api && typeof api.chapter_next === "function") {
+                        moved = !!(await api.chapter_next());
+                    }
+                    if (!moved && api && typeof api.play_next === "function") {
+                        await api.play_next();
+                    }
+                    break;
+                }
+                case "p":
+                case "P": {
+                    const api = window.pywebview && window.pywebview.api;
+                    let moved = false;
+                    if (api && typeof api.chapter_prev === "function") {
+                        moved = !!(await api.chapter_prev());
+                    }
+                    if (!moved && api && typeof api.play_prev === "function") {
+                        await api.play_prev();
+                    }
+                    break;
+                }
+                case "]":
+                    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.chapter_next === "function") {
+                        await window.pywebview.api.chapter_next();
+                    }
+                    break;
+                case "[":
+                    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.chapter_prev === "function") {
+                        await window.pywebview.api.chapter_prev();
+                    }
+                    break;
+                case "m":
+                case "M":
+                    if (window.toggle_mute) await window.toggle_mute();
+                    break;
+                case "s":
+                case "S":
+                    if (window.toggle_shuffle) await window.toggle_shuffle();
+                    if (typeof syncNpTogglesFromMain === "function") syncNpTogglesFromMain();
+                    break;
+                case "r":
+                case "R":
+                    if (window.toggle_repeat) await window.toggle_repeat();
+                    if (typeof syncNpTogglesFromMain === "function") syncNpTogglesFromMain();
+                    break;
+                case "?":
+                    e.preventDefault();
+                    if (typeof window.toggleShortcutHelp === "function") window.toggleShortcutHelp();
                     break;
             }
         });
@@ -3421,8 +3681,24 @@
             bottom: 0;
             z-index: 95;
         }
+        /* Queue opened from fullscreen becomes a full-height drawer that
+           starts BELOW the fullscreen top bar, so it never covers the
+           close / queue / lyrics buttons. */
         body.np-active #queue-sidebar {
+            position: fixed;
+            top: 4rem;
+            right: 0;
+            bottom: 0;
+            height: auto !important;
+            max-height: none !important;
+            margin: 0 !important;
+            border-radius: 1rem 0 0 0;
+            border-color: rgba(255, 255, 255, 0.1);
             z-index: 95;
+        }
+        /* Lyrics view carries its own 64px top bar offset by the titlebar. */
+        body.np-active.lyrics-active #queue-sidebar {
+            top: 6.5rem;
         }
         /* Top bar merged into fullscreen lyrics (the overlay's own bar
            sits behind the lyrics layer), only relevant when np-active */
@@ -3597,6 +3873,128 @@
             Add to Playlist
         </button>
     </div>
+
+    <style id="shortcut-help-style">
+        #shortcut-help {
+            position: fixed; inset: 0; z-index: 500; display: none;
+            align-items: center; justify-content: center; padding: 1.5rem;
+            background: rgba(0, 0, 0, 0.62); backdrop-filter: blur(6px);
+        }
+        #shortcut-help.open { display: flex; }
+        #shortcut-help .sh-card {
+            width: 100%; max-width: 30rem; max-height: calc(100vh - 3rem);
+            overflow-y: auto; border-radius: 1rem; padding: 1.5rem;
+            background: rgba(9, 9, 11, 0.97);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.60);
+        }
+        #shortcut-help .sh-head {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 1rem; margin-bottom: 1rem;
+        }
+        #shortcut-help .sh-kicker {
+            margin: 0 0 0.2rem; font-size: 0.65rem; font-weight: 700;
+            letter-spacing: 0.18em; text-transform: uppercase; color: #fb923c;
+        }
+        #shortcut-help h2 {
+            margin: 0; font-size: 1.15rem; font-weight: 700; color: #f4f4f5;
+        }
+        #shortcut-help .sh-close {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+            width: 2rem; height: 2rem; border-radius: 0.6rem; cursor: pointer;
+            color: #a1a1aa; background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            transition: color 0.2s, background 0.2s, border-color 0.2s;
+        }
+        #shortcut-help .sh-close:hover {
+            color: #fb923c; background: rgba(255, 255, 255, 0.10);
+            border-color: rgba(249, 115, 22, 0.45);
+        }
+        #shortcut-help .sh-list { display: flex; flex-direction: column; gap: 0.25rem; }
+        #shortcut-help .sh-row {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 1rem; padding: 0.42rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        #shortcut-help .sh-row:last-child { border-bottom: 0; }
+        #shortcut-help .sh-row span { font-size: 0.85rem; color: #d4d4d8; }
+        #shortcut-help .sh-keys { display: flex; gap: 0.25rem; flex-shrink: 0; }
+        #shortcut-help kbd {
+            min-width: 1.75rem; text-align: center; padding: 0.22rem 0.5rem;
+            border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.72rem; color: #e4e4e7;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+        }
+        #shortcut-help .sh-note {
+            margin: 1rem 0 0; font-size: 0.72rem; line-height: 1.45; color: #71717a;
+        }
+    </style>
+
+    <div id="shortcut-help" role="dialog" aria-modal="true"
+        aria-labelledby="shortcut-help-title" aria-hidden="true">
+        <div class="sh-card">
+            <div class="sh-head">
+                <div>
+                    <p class="sh-kicker">Hathor</p>
+                    <h2 id="shortcut-help-title">Keyboard shortcuts</h2>
+                </div>
+                <button type="button" class="sh-close" title="Close" aria-label="Close"
+                    onclick="window.closeShortcutHelp()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="sh-list">
+                <div class="sh-row"><span>Play / pause</span><span class="sh-keys"><kbd>Space</kbd></span></div>
+                <div class="sh-row"><span>Seek back / forward 10s</span><span class="sh-keys"><kbd>&#8592;</kbd><kbd>&#8594;</kbd></span></div>
+                <div class="sh-row"><span>Volume up / down</span><span class="sh-keys"><kbd>&#8593;</kbd><kbd>&#8595;</kbd></span></div>
+                <div class="sh-row"><span>Next / previous (chapter-aware on podcasts)</span><span class="sh-keys"><kbd>n</kbd><kbd>p</kbd></span></div>
+                <div class="sh-row"><span>Previous / next chapter</span><span class="sh-keys"><kbd>[</kbd><kbd>]</kbd></span></div>
+                <div class="sh-row"><span>Mute / unmute</span><span class="sh-keys"><kbd>m</kbd></span></div>
+                <div class="sh-row"><span>Toggle shuffle</span><span class="sh-keys"><kbd>s</kbd></span></div>
+                <div class="sh-row"><span>Toggle repeat</span><span class="sh-keys"><kbd>r</kbd></span></div>
+                <div class="sh-row"><span>This shortcut list</span><span class="sh-keys"><kbd>?</kbd></span></div>
+            </div>
+            <p class="sh-note">Shortcuts pause while typing or when a dialog is open. On podcasts with chapters, track keys jump chapters first.</p>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const overlay = document.getElementById('shortcut-help');
+            if (!overlay) return;
+            let lastFocus = null;
+            function setOpen(open) {
+                if (open) lastFocus = document.activeElement;
+                // Move focus out before hiding the dialog from assistive
+                // tech; Chromium blocks aria-hidden on a focused subtree.
+                if (!open && overlay.contains(document.activeElement)) {
+                    document.activeElement.blur();
+                }
+                overlay.classList.toggle('open', open);
+                overlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+                if (open) {
+                    const closeBtn = overlay.querySelector('.sh-close');
+                    if (closeBtn) closeBtn.focus();
+                } else if (lastFocus && typeof lastFocus.focus === 'function') {
+                    lastFocus.focus();
+                    lastFocus = null;
+                }
+            }
+            window.openShortcutHelp = function () { setOpen(true); };
+            window.closeShortcutHelp = function () { setOpen(false); };
+            window.toggleShortcutHelp = function () {
+                setOpen(!overlay.classList.contains('open'));
+            };
+            overlay.addEventListener('click', function (e) {
+                if (e.target === overlay) setOpen(false);
+            });
+        })();
+    </script>
 
 </body>
 

@@ -34,24 +34,29 @@ in the `podcastChapters` section (closed in the chapters slice).
 
 1. **New `services/api_sync.py`** — stdlib-only (`urllib`) HTTP client:
    - `api_configured()` → `HATHOR_API_URL` + `HATHOR_API_KEY` both set.
-   - `ApiSyncClient.pull_once(db)` — `GET delta?cursor=` → reuse the existing
-     merge semantics from `sync_remote_to_local_and_download` (upserts,
-     link reconcile, `Daily_Mix` adopt) → stream missing files via
-     `GET sync/files/{file}` to the exact remote filename → save cursor.
-   - `ApiSyncClient.push_once(db)` — collect local rows + `Sync_Deletions`
-     tombstones → `POST import` → `PUT sync/files/{file}` for files the
-     server lacks → clear sent tombstones only on success.
-   - Scan (`sync_local_songs_to_db` / `sync_local_podcasts_to_db`) untouched.
+   - `ApiSyncClient.pull_once(library)` — `GET delta?cursor=` → reuse the
+     existing merge semantics (upserts, link reconcile, `Daily_Mix` adopt)
+     → stream missing files via `GET sync/files/{file}` to the exact remote
+     filename → save the library's cursor. `library` is `"songs"`,
+     `"podcasts"`, or `"all"`; scoped pulls filter sections and tombstones.
+   - `ApiSyncClient.push_once(library)` — collect that library's local rows
+     + `Sync_Deletions` tombstones → `POST import` → `PUT
+     sync/files/{file}` for files the server lacks → clear the sent
+     tombstones (that library only) on success.
+   - Push first runs `sync_local_songs_to_db` / `sync_local_podcasts_to_db`
+     for the selected library (folded in from the old "Sync Now" button).
 2. **Config** — `.env`: `HATHOR_API_URL=http://<server>:5051`,
    `HATHOR_API_KEY=hth_...` (implemented: `sync_backend()` in
    `services/api_sync.py`). The old `sync.py` (PyMySQL) leg is deleted;
    `PyMySQL` dropped from `requirements.txt`.
-3. **Cursor store** — `sync_cursor.txt` next to `music_player.db`
-   (avoids DDL churn; history still uses incremental `MAX(id)` semantics
-   server-side).
-4. **UI** — no changes: Settings Push/Fetch buttons keep calling
-   `sync_local_to_remote` / `sync_remote_to_local_and_download`; `api.py`
-   routes to the API client when configured.
+3. **Cursor store** — `sync_cursor_songs.txt` / `sync_cursor_podcasts.txt`
+   next to `music_player.db` (plus `sync_cursor.txt` for `"all"`), so the
+   two Settings rows never skip each other's changes.
+4. **UI** — Settings has two library rows (**Audios**, **Podcasts**), each
+   with **Push** / **Pull** and a clickable folder path + **Change** link.
+   Buttons call `sync_local_to_remote(library)` /
+   `sync_remote_to_local_and_download(library)`; `api.py` routes to the API
+   client when configured.
 
 ## Android — IMPLEMENTED (same contract, stdlib HttpURLConnection)
 
