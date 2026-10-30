@@ -2832,6 +2832,12 @@
   .active\:scale-\[0\.98\]:active {
     scale: 0.98;
   }
+  .disabled\:cursor-wait:disabled {
+    cursor: wait;
+  }
+  .disabled\:opacity-60:disabled {
+    opacity: 60%;
+  }
   @media (width >= 40rem) {
     .sm\:top-4 {
       top: calc(var(--spacing) * 4);
@@ -2865,9 +2871,6 @@
     }
     .sm\:w-20 {
       width: calc(var(--spacing) * 20);
-    }
-    .sm\:w-28 {
-      width: calc(var(--spacing) * 28);
     }
     .sm\:w-40 {
       width: calc(var(--spacing) * 40);
