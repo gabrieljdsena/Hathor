@@ -32,6 +32,7 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<PlaylistDto>> Create(
         [FromBody] CreatePlaylistRequest body, CancellationToken ct)
     {
@@ -49,6 +50,7 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpPut("{id:long}")]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<PlaylistDto>> Update(
         long id, [FromBody] UpdatePlaylistRequest body, CancellationToken ct)
     {
@@ -120,6 +122,7 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpPost("{id:long}/cover")]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<PlaylistDto>> SetCover(
         long id, [FromBody] PlaylistCoverRequest body, CancellationToken ct)
     {

@@ -153,7 +153,7 @@ public sealed class CreatePlaylistHandler(IPlaylistRepository playlists)
             UserId = cmd.UserId,
             Title = cmd.Title.Trim(),
             Description = cmd.Description,
-            Thumbnail = cmd.Cover,
+            Thumbnail = PlaylistCover.Normalize(cmd.Cover),
         };
         await playlists.AddAsync(playlist, ct);
         await playlists.SaveChangesAsync(ct);
@@ -177,7 +177,7 @@ public sealed class UpdatePlaylistHandler(IPlaylistRepository playlists)
         if (cmd.Title is not null) playlist.Title = cmd.Title.Trim();
         if (cmd.Description is not null) playlist.Description = cmd.Description;
         if (cmd.Thumbnail == RemoveThumbnailSentinel) playlist.Thumbnail = null;
-        else if (cmd.Thumbnail is not null) playlist.Thumbnail = cmd.Thumbnail;
+        else if (cmd.Thumbnail is not null) playlist.Thumbnail = PlaylistCover.Normalize(cmd.Thumbnail);
         await playlists.SaveChangesAsync(ct);
         return new PlaylistDto(playlist.Id, playlist.Title, playlist.Description, playlist.Thumbnail);
     }

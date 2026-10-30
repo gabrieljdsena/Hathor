@@ -1,4 +1,5 @@
 using Hathor.Application.Ports;
+using Hathor.Application.Playlists;
 using Hathor.Application.Sync;
 using Hathor.Domain.Entities;
 using Hathor.Infrastructure.Ef;
@@ -315,13 +316,14 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
         if (s.Playlists is not null)
             foreach (var r in s.Playlists)
             {
+                var thumbnail = PlaylistCover.Normalize(r.Thumbnail);
                 var existing = await db.Playlists.FindAsync([r.Id], ct);
                 if (existing is null)
                 {
                     await db.Playlists.AddAsync(new Playlist
                     {
                         Id = r.Id, UserId = userId, Title = r.Title,
-                        Description = r.Description, Thumbnail = r.Thumbnail,
+                        Description = r.Description, Thumbnail = thumbnail,
                     }, ct);
                     counts[2]++;
                 }
@@ -329,7 +331,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 {
                     existing.Title = r.Title;
                     existing.Description = r.Description;
-                    existing.Thumbnail = r.Thumbnail;
+                    existing.Thumbnail = thumbnail;
                 }
                 else
                 {
@@ -337,7 +339,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     var clone = new Playlist
                     {
                         UserId = userId, Title = r.Title,
-                        Description = r.Description, Thumbnail = r.Thumbnail,
+                        Description = r.Description, Thumbnail = thumbnail,
                     };
                     await db.Playlists.AddAsync(clone, ct);
                     await db.SaveChangesAsync(ct);

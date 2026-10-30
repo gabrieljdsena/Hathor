@@ -21,7 +21,8 @@ Rules all apps follow:
   history stays exact via id comparison; `UpdatedAtUtc` is server-stamped on
   every write (single DbContext hook — no write path sets it manually)
 - History sync is incremental past remote `MAX(id)`
-- `Playlists.thumbnail`: TEXT (base64/url), BLOB normalized to UTF-8 text for remote
+- `Playlists.thumbnail`: TEXT (base64/url), BLOB normalized to UTF-8 text for remote;
+  the web API re-encodes data URLs to a max-800px JPEG before storing (sync shape unchanged)
 - Daily mix: newest-wins, prune `< today`
 - Files referenced by `file` key only; binaries on disk/S3, never in DB JSON
 - `lyrics` carries `offset_ms` (INT, ms, ±20000, default 0): highlight-timing

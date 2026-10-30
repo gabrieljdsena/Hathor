@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, deviceId, deviceLabel } from '../api/client'
@@ -32,6 +32,7 @@ function NavItem({
   label,
   collapsed,
   onNavigate,
+  action,
 }: {
   to: string
   end?: boolean
@@ -39,8 +40,9 @@ function NavItem({
   label: string
   collapsed: boolean
   onNavigate?: () => void
+  action?: ReactNode
 }) {
-  return (
+  const link = (
     <NavLink
       to={to}
       end={end}
@@ -57,6 +59,13 @@ function NavItem({
       />
       {!collapsed && <span className="font-medium tracking-wide truncate">{label}</span>}
     </NavLink>
+  )
+  if (!action) return link
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex-1 min-w-0">{link}</div>
+      {action}
+    </div>
   )
 }
 
@@ -84,6 +93,9 @@ export default function Shell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.settings })
+  // Playlist submenu under the sidebar item, expanded on load.
+  const [playlistsOpen, setPlaylistsOpen] = useState(true)
+  const { data: playlists } = useQuery({ queryKey: ['playlists'], queryFn: api.playlists })
   // RouteErrorBoundary reset source: navigating always clears a view crash.
   const { pathname } = useLocation()
 
@@ -226,7 +238,11 @@ export default function Shell() {
       <div
         id="page"
         className="flex flex-row w-full flex-1"
-        style={{ minHeight: 0, marginBottom: 'var(--controller-height, 112px)' }}
+        style={{
+          minHeight: 0,
+          marginBottom: 'var(--controller-height, 112px)',
+          '--sidebar-width': narrow ? '0px' : collapsed ? '5rem' : '16rem',
+        } as CSSProperties}
       >
         {/* Phone-only drawer backdrop (desktop: never rendered). */}
         {narrow && mobileOpen && (
@@ -292,7 +308,68 @@ export default function Shell() {
             <NavItem to="/download" icon="download" label="Download" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/discover" icon="compass" label="Discover" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/podcasts" icon="mic" label="Podcasts" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
-            <NavItem to="/playlists" icon="list" label="Playlists" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
+            <NavItem
+              to="/playlists"
+              icon="list"
+              label="Playlists"
+              collapsed={!narrow && collapsed}
+              onNavigate={() => setMobileOpen(false)}
+              action={
+                !narrow && collapsed ? undefined : (
+                  <button
+                    onClick={() => setPlaylistsOpen((v) => !v)}
+                    title={playlistsOpen ? 'Collapse playlists' : 'Expand playlists'}
+                    aria-label={playlistsOpen ? 'Collapse playlists' : 'Expand playlists'}
+                    aria-expanded={playlistsOpen}
+                    aria-controls="sidebar-playlists"
+                    className="text-zinc-500 hover:text-orange-400 p-2 rounded-lg hover:bg-white/10 transition-all duration-300 flex-shrink-0 outline-none cursor-pointer"
+                  >
+                    <Icon
+                      name="chevronDown"
+                      className={`w-4 h-4 transition-transform duration-300 ${
+                        playlistsOpen ? '' : '-rotate-90'
+                      }`}
+                    />
+                  </button>
+                )
+              }
+            />
+            {narrow || !collapsed ? (
+              <div
+                id="sidebar-playlists"
+                className={`flex flex-col gap-1 ${playlistsOpen ? '' : 'hidden'}`}
+              >
+                {(playlists ?? []).map((p) => (
+                  <NavLink
+                    key={p.id}
+                    to={`/playlists/${p.id}`}
+                    title={p.title}
+                    onClick={() => setMobileOpen(false)}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'text-orange-400 bg-orange-500/10 font-medium'
+                          : 'text-zinc-500 hover:text-white hover:bg-orange-500/10'
+                      }`
+                    }
+                  >
+                    {p.thumbnail ? (
+                      <img
+                        src={p.thumbnail}
+                        alt=""
+                        loading="lazy"
+                        className="w-6 h-6 rounded object-cover flex-shrink-0 border border-white/5"
+                      />
+                    ) : (
+                      <span className="w-6 h-6 rounded bg-zinc-800 flex items-center justify-center flex-shrink-0">
+                        <Icon name="list" className="w-3.5 h-3.5 text-zinc-600" />
+                      </span>
+                    )}
+                    <span className="truncate">{p.title}</span>
+                  </NavLink>
+                ))}
+              </div>
+            ) : null}
             <NavItem to="/history" icon="clock" label="History" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/artists" icon="users" label="Artists" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/albums" icon="tag" label="Albums" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
