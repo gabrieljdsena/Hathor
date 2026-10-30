@@ -28,7 +28,7 @@ function OffsetControl({
   }
   return (
     <div
-      className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5"
+      className="flex shrink-0 items-center gap-1 px-2 py-1 rounded-full bg-white/5 whitespace-nowrap"
       title="Shift lyric timing: positive delays the highlight, negative advances it"
     >
       <button
@@ -138,16 +138,16 @@ export default function LyricsSheet({
         queueOpen ? 'sm:right-80' : ''
       }`}
     >
-      <div className="absolute top-0 inset-x-0 z-10 flex items-center justify-between px-5 sm:px-8 h-16">
+      <div className="relative z-10 flex w-full shrink-0 items-start justify-between gap-2 px-4 py-2 sm:absolute sm:top-0 sm:inset-x-0 sm:h-16 sm:items-center sm:px-8 sm:py-0">
         <button
           onClick={onClose}
           title="Back to Now Playing"
-          className="flex items-center gap-2 text-zinc-400 hover:text-white transition-all duration-200 px-3 py-2 rounded-xl hover:bg-white/10 cursor-pointer"
+          className="flex shrink-0 items-center gap-2 text-zinc-400 hover:text-white transition-all duration-200 px-3 py-2 rounded-xl hover:bg-white/10 cursor-pointer"
         >
           <Icon name="x" className="w-5 h-5" />
           <span className="text-xs font-semibold uppercase tracking-[0.2em] hidden sm:inline">Now Playing</span>
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           <span className="text-xs text-zinc-500 uppercase tracking-widest hidden sm:inline">
             {song ? `${song.title} • ${song.artist}` : ''}
           </span>
@@ -158,7 +158,7 @@ export default function LyricsSheet({
                 setShowSearch((v) => !v)
               }}
               title={hasLyrics ? 'Search / replace lyrics' : 'Search lyrics'}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
                 showSearch ? 'bg-orange-500 text-white' : 'bg-white/5 text-zinc-400 hover:text-white'
               }`}
             >
@@ -175,7 +175,7 @@ export default function LyricsSheet({
           <button
             onClick={() => setRomaji((v) => !v)}
             title="Toggle romaji"
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
               romaji ? 'bg-orange-500 text-white' : 'bg-white/5 text-zinc-400 hover:text-white'
             }`}
           >
@@ -184,7 +184,7 @@ export default function LyricsSheet({
         </div>
       </div>
 
-      <div className="relative w-full max-w-[88rem] mx-auto flex-1 min-h-0 px-4 pt-20 pb-24 flex flex-col">
+      <div className="relative w-full max-w-[88rem] mx-auto flex-1 min-h-0 px-4 pt-4 pb-24 flex flex-col sm:pt-20">
         {!song ? (
           <p className="text-zinc-500 text-xl font-semibold text-center">Select a song to load lyrics...</p>
         ) : showSearch ? (
