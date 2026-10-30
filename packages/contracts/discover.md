@@ -196,6 +196,12 @@ share this wire shape and these rules.
     only above the sample/margin thresholds; tuned weights change the
     Discover cache version immediately. Stale models
     (`TuningMaxAgeDays`) fall back to defaults. No cross-user model is built.
+17. **Popularity floor**: open-data candidates below the effective floor
+    (default 10,000 global listens; lowered for niche profiles via
+    `PopularityFloorProfileMargin`) are dropped. If the filtered pool is small,
+    Discover runs the same-artist/chart fallback sources, which are exempt.
+    Known low-popularity tracks that survive in a fallback-only pool get a
+    `0.1` popularity score; unknown counts stay neutral.
 
 ## Configuration (web)
 
@@ -232,6 +238,9 @@ share this wire shape and these rules.
   "AudioWeight": 0.10,
   "PopularityMin": 10000,
   "PopularityMax": 2000000,
+  "PopularityFilterEnabled": true,
+  "PopularityFloor": 10000,
+  "PopularityFloorProfileMargin": 1.0,
   "PopularityProfileSeeds": 5,
   "PopularityProfileMinSamples": 3,
   "PopularityProfileCacheDays": 7,

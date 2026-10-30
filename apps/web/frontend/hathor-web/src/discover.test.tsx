@@ -1,6 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import Discover from './views/Discover'
 import type { Discover as DiscoverPayload } from './api/client'
 
@@ -67,6 +73,10 @@ function renderDiscover() {
     </QueryClientProvider>,
   )
 }
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('Discover view', () => {
   it('renders suggestion cards with source badges', async () => {
@@ -382,5 +392,96 @@ describe('Discover view', () => {
     fireEvent.click(screen.getByText('Cancel'))
     expect(calls.some((c) => String(c.input).endsWith('/downloads'))).toBe(false)
     expect(screen.queryByText('Already in your library')).not.toBeInTheDocument()
+  })
+
+  it('streams a Play all queue without downloading', async () => {
+    const calls = stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [
+          {
+            id: 'vid123',
+            title: 'Midnight City',
+            uploader: 'M83',
+            durationSec: 240,
+            thumbnail: '',
+          },
+        ]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: 'https://audio/1' }
+      }
+      if (url.endsWith('/discover/feedback')) return {}
+      return payload
+    })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play all suggestions' }))
+
+    const region = await screen.findByRole('region', {
+      name: 'Discover preview player',
+    })
+    await waitFor(() => {
+      expect(within(region).getByText('Midnight City')).toBeInTheDocument()
+      expect(within(region).getByText('1 / 3')).toBeInTheDocument()
+    })
+    expect(
+      calls.some(
+        (c) =>
+          String(c.input).endsWith('/downloads') && c.init?.method === 'POST',
+      ),
+    ).toBe(false)
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            String(c.input).endsWith('/discover/feedback') &&
+            String(c.init?.body).includes('"event":"preview"'),
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('starts the preview queue from a card play button', async () => {
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [
+          {
+            id: 'vid123',
+            title: 'Chart Hit',
+            uploader: 'Somebody',
+            durationSec: 240,
+            thumbnail: '',
+          },
+        ]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: 'https://audio/1' }
+      }
+      if (url.endsWith('/discover/feedback')) return {}
+      return payload
+    })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+
+    renderDiscover()
+    await screen.findByText('Chart Hit')
+
+    fireEvent.click(screen.getByLabelText('Play Chart Hit by Somebody'))
+
+    const region = await screen.findByRole('region', {
+      name: 'Discover preview player',
+    })
+    await waitFor(() => {
+      expect(within(region).getByText('Chart Hit')).toBeInTheDocument()
+      expect(within(region).getByText('1 / 2')).toBeInTheDocument()
+    })
   })
 })

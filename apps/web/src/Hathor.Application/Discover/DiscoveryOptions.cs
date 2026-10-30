@@ -40,6 +40,13 @@ public sealed class DiscoveryOptions
     public long PopularityMin { get; set; } = 10_000;
     public long PopularityMax { get; set; } = 2_000_000;
 
+    // Candidate floor: drop open-data songs below this global listen count
+    // when enough known-popular candidates remain. Fallback artist/chart
+    // items are exempt.
+    public bool PopularityFilterEnabled { get; set; } = true;
+    public long PopularityFloor { get; set; } = 10_000;
+    public double PopularityFloorProfileMargin { get; set; } = 1.0;
+
     // Evaluation-driven tuning (applies a stored per-user model only after
     // enough labeled snapshots; stale models fall back to defaults).
     public bool TuningEnabled { get; set; } = true;
@@ -96,6 +103,7 @@ public sealed class DiscoveryOptions
         MaxPerArtist = MaxPerArtist,
         PopularityMin = PopularityMin,
         PopularityMax = PopularityMax,
+        PopularityFloor = PopularityFloor,
         AudioWeight = AudioWeight,
         LikedArtistBoost = LikedArtistBoost,
         LikedSeedBoost = LikedSeedBoost,

@@ -37,7 +37,7 @@ public sealed class DiscoverService(
     IRankingOptionsProvider rankingOptions,
     DiscoveryOptions options)
 {
-    public const string ModelVersion = "heuristic-v5";
+    public const string ModelVersion = "heuristic-v6";
 
     public async Task<DiscoverDto> GetAsync(Guid userId, bool forceRegenerate, CancellationToken ct)
     {
@@ -94,19 +94,6 @@ public sealed class DiscoverService(
         {
             if (budget.IsCancellationRequested) break;
             await CollectAsync(source, profile, candidates, budget.Token, ct);
-        }
-
-        // Charts/same-artist expansion are cold-start fallbacks only. They
-        // never dominate a personalized response.
-        var fallbacksRan = false;
-        if (profile.IsEmpty || candidates.Count < options.FallbackThreshold)
-        {
-            fallbacksRan = true;
-            foreach (var source in fallback)
-            {
-                if (budget.IsCancellationRequested) break;
-                await CollectAsync(source, profile, candidates, budget.Token, ct);
-            }
         }
 
         // CLAP content similarity is optional and best-effort: no cached
@@ -170,12 +157,39 @@ public sealed class DiscoverService(
             // Popularity provider failure must not break Discover.
         }
 
+        // Popularity floor: drop open-data obscurities when enough known
+        // candidates remain. Fallback artist/chart picks are exempt.
+        var effectiveFloor = EffectivePopularityFloor(popularityModel);
+        var rankingForRun = rankingOptions with
+        {
+            PopularityFloor = options.PopularityFilterEnabled ? effectiveFloor : 0,
+        };
+        if (options.PopularityFilterEnabled && candidates.Count > 0)
+        {
+            candidates = candidates
+                .Where(c => KeepByPopularity(c, effectiveFloor))
+                .ToList();
+        }
+
+        // Charts/same-artist expansion are cold-start fallbacks only. Run
+        // them when the primary pool is small after popularity filtering.
+        var fallbacksRan = false;
+        if (profile.IsEmpty || candidates.Count < options.FallbackThreshold)
+        {
+            fallbacksRan = true;
+            foreach (var source in fallback)
+            {
+                if (budget.IsCancellationRequested) break;
+                await CollectAsync(source, profile, candidates, budget.Token, ct);
+            }
+        }
+
         var library = await taste.GetLibraryPairsAsync(userId, ct);
         var inFlight = await taste.GetActiveDownloadPairsAsync(userId, ct);
         var ranked = DiscoverRanker.Rank(
             profile, candidates, library, inFlight, dismissed: null,
             feedback: signals, popularity: popularityModel,
-            rankingOptions);
+            rankingForRun);
 
         // The open-data pool can be entirely owned. Give the fallback a
         // chance before returning an empty Discover.
@@ -189,7 +203,7 @@ public sealed class DiscoverService(
             ranked = DiscoverRanker.Rank(
                 profile, candidates, library, inFlight, dismissed: null,
                 feedback: signals, popularity: popularityModel,
-                rankingOptions);
+                rankingForRun);
         }
 
         // Snapshot the pre-resolution ranking (features + order) for offline
@@ -219,6 +233,31 @@ public sealed class DiscoverService(
         await impressions.SaveAsync(userId, date, ModelVersion,
             JsonSerializer.Serialize(snapshot), ct);
         await impressions.SaveChangesAsync(ct);
+    }
+
+    private long EffectivePopularityFloor(PopularityProfile? profile)
+    {
+        var floor = Math.Max(1, options.PopularityFloor);
+        if (profile is not null)
+        {
+            // Respect a niche but coherent taste profile: never filter much
+            // below the user's own median popularity.
+            var relative = (long)Math.Max(1,
+                Math.Pow(10, profile.MedianLog -
+                    Math.Max(0, options.PopularityFloorProfileMargin)));
+            floor = Math.Min(floor, relative);
+        }
+        return Math.Max(1, floor);
+    }
+
+    private static bool KeepByPopularity(DiscoverCandidate candidate, long floor)
+    {
+        // Same-artist and chart/popular fallback items are not "unknown
+        // artists"; the floor targets open-data expansion candidates.
+        if (candidate.Source is DiscoverSources.Artist or DiscoverSources.Chart
+            or DiscoverSources.Popular or DiscoverSources.Llm)
+            return true;
+        return candidate.Popularity >= floor;
     }
 
     private async Task CollectAsync(

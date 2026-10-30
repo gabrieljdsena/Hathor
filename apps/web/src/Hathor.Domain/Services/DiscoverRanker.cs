@@ -83,6 +83,8 @@ public sealed record DiscoverRankingOptions
     public int MaxItems { get; init; } = 50;
     public long PopularityMin { get; init; } = 10_000;
     public long PopularityMax { get; init; } = 2_000_000;
+    // Below this count is treated as obscure (0 disables the penalty).
+    public long PopularityFloor { get; init; } = 1_000;
 
     // Implicit feedback boosts (see DiscoverFeedbackSignals).
     public double LikedArtistBoost { get; init; } = 0.08;
@@ -317,6 +319,8 @@ public static partial class DiscoverRanker
     {
         // Unknown popularity is neutral: obscure tracks must not be punished.
         if (popularity <= 0) return 0.5;
+        if (options.PopularityFloor > 0 && popularity < options.PopularityFloor)
+            return 0.1;
 
         // Personalized band: stay close to the user's historical median
         // (log10 listen count) instead of a fixed mainstream target.

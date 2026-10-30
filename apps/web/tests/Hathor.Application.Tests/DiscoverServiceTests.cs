@@ -195,6 +195,8 @@ public sealed class DiscoverServiceTests
     {
         TimeBudgetSec = 5,
         FallbackThreshold = fallbackThreshold,
+        // Most tests use synthetic candidates without popularity counts.
+        PopularityFilterEnabled = false,
     };
 
     private static DiscoverService Service(
@@ -439,6 +441,87 @@ public sealed class DiscoverServiceTests
         items.Should().ContainSingle();
         items![0].Features.Should().NotBeNull();
         items[0].Features.BaseScore.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task GetAsync_PopularityFilter_DropsObscureOpenData()
+    {
+        var userId = NewUserId();
+        var (taste, cache) = Fakes(userId, [Artist("M83", 10)]);
+        var source = new FakeSource("open", false,
+        [
+            Cand("Obscure", "Artist A"),
+            Cand("Popular", "Artist B"),
+        ]);
+        var popularity = Substitute.For<ITrackPopularityService>();
+        popularity.GetAsync(Arg.Any<IReadOnlyList<string>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, long>
+            {
+                ["mb-Obscure"] = 10,
+                ["mb-Popular"] = 100_000,
+            });
+        var options = Options();
+        options.PopularityFilterEnabled = true;
+        options.PopularityFloor = 1_000;
+
+        var dto = await Service(taste, [source], cache,
+                popularity: popularity, options: options)
+            .GetAsync(userId, forceRegenerate: false, CancellationToken.None);
+
+        dto.Items.Should().ContainSingle(i => i.Title == "Popular");
+        dto.Items.Should().NotContain(i => i.Title == "Obscure");
+    }
+
+    [Fact]
+    public async Task GetAsync_PopularityFilter_KeepsFallbackItems()
+    {
+        var userId = NewUserId();
+        var (taste, cache) = Fakes(userId, [Artist("M83", 10)]);
+        var source = new FakeSource("open", false,
+        [
+            Cand("Obscure", "Artist A"),
+            Cand("Chart Song", "Artist B", DiscoverSources.Chart) with { Mbid = null },
+        ]);
+        var popularity = Substitute.For<ITrackPopularityService>();
+        popularity.GetAsync(Arg.Any<IReadOnlyList<string>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, long> { ["mb-Obscure"] = 10 });
+        var options = Options();
+        options.PopularityFilterEnabled = true;
+        options.PopularityFloor = 1_000;
+
+        var dto = await Service(taste, [source], cache,
+                popularity: popularity, options: options)
+            .GetAsync(userId, forceRegenerate: false, CancellationToken.None);
+
+        dto.Items.Should().Contain(i => i.Title == "Chart Song");
+        dto.Items.Should().NotContain(i => i.Title == "Obscure");
+    }
+
+    [Fact]
+    public async Task GetAsync_PopularityFilter_UsesFallbackWhenPrimaryEmpty()
+    {
+        var userId = NewUserId();
+        var (taste, cache) = Fakes(userId, [Artist("M83", 10)]);
+        var primary = new FakeSource("open", false,
+            [Cand("Obscure", "Artist A")]);
+        var fallback = new FakeSource("fallback", true,
+            [Cand("Chart Song", "Artist B", DiscoverSources.Chart) with { Mbid = null }]);
+        var popularity = Substitute.For<ITrackPopularityService>();
+        popularity.GetAsync(Arg.Any<IReadOnlyList<string>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, long> { ["mb-Obscure"] = 10 });
+        var options = Options();
+        options.PopularityFilterEnabled = true;
+        options.PopularityFloor = 1_000;
+
+        var dto = await Service(taste, [primary, fallback], cache,
+                popularity: popularity, options: options)
+            .GetAsync(userId, forceRegenerate: false, CancellationToken.None);
+
+        dto.Items.Should().ContainSingle(i => i.Title == "Chart Song");
+        dto.Items.Should().NotContain(i => i.Title == "Obscure");
     }
 
     [Fact]

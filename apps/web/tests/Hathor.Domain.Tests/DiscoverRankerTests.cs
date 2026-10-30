@@ -325,6 +325,22 @@ public sealed class DiscoverRankerTests
     }
 
     [Fact]
+    public void Rank_PopularityFloor_PenalizesObscureTracks()
+    {
+        var candidates = new List<DiscoverCandidate>
+        {
+            Cand("Obscure", "Artist A") with { Popularity = 10 },
+            Cand("Popular", "Artist B") with { Popularity = 100_000 },
+        };
+        var options = new DiscoverRankingOptions { PopularityFloor = 1_000 };
+
+        var ranked = DiscoverRanker.Rank(
+            Taste(("Seed", 10)), candidates, [], [], options: options);
+
+        ranked[0].Title.Should().Be("Popular");
+    }
+
+    [Fact]
     public void Rank_PopularityProfile_PrefersUserBand()
     {
         var candidates = new List<DiscoverCandidate>

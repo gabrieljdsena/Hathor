@@ -8,6 +8,7 @@ import {
   type DownloadJob,
 } from '../api/client'
 import DiscoverInsightsCard from '../components/DiscoverInsightsCard'
+import DiscoverPreviewPlayer from '../components/DiscoverPreviewPlayer'
 import CoverArt from '../components/ui/CoverArt'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Icon from '../components/ui/icons'
@@ -16,6 +17,7 @@ import VideoPreview from '../components/ui/VideoPreview'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
+import { useDiscoverPreviewQueue } from '../hooks/useDiscoverPreviewQueue'
 
 // Discover view: out-of-library recommendations (packages/contracts/discover.md).
 // Cards carry iTunes artwork + source badge; download reuses the normal
@@ -83,6 +85,7 @@ function DiscoverCard({
   progress,
   onDownload,
   onPreview,
+  onPlay,
   onDismiss,
 }: {
   item: DiscoverItem
@@ -92,6 +95,7 @@ function DiscoverCard({
   progress: number | null
   onDownload: () => void
   onPreview: () => void
+  onPlay: () => void
   onDismiss: () => void
 }) {
   return (
@@ -111,6 +115,14 @@ function DiscoverCard({
             {SOURCE_LABEL[item.source] ?? item.source}
           </span>
         </div>
+        <button
+          onClick={onPlay}
+          title={`Play ${item.title}`}
+          aria-label={`Play ${item.title} by ${item.artist}`}
+          className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-orange-500/90 hover:bg-orange-400 text-white shadow-xl shadow-orange-500/30 backdrop-blur-sm flex items-center justify-center transition-all duration-300 cursor-pointer opacity-90 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+        >
+          <Icon name="play" className="w-5 h-5 ml-0.5" />
+        </button>
         <button
           onClick={onPreview}
           disabled={previewPending}
@@ -192,6 +204,25 @@ export default function Discover() {
   const [preview, setPreview] = useState<PreviewState | null>(null)
   const debounced = useDebouncedValue(search)
 
+  const sendFeedback = (item: DiscoverItem, event: DiscoverFeedbackEvent) => {
+    void api
+      .submitDiscoverFeedback({
+        title: item.title,
+        artist: item.artist,
+        mbid: item.mbid ?? null,
+        source: item.source,
+        event,
+        seedArtist: item.seedArtist ?? null,
+        score: item.score,
+      })
+      .catch(() => {
+        // Feedback is best-effort; never block playback/download UI.
+      })
+  }
+  const previewQueue = useDiscoverPreviewQueue((item) =>
+    sendFeedback(item, 'preview'),
+  )
+
   // Job progress per card, matched by submitted title/artist (the backend
   // echoes both onto the job). Key includes the limit: the Download view
   // polls the same endpoint with limit 8, and sharing one key served each
@@ -258,22 +289,6 @@ export default function Discover() {
       })
       .finally(() => {
         setRefreshing(false)
-      })
-  }
-
-  const sendFeedback = (item: DiscoverItem, event: DiscoverFeedbackEvent) => {
-    void api
-      .submitDiscoverFeedback({
-        title: item.title,
-        artist: item.artist,
-        mbid: item.mbid ?? null,
-        source: item.source,
-        event,
-        seedArtist: item.seedArtist ?? null,
-        score: item.score,
-      })
-      .catch(() => {
-        // Feedback is best-effort; never block playback/download UI.
       })
   }
 
@@ -421,6 +436,21 @@ export default function Discover() {
             }
           />
           <div className="ml-auto flex items-center gap-2">
+            {data && items.length > 0 && (
+              <button
+                onClick={() => void previewQueue.start(items)}
+                aria-label="Play all suggestions"
+                title={
+                  items.length > 20
+                    ? 'Preview the first 20 visible suggestions'
+                    : 'Preview all visible suggestions'
+                }
+                className="inline-flex items-center gap-2 rounded-full bg-orange-500 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-widest text-white shadow-lg shadow-orange-500/20 transition-colors hover:bg-orange-400 cursor-pointer"
+              >
+                <Icon name="play" className="w-3.5 h-3.5" />
+                Play all
+              </button>
+            )}
             {data && data.items.length > 0 && (
               <button
                 onClick={refresh}
@@ -485,7 +515,7 @@ export default function Discover() {
       ) : (
         <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 py-6">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {items.map((item) => (
+            {items.map((item, index) => (
               <DiscoverCard
                 key={`${item.title} — ${item.artist}`}
                 item={item}
@@ -494,12 +524,18 @@ export default function Discover() {
                 progress={progressFor(item)}
                 onDownload={() => void download(item)}
                 onPreview={() => void previewItem(item)}
+                onPlay={() => void previewQueue.start(items, index)}
                 onDismiss={() => dismiss(item)}
               />
             ))}
           </div>
         </div>
       )}
+
+      {previewQueue.active && (
+        <div className="h-28 shrink-0" aria-hidden="true" />
+      )}
+      <DiscoverPreviewPlayer queue={previewQueue} />
 
       <Modal
         open={preview !== null}
