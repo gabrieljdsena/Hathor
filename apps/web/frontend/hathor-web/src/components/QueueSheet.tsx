@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type PlayerState } from '../api/client'
 import { usePlayer } from '../store/player'
+import { useAiDj } from '../store/aiDj'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import Pagination from './ui/Pagination'
@@ -20,6 +21,7 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
   const queueTotal = usePlayer((s) => s.queueTotal)
   const currentSong = usePlayer((s) => s.currentSong)
   const currentFile = currentSong?.file
+  const djActive = useAiDj((s) => s.state?.status === 'active')
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
   const [page, setPage] = useState(1)
@@ -51,6 +53,7 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
   const mutate = (p: Promise<PlayerState>) =>
     void p.then((s) => usePlayer.setState(s)).catch(() => {})
 
+  if (djActive) return null
   if (!open) return null
   return (
     <div
@@ -68,7 +71,7 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
           )}
         </h2>
         <div className="flex items-center gap-2">
-          {queue.length > 0 && (
+          {queue.length > 0 && !djActive && (
             <button
               onClick={() => mutate(api.queueClear())}
               className="text-xs font-medium text-zinc-500 hover:text-orange-400 transition-colors uppercase tracking-wider cursor-pointer"
@@ -92,6 +95,11 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
             <ChapterSkip file={currentFile} />
           </div>
         )}
+        {djActive && (
+          <div className="mb-3 rounded-xl border border-orange-500/20 bg-orange-500/[0.06] p-3 text-xs text-orange-300">
+            Vohithe is curating this set. Stop the DJ from the AI DJ panel to edit the queue.
+          </div>
+        )}
         <div id="queue-body" className="flex flex-col gap-1">
           {queue.length === 0 && <p className="text-sm text-zinc-500 text-center py-8">Queue is empty</p>}
           {queue
@@ -102,8 +110,9 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
               return (
             <div
               key={`${song.file}-${i}`}
-              draggable
+              draggable={!djActive}
               onDragStart={(e) => {
+                if (djActive) return
                 e.dataTransfer.effectAllowed = 'move'
                 try {
                   e.dataTransfer.setData('text/plain', String(i))
@@ -157,7 +166,7 @@ export default function QueueSheet({ open, onClose }: { open: boolean; onClose: 
                 </div>
                 <div className="text-xs text-zinc-500 truncate">{song.artist}</div>
               </div>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className={`flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${djActive ? 'hidden' : ''}`}>
                 <button
                   title="Move up"
                   onClick={(e) => {

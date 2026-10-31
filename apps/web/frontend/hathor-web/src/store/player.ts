@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { api, deviceId, deviceLabel, type PlayerState, type QueueSource, type Song } from '../api/client'
 import { recordEndedPlayback, startPlaybackTelemetry } from '../audio/telemetry'
 import { engine, type EngineTrack } from '../audio/engine'
+import { useAiDj } from './aiDj'
 
 // Client playback store. Server PlaybackState is the source of truth
 // (pulled on load); the AudioEngine renders it with gapless handoff and
@@ -108,12 +109,123 @@ function toTrack(song: Song) {
   }
 }
 
+let djHoldNext = false
+let djHeldAtEnd = false
+
 export function nextForFade(): EngineTrack | null {
+  if (djHoldNext || djHeldAtEnd) return null
   const state = usePlayer.getState()
   if (state.repeat) return null
   const next = state.queue[0]
   return next ? toTrack(next) : null
 }
+
+function djTransitionUrls(): { urls: string[]; duck: number } | null {
+  const dj = useAiDj.getState().state
+  if (!dj || dj.status !== 'active' || !dj.currentBatch || !dj.nextBatch) return null
+  const outro = dj.currentBatch.outroClipIds ?? []
+  const intro = dj.nextBatch.introClipIds ?? []
+  if (outro.length === 0 || intro.length === 0) return null
+  return {
+    urls: [...outro, ...intro].map((id) => api.aiDjClipUrl(id)),
+    duck: dj.settings.duckLevel,
+  }
+}
+
+function maybeStartDjVoice(file: string): void {
+  const dj = useAiDj.getState().state
+  if (!dj || dj.status !== 'active' || !dj.currentBatch) return
+  const tracks = dj.currentBatch.tracks
+  if (tracks.length === 0) return
+  if (tracks[tracks.length - 1]?.file !== file) return
+  const transition = djTransitionUrls()
+  if (!transition) {
+    djHoldNext = true
+    useAiDj.getState().setWaiting(true)
+    return
+  }
+  djHoldNext = false
+  djHeldAtEnd = false
+  useAiDj.getState().setWaiting(false)
+  useAiDj.getState().setVoicePlaying(true)
+  engine.playVoice(transition.urls, transition.duck)
+}
+
+function tryResumeHeldDj(): void {
+  if (!djHoldNext && !djHeldAtEnd) return
+  const transition = djTransitionUrls()
+  if (!transition) {
+    useAiDj.getState().setWaiting(true)
+    return
+  }
+  const heldAtEnd = djHeldAtEnd
+  djHoldNext = false
+  djHeldAtEnd = false
+  useAiDj.getState().setWaiting(false)
+  useAiDj.getState().setVoicePlaying(true)
+  engine.playVoice(transition.urls, transition.duck, heldAtEnd
+    ? () => {
+        void api
+          .next(undefined, false)
+          .then((state) => {
+            usePlayer.setState(state)
+            usePlayer.getState().syncAudio()
+          })
+          .catch(() => {})
+      }
+    : undefined)
+}
+
+function holdDjAtBoundary(): boolean {
+  if (!djHoldNext && !djHeldAtEnd) return false
+  djHeldAtEnd = true
+  useAiDj.getState().setWaiting(true)
+  engine.pause()
+  usePlayer.setState({ isPlaying: false })
+  const file = usePlayer.getState().currentSong?.file ?? null
+  if (file) {
+    void api
+      .pause(engine.time(), file)
+      .then((state) => usePlayer.setState(state))
+      .catch(() => {})
+  }
+  return true
+}
+
+function resetDjHold(): void {
+  djHoldNext = false
+  djHeldAtEnd = false
+  useAiDj.getState().setWaiting(false)
+}
+
+export function releaseDjHold(): void {
+  resetDjHold()
+}
+
+function stopDjIfActive(): void {
+  resetDjHold()
+  if (useAiDj.getState().state?.status !== 'active') return
+  engine.stopVoice()
+  useAiDj.getState().setVoicePlaying(false)
+  void useAiDj.getState().stop()
+}
+
+engine.onVoiceEnded?.(() => useAiDj.getState().setVoicePlaying(false))
+useAiDj.subscribe((state) => {
+  const active = state.state?.status === 'active'
+  engine.setDjCue?.(
+    active ? state.state?.settings.voiceLeadSeconds ?? 10 : 0,
+    active ? maybeStartDjVoice : null,
+  )
+  if (active) {
+    tryResumeHeldDj()
+  } else {
+    const hadHold = djHoldNext || djHeldAtEnd
+    djHoldNext = false
+    djHeldAtEnd = false
+    if (hadHold || state.waiting) useAiDj.getState().setWaiting(false)
+  }
+})
 
 // Transport generation: every mutating call (playSong, toggle) claims a
 // number up front; each awaited response applies only while still current.
@@ -457,6 +569,7 @@ function requestNext(auto: boolean): void {
 // files that die moments after loading (corrupt batch / replay loop).
 // Exported for tests (the onEnded/onTailStuck wiring itself is module scope).
 export function autoAdvance(diedInstantly: boolean): void {
+  if (holdDjAtBoundary()) return
   if (noteAutoAdvance(diedInstantly)) {
     breakAdvanceChain()
     return
@@ -586,6 +699,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   },
 
   playSong: async (song, context, source) => {
+    if (source?.type !== 'ai_dj') stopDjIfActive()
     // populate_queue_from_list equivalent, then play (two headless calls).
     // isPodcast keeps episodes out of music history (desktop rule).
     // Start local audio immediately (user gesture unlocks the AudioContext)
@@ -632,6 +746,8 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   },
 
   playSongByFiles: async (song, files, source) => {
+    if (source?.type === 'ai_dj') resetDjHold()
+    else stopDjIfActive()
     // Same contract as playSong, but the queue context arrives as ordered
     // file names (infinite scroll never holds the full Song[] list).
     // The clicked song object still drives the optimistic UI + engine load.
@@ -660,6 +776,9 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   },
 
   skipNext: async () => {
+    resetDjHold()
+    engine.stopVoice()
+    useAiDj.getState().setVoicePlaying(false)
     cancelPlaybackIntent()
     const gen = claimTransport()
     try {
@@ -675,6 +794,9 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   },
 
   skipPrev: async () => {
+    resetDjHold()
+    engine.stopVoice()
+    useAiDj.getState().setVoicePlaying(false)
     cancelPlaybackIntent()
     const gen = claimTransport()
     try {

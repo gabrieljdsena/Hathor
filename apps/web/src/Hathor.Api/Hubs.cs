@@ -60,4 +60,8 @@ public sealed class SignalRPlaybackHub(
     // Staged progress (0→90 download, 90 finished, 95 metadata, 100 done).
     public Task BroadcastDownloadAsync(Guid userId, DownloadJobDto job, CancellationToken ct = default) =>
         downloads.Clients.Group($"user:{userId}").SendAsync("DownloadProgress", job, ct);
+
+    public Task BroadcastAiDjStateAsync(Guid userId, Hathor.Application.AiDj.AiDjStateDto state,
+        CancellationToken ct = default) =>
+        player.Clients.Group($"user:{userId}").SendAsync("AiDjStateChanged", state, ct);
 }

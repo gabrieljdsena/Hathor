@@ -73,6 +73,7 @@ export interface AudioElementLike {
 
 export interface GainParamLike {
   value: number
+  setTargetAtTime?(target: number, startTime: number, timeConstant: number): void
 }
 
 export interface GainNodeLike {
@@ -98,6 +99,7 @@ export interface AudioSourceLike {
 export interface AudioContextLike {
   readonly destination: unknown
   readonly state: string
+  readonly currentTime?: number
   readonly sampleRate?: number
   readonly baseLatency?: number
   readonly outputLatency?: number
@@ -203,6 +205,16 @@ export class AudioEngine {
   private a: Slot
   private b: Slot
   private active: Slot
+  private musicBus: GainNodeLike | null = null
+  private voice: AudioElementLike
+  private voiceQueue: string[] = []
+  private voiceDuckLevel = 0.18
+  private voiceActive = false
+  private voiceDoneCb: (() => void) | null = null
+  private voiceEndedCb: () => void = () => {}
+  private djLeadSec = 0
+  private djCueCb: ((file: string, remaining: number) => void) | null = null
+  private lastDjCueFile: string | null = null
   private fading: Fade | null = null
   private volume = 0.7
   private fadeEnabled = false
@@ -544,11 +556,14 @@ export class AudioEngine {
     const mkSlot = (): Slot => ({ el: this.deps.createElement(), gain: null, file: null, url: null, isPodcast: false, baseGain: 1, recoveries: 0 })
     this.a = mkSlot()
     this.b = mkSlot()
+    this.voice = this.deps.createElement()
     this.active = this.a
     this.a.el.addEventListener('ended', () => this.handleEnded(this.a))
     this.b.el.addEventListener('ended', () => this.handleEnded(this.b))
     this.a.el.addEventListener('error', () => this.handleSlotError(this.a))
     this.b.el.addEventListener('error', () => this.handleSlotError(this.b))
+    this.voice.addEventListener('ended', () => this.handleVoiceEnded())
+    this.voice.addEventListener('error', () => this.handleVoiceEnded())
   }
 
   // ---- configuration -------------------------------------------------
@@ -559,8 +574,10 @@ export class AudioEngine {
     if (this.master) this.master.gain.value = v
     else {
       // Bypass mode: scale the elements directly.
-      this.a.el.volume = v
-      this.b.el.volume = v
+      const music = v * (this.voiceActive ? this.voiceDuckLevel : 1)
+      this.a.el.volume = music
+      this.b.el.volume = music
+      this.voice.volume = this.voiceActive ? v : 0
     }
   }
 
@@ -628,6 +645,120 @@ export class AudioEngine {
     this.beginNext = begin
   }
 
+  setDjCue(leadSeconds: number, cb: ((file: string, remaining: number) => void) | null) {
+    this.djLeadSec = Number.isFinite(leadSeconds) ? Math.max(0, leadSeconds) : 0
+    this.djCueCb = cb
+  }
+
+  onVoiceEnded(cb: () => void) {
+    this.voiceEndedCb = cb
+  }
+
+  isVoicePlaying(): boolean {
+    return this.voiceActive
+  }
+
+  playVoice(urls: string[], duckLevel = 0.18, onDone?: () => void) {
+    const queue = urls.filter(Boolean)
+    if (queue.length === 0) return
+    this.ensureContext()
+    this.voiceDoneCb = onDone ?? null
+    this.voiceQueue = queue
+    this.voiceDuckLevel = Math.min(0.8, Math.max(0.02, duckLevel))
+    this.voiceActive = true
+    this.applyDuck(true)
+    this.playNextVoice()
+  }
+
+  private playNextVoice() {
+    const url = this.voiceQueue.shift()
+    if (!url) {
+      this.finishVoice()
+      return
+    }
+    try {
+      this.voice.src = url
+      this.voice.currentTime = 0
+      this.voice.volume = this.master ? 1 : this.volume
+      const p = this.voice.play()
+      if (p && typeof (p as Promise<void>).catch === 'function') {
+        void (p as Promise<void>).catch(() => this.handleVoiceEnded())
+      }
+    } catch {
+      this.handleVoiceEnded()
+    }
+  }
+
+  private handleVoiceEnded() {
+    if (!this.voiceActive) return
+    if (this.voiceQueue.length > 0) {
+      this.playNextVoice()
+      return
+    }
+    this.finishVoice()
+  }
+
+  private finishVoice() {
+    if (!this.voiceActive) return
+    const done = this.voiceDoneCb
+    this.voiceDoneCb = null
+    this.voiceActive = false
+    this.voiceQueue = []
+    try {
+      this.voice.pause()
+      this.voice.src = ''
+    } catch {
+      /* already gone */
+    }
+    this.applyDuck(false)
+    this.voiceEndedCb()
+    done?.()
+  }
+
+  pauseVoice() {
+    if (!this.voiceActive) return
+    try {
+      this.voice.pause()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  resumeVoice() {
+    if (!this.voiceActive) return
+    try {
+      const p = this.voice.play()
+      if (p && typeof (p as Promise<void>).catch === 'function') {
+        void (p as Promise<void>).catch(() => {})
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  stopVoice() {
+    this.voiceQueue = []
+    this.voiceDoneCb = null
+    this.finishVoice()
+  }
+
+  private applyDuck(active: boolean) {
+    const level = active ? this.voiceDuckLevel : 1
+    if (this.musicBus) {
+      const gain = this.musicBus.gain
+      if (typeof gain.setTargetAtTime === 'function' && this.ctx?.currentTime !== undefined) {
+        gain.setTargetAtTime(level, this.ctx.currentTime, 0.08)
+      } else {
+        gain.value = level
+      }
+    } else {
+      const music = this.volume * level
+      this.a.el.volume = music
+      this.b.el.volume = music
+    }
+    if (!this.master) this.voice.volume = active ? this.volume : 0
+  }
+
   onEnded(cb: () => void) {
     this.endedCb = cb
   }
@@ -688,11 +819,20 @@ export class AudioEngine {
         const gain = ctx.createGain()
         gain.gain.value = slot === this.active ? 1 : 0
         ctx.createMediaElementSource(slot.el).connect(gain)
-        gain.connect(master)
         slot.gain = gain
       }
+      const musicBus = ctx.createGain()
+      musicBus.gain.value = 1
+      musicBus.connect(master)
+      for (const slot of [this.a, this.b]) slot.gain?.connect(musicBus)
+      const voiceGain = ctx.createGain()
+      voiceGain.gain.value = 1
+      ctx.createMediaElementSource(this.voice).connect(voiceGain)
+      voiceGain.connect(master)
       this.ctx = ctx
       this.master = master
+      this.musicBus = musicBus
+      this.voice.volume = 1
       this.applyNormalize()
       if (ctx.state === 'suspended') void ctx.resume()
       if (!this.contextReported) {
@@ -719,8 +859,10 @@ export class AudioEngine {
     this.cancelFade()
     this.cancelRetry(true)
     this.wantPlaying = autoplay
+    this.lastDjCueFile = null
     if (!track) {
       this.wantPlaying = false
+      this.stopVoice()
       this.active.el.pause()
       this.active.el.src = ''
       this.active.file = null
@@ -791,6 +933,7 @@ export class AudioEngine {
     }
     this.tryPlay(this.active.el, 'play')
     if (this.fading) this.tryPlay(this.fading.incoming.el, 'play-fade-incoming')
+    this.resumeVoice()
   }
 
   pause() {
@@ -799,6 +942,7 @@ export class AudioEngine {
     if (this.fading && this.fading.pauseBeganAt === null) this.fading.pauseBeganAt = this.deps.now()
     this.active.el.pause()
     if (this.fading) this.fading.incoming.el.pause()
+    this.pauseVoice()
   }
 
   seek(sec: number, isUserSeek = true) {
@@ -933,6 +1077,7 @@ export class AudioEngine {
   }
 
   private handleEnded(slot: Slot) {
+    this.lastDjCueFile = null
     if (this.fading) {
       // Outgoing track hit its real end mid-fade: settle immediately.
       if (slot === this.fading.out) this.finishFade()
@@ -1324,6 +1469,18 @@ export class AudioEngine {
     }
   }
 
+  private maybeCueDj() {
+    if (!this.djCueCb || this.djLeadSec <= 0 || !this.active.file) return
+    const dur = this.active.el.duration
+    const pos = this.active.el.currentTime
+    if (!Number.isFinite(dur) || dur <= 1 || !Number.isFinite(pos) || pos < 0.5) return
+    const remaining = dur - pos
+    if (remaining > this.djLeadSec || remaining <= 0) return
+    if (this.lastDjCueFile === this.active.file) return
+    this.lastDjCueFile = this.active.file
+    this.djCueCb(this.active.file, remaining)
+  }
+
   private tick() {
     // Fully idle (nothing loaded, no fade): park the ticker instead of
     // spinning every 250ms for the lifetime of the page. play()/load()
@@ -1367,6 +1524,7 @@ export class AudioEngine {
     }
     // Silent-stall watchdog (skipped mid-fade so ramps keep their timing).
     if (!this.fading) this.watchStall()
+    if (!this.fading) this.maybeCueDj()
     if (this.fading) {
       const f = this.fading
       const elapsed = (this.deps.now() - f.start) / 1000

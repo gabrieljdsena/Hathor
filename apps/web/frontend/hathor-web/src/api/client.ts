@@ -371,6 +371,55 @@ export interface PlayerState {
   queueVersion: number
 }
 
+export interface AiDjSettings {
+  batchSize: number
+  commentaryMode: 'auto' | 'always' | 'off'
+  language: 'auto' | 'pt-BR' | 'en-US'
+  discoveryLevel: number
+  brief: string
+  preferredGenres: string
+  avoidArtists: string
+  duckLevel: number
+  voiceLeadSeconds: number
+}
+
+export interface AiDjBatch {
+  id: string
+  number: number
+  status: string
+  tracks: Song[]
+  outroText: string | null
+  outroClipIds: string[]
+  outroDurationSec: number
+  introText: string | null
+  introClipIds: string[]
+  introDurationSec: number
+  shouldComment: boolean
+  mood: string | null
+  reason: string | null
+}
+
+export interface AiDjState {
+  enabled: boolean
+  configured: boolean
+  sessionId: string | null
+  status: string
+  settings: AiDjSettings
+  currentBatch: AiDjBatch | null
+  nextBatch: AiDjBatch | null
+  error: string | null
+}
+
+export interface AiDjStartPayload {
+  batchSize?: number | null
+  commentaryMode?: string | null
+  language?: string | null
+  discoveryLevel?: number | null
+  brief?: string | null
+  preferredGenres?: string | null
+  avoidArtists?: string | null
+}
+
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem('hathor:token')
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -679,6 +728,34 @@ export const api = {
   queueClear: () => request<PlayerState>('/player/queue/clear', { method: 'DELETE' }),
   queueRebuild: () =>
     request<{ rebuilt: boolean; state: PlayerState }>('/player/queue/rebuild', { method: 'POST' }),
+
+  // AI DJ (Vohithe)
+  aiDjState: () => request<AiDjState>('/ai-dj/state'),
+  aiDjStart: (payload: AiDjStartPayload = {}) =>
+    request<AiDjState>('/ai-dj/start', { method: 'POST', body: JSON.stringify(payload) }),
+  aiDjStop: () => request<AiDjState>('/ai-dj/stop', { method: 'POST' }),
+  aiDjFeedback: (payload: {
+    sessionId?: string | null
+    batchId?: string | null
+    trackFile?: string | null
+    event: string
+  }) => request<void>('/ai-dj/feedback', { method: 'POST', body: JSON.stringify(payload) }),
+  aiDjTranscribe: (audio: string, language?: string) =>
+    request<{ text: string }>('/ai-dj/transcribe', {
+      method: 'POST',
+      body: JSON.stringify({ audio, language: language ?? navigator.language ?? 'pt-BR' }),
+    }),
+  aiDjSettings: () => request<AiDjSettings>('/ai-dj/settings'),
+  aiDjUpdateSettings: (payload: AiDjStartPayload) =>
+    request<AiDjSettings>('/ai-dj/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  aiDjClipUrl: (id: string) =>
+    `/api/v1/ai-dj/clips/${encodeURIComponent(id)}/audio?token=${encodeURIComponent(
+      localStorage.getItem('hathor:token') ?? '',
+    )}`,
+  freshAiDjClipUrl: async (id: string) => {
+    const token = await authToken()
+    return `/api/v1/ai-dj/clips/${encodeURIComponent(id)}/audio?token=${encodeURIComponent(token)}`
+  },
 
   // history
   downloadHistory: (page = 1, pageSize = 10) =>

@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { hasInflightTransport, hasPendingPlaybackIntent, usePlayer } from './store/player'
-import { authToken, type PlayerState, type Song } from './api/client'
+import { useAiDj } from './store/aiDj'
+import { authToken, type AiDjState, type PlayerState, type Song } from './api/client'
 
 // Multi-tab transport sync: every control mutation (toggle, play, next,
 // prev, seek, queue edits — from any tab, phone, or headless client) makes
@@ -75,6 +76,13 @@ export function usePlayerHub(username: string | null) {
               typeof version === 'number' ? { queue, queueVersion: version } : { queue },
             )
           }
+        } catch {
+          /* ignore */
+        }
+      })
+      built.on('AiDjStateChanged', (state: AiDjState) => {
+        try {
+          if (state && typeof state === 'object') useAiDj.getState().setState(state)
         } catch {
           /* ignore */
         }

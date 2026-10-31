@@ -1,3 +1,4 @@
+using Hathor.Application.AiDj;
 using Hathor.Application.Dtos;
 using Hathor.Domain.Services;
 
@@ -198,6 +199,28 @@ public interface IPlaybackHub
     Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue,
         int queueVersion = 0, CancellationToken ct = default);
     Task BroadcastDownloadAsync(Guid userId, DownloadJobDto job, CancellationToken ct = default);
+    Task BroadcastAiDjStateAsync(Guid userId, AiDjStateDto state, CancellationToken ct = default);
+}
+
+// AI DJ taste read-model (Dapper): playable library candidates with local
+// frequency/quality signals. No external catalog data.
+public interface IAiDjReadModel
+{
+    Task<IReadOnlyList<AiDjCandidateRow>> GetCandidatesAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+}
+
+// Server-to-server Vohithe planner. Returns null when the assistant is
+// unconfigured or unreachable so the local fallback can keep music playing.
+public interface IAiDjPlanner
+{
+    bool IsConfigured { get; }
+    Task<AiDjPlanResponse?> PlanAsync(
+        AiDjPlanRequest request, CancellationToken ct = default);
+    Task<IReadOnlyList<AiDjPlanClip>> SynthesizeAsync(
+        string text, string language, CancellationToken ct = default);
+    Task<string?> TranscribeAsync(
+        string audioBase64, string language, CancellationToken ct = default);
 }
 
 // YouTube ingest engine port (YoutubeExplode in Infrastructure):

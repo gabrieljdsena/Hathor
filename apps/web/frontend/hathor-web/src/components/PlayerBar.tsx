@@ -220,14 +220,18 @@ export default function PlayerBar({
   onToggleQueue,
   onToggleLyrics,
   onOpenNowPlaying,
+  onOpenDj,
   queueActive = false,
   lyricsActive = false,
+  djActive = false,
 }: {
   onToggleQueue: () => void
   onToggleLyrics: () => void
   onOpenNowPlaying: () => void
+  onOpenDj?: () => void
   queueActive?: boolean
   lyricsActive?: boolean
+  djActive?: boolean
 }) {
   // Granular subscriptions: the 500ms progress ticker writes store state
   // elsewhere, so subscribing field-by-field keeps the bar from re-rendering
@@ -403,15 +407,17 @@ export default function PlayerBar({
           >
             <Icon name="musicNote" className="w-5 h-5" />
           </button>
-          <button
-            onClick={onToggleQueue}
-            title="Toggle Queue"
-            className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${
-              queueActive ? 'text-orange-400' : 'text-zinc-400 active:text-white'
-            }`}
-          >
-            <Icon name="queue" className="w-5 h-5" />
-          </button>
+          {!djActive && (
+            <button
+              onClick={onToggleQueue}
+              title="Toggle Queue"
+              className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${
+                queueActive ? 'text-orange-400' : 'text-zinc-400 active:text-white'
+              }`}
+            >
+              <Icon name="queue" className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
       {/* Compact stacked layout (below 1100px): full-width progress.
@@ -497,6 +503,15 @@ export default function PlayerBar({
           />
         )}
         <button
+          onClick={onOpenDj}
+          title="Vohithe AI DJ"
+          className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
+            djActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Icon name="sparkles" className="w-5 h-5" />
+        </button>
+        <button
           onClick={onToggleLyrics}
           title="Toggle Lyrics"
           className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
@@ -505,15 +520,17 @@ export default function PlayerBar({
         >
           <Icon name="musicNote" className="w-5 h-5" />
         </button>
-        <button
-          onClick={onToggleQueue}
-          title="Toggle Queue"
-          className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
-            queueActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <Icon name="queue" className="w-5 h-5" />
-        </button>
+        {!djActive && (
+          <button
+            onClick={onToggleQueue}
+            title="Toggle Queue"
+            className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
+              queueActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Icon name="queue" className="w-5 h-5" />
+          </button>
+        )}
         <button
           onClick={doMute}
           title="Mute / unmute"

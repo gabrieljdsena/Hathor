@@ -37,6 +37,9 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<UserSettings> Settings => Set<UserSettings>();
     public DbSet<PlaybackStateRow> PlaybackStates => Set<PlaybackStateRow>();
     public DbSet<PlaybackSpotRow> PlaybackSpots => Set<PlaybackSpotRow>();
+    public DbSet<AiDjSessionRecord> AiDjSessions => Set<AiDjSessionRecord>();
+    public DbSet<AiDjClipRecord> AiDjClips => Set<AiDjClipRecord>();
+    public DbSet<AiDjFeedbackRecord> AiDjFeedback => Set<AiDjFeedbackRecord>();
 
     // Delta-sync change feed: every insert/update stamps UpdatedAtUtc, so
     // GET /sync/delta needs no per-write-path bookkeeping. Server clock only.
@@ -278,6 +281,32 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.Property(x => x.File).HasMaxLength(255);
             e.Property(x => x.DeviceLabel).HasMaxLength(128);
             e.HasIndex(x => new { x.UserId, x.UpdatedUtc });
+        });
+        b.Entity<AiDjSessionRecord>(e =>
+        {
+            e.ToTable("AiDj_Sessions");
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.Status).HasMaxLength(24);
+            e.HasIndex(x => x.SessionId).IsUnique();
+        });
+        b.Entity<AiDjClipRecord>(e =>
+        {
+            e.ToTable("AiDj_Clips");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FilePath).HasMaxLength(512);
+            e.Property(x => x.Mime).HasMaxLength(64);
+            e.Property(x => x.Text).HasMaxLength(1000);
+            e.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+        });
+        b.Entity<AiDjFeedbackRecord>(e =>
+        {
+            e.ToTable("AiDj_Feedback");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.TrackFile).HasMaxLength(255);
+            e.Property(x => x.Event).HasMaxLength(32);
+            e.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+            e.HasIndex(x => new { x.UserId, x.SessionId });
         });
     }
 }

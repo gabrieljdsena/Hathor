@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using FluentValidation;
+using Hathor.Application.AiDj;
 using Hathor.Application.Ports;
 using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
@@ -95,6 +96,10 @@ public static class InfrastructureServiceExtensions
             .Get<Application.Discover.DiscoveryOptions>()
             ?? new Application.Discover.DiscoveryOptions();
         services.AddSingleton(discoveryOptions);
+        var aiDjOptions = config.GetSection("AiDj").Get<AiDjOptions>() ?? new AiDjOptions();
+        aiDjOptions.ClipDirectory = Path.GetFullPath(
+            string.IsNullOrWhiteSpace(aiDjOptions.ClipDirectory) ? "data/ai-dj" : aiDjOptions.ClipDirectory);
+        services.AddSingleton(aiDjOptions);
         var refreshGraceSeconds = Math.Max(0, config.GetValue("Auth:RefreshReuseGraceSeconds", 30));
         services.AddSingleton(new Application.Auth.AuthOptions(
             TimeSpan.FromSeconds(refreshGraceSeconds)));
@@ -134,6 +139,12 @@ public static class InfrastructureServiceExtensions
             Repositories.EfRankingModelRepository>();
         services.AddScoped<Domain.Repositories.IPlaybackEventRepository,
             Repositories.EfPlaybackEventRepository>();
+        services.AddScoped<Domain.Repositories.IAiDjRepository, Repositories.EfAiDjRepository>();
+        services.AddScoped<Application.Ports.IAiDjReadModel, Library.DapperAiDjReadModel>();
+        services.AddScoped<Application.Ports.IAiDjPlanner, AiDj.AiDjPlannerClient>();
+        services.AddScoped<Application.AiDj.AiDjCandidateService>();
+        services.AddScoped<Application.AiDj.AiDjService>();
+        services.AddSingleton<Application.AiDj.AiDjPrefetcher>();
         services.AddScoped<Domain.Repositories.IDownloadJobRepository, Repositories.EfDownloadJobRepository>();
         services.AddScoped<Domain.Repositories.ILyricsRepository, Repositories.EfLyricsRepository>();
         services.AddScoped<Domain.Repositories.IPodcastRecordRepository, Repositories.EfPodcastRecordRepository>();
@@ -263,6 +274,50 @@ public static class InfrastructureServiceExtensions
         // yt-dlp single-file binary (~30MB); same no-client-timeout shape.
         services.AddHttpClient("ytdlp").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
         services.AddHttpClient("nuget").ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(15));
+        services.AddHttpClient("ai-dj", c =>
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(aiDjOptions.AssistantBaseUrl)
+                ? "http://127.0.0.1:5000"
+                : aiDjOptions.AssistantBaseUrl.TrimEnd('/');
+            c.BaseAddress = new Uri(baseUrl + "/");
+            c.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiDjOptions.TimeoutSeconds, 5, 120));
+        }).ConfigurePrimaryHttpMessageHandler(() =>
+        {
+            var handler = new HttpClientHandler();
+            if (aiDjOptions.AllowInsecureTls)
+            {
+                handler.ServerCertificateCustomValidationCallback =
+                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            }
+            else if (!string.IsNullOrWhiteSpace(aiDjOptions.AssistantCaCertificatePath))
+            {
+                var caPath = aiDjOptions.AssistantCaCertificatePath;
+                handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
+                {
+                    if (cert is null) return false;
+                    try
+                    {
+                        var ca = System.Security.Cryptography.X509Certificates.X509Certificate2
+                            .CreateFromPemFile(caPath);
+                        if (string.Equals(cert.Thumbprint, ca.Thumbprint,
+                            StringComparison.OrdinalIgnoreCase))
+                            return true;
+                        using var chain = new System.Security.Cryptography.X509Certificates.X509Chain();
+                        chain.ChainPolicy.TrustMode = System.Security.Cryptography.X509Certificates
+                            .X509ChainTrustMode.CustomRootTrust;
+                        chain.ChainPolicy.CustomTrustStore.Add(ca);
+                        chain.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates
+                            .X509RevocationMode.NoCheck;
+                        return chain.Build(cert);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                };
+            }
+            return handler;
+        });
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(
             typeof(Application.Auth.LoginCommand).Assembly));
         services.AddValidatorsFromAssembly(

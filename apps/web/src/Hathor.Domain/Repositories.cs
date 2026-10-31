@@ -134,6 +134,21 @@ public interface IPlaybackEventRepository
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 
+// AI DJ persistence (EF): one current session row per user, generated audio
+// clip metadata, and DJ-specific feedback events.
+public interface IAiDjRepository
+{
+    Task<AiDjSessionRecord?> GetSessionAsync(Guid userId, CancellationToken ct = default);
+    Task SaveSessionAsync(AiDjSessionRecord session, CancellationToken ct = default);
+    Task StopSessionAsync(Guid userId, DateTime endedAtUtc, CancellationToken ct = default);
+    Task AddClipAsync(AiDjClipRecord clip, CancellationToken ct = default);
+    Task<AiDjClipRecord?> GetClipAsync(Guid userId, Guid clipId, CancellationToken ct = default);
+    Task AddFeedbackAsync(AiDjFeedbackRecord feedback, CancellationToken ct = default);
+    Task<IReadOnlyList<AiDjFeedbackRecord>> GetFeedbackAsync(
+        Guid userId, Guid sessionId, int limit, CancellationToken ct = default);
+    Task<int> DeleteExpiredClipsAsync(DateTime cutoffUtc, CancellationToken ct = default);
+}
+
 // Discover feedback writes/reads (EF): user-scoped implicit signals for the
 // local ranker. Only the user's own rows are ever queried.
 public interface IDiscoverFeedbackRepository

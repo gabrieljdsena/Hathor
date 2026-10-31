@@ -49,4 +49,9 @@ Rules all apps follow:
   mobile/desktop send theirs when they implement push (until then they
   simply get no spots). Nothing auto-plays — the pill is an explicit tap.
 
+AI DJ state (`AiDj_Sessions`, `AiDj_Clips`, `AiDj_Feedback`) and the
+`ai_dj` queue source are additive and web-only; they are not part of the
+desktop/mobile sync snapshot. Other clients can still play the flat song
+queue but do not render or speak the DJ commentary. See `ai-dj.md`.
+
 Do not change the wire shape in one app without updating the other two in the same PR.

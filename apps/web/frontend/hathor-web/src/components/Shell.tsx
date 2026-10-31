@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+﻿import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, deviceId, deviceLabel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { pushResumeSpot, startPlayerTelemetry, usePlayer } from '../store/player'
+import { useAiDj } from '../store/aiDj'
+import { useAiDjPolling } from '../aiDjPolling'
 import { engine } from '../audio/engine'
 import { handleShortcutKey } from '../utils/shortcuts'
 import { createUnloadPause } from '../utils/unloadPause'
@@ -12,6 +14,7 @@ import PlayerBar from './PlayerBar'
 import LyricsSheet from './LyricsSheet'
 import NowPlaying from './NowPlaying'
 import QueueSheet from './QueueSheet'
+import DjVibePopover from './DjVibePopover'
 import Brand from './ui/Brand'
 import Icon, { type IconName } from './ui/icons'
 import ShortcutHelp from './ui/ShortcutHelp'
@@ -70,18 +73,21 @@ function NavItem({
 }
 
 // Sidebar + bottom player bar shell. Classes cloned from Music Player/ui/index.html
-// (desktop titlebar/resize zones intentionally dropped — responsive web only).
+// (desktop titlebar/resize zones intentionally dropped â€” responsive web only).
 export default function Shell() {
   const { logout, username } = useAuth()
   // Converge this tab on every control mutation from anywhere (other tabs,
-  // phone, headless clients) — no-op until logged in.
+  // phone, headless clients) â€” no-op until logged in.
   usePlayerHub(username)
+  useAiDjPolling()
   useEffect(() => startPlayerTelemetry(), [])
   const [queueOpen, setQueueOpen] = useState(false)
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false)
+  const [vibeOpen, setVibeOpen] = useState(false)
+  const djActive = useAiDj((s) => s.state?.status === 'active')
   const [signingOut, setSigningOut] = useState(false)
-  // Collapsible icon rail (desktop #sidebar-toggle → w-64/w-20). Phone
+  // Collapsible icon rail (desktop #sidebar-toggle â†’ w-64/w-20). Phone
   // screens (<=700px) hide the sidebar entirely behind a hamburger drawer.
   const [collapsed, setCollapsed] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 700,
@@ -102,7 +108,11 @@ export default function Shell() {
   // Phone drawer: navigating (or resizing up to desktop) always closes it.
   useEffect(() => {
     setMobileOpen(false)
+    setVibeOpen(false)
   }, [pathname])
+  useEffect(() => {
+    if (djActive) setQueueOpen(false)
+  }, [djActive])
   useEffect(() => {
     if (!narrow) setMobileOpen(false)
   }, [narrow])
@@ -167,7 +177,7 @@ export default function Shell() {
   )
 
   // Keyboard shortcuts (desktop Now Playing & shortcuts): Space play/pause,
-  // ←/→ seek ±10s, ↑/↓ volume, n/p chapter-aware next/prev, [ ] chapter-only
+  // â†/â†’ seek Â±10s, â†‘/â†“ volume, n/p chapter-aware next/prev, [ ] chapter-only
   // jumps, m mute, s/r shuffle/repeat, ? help. Ignored while typing or when
   // a dialog owns the keyboard. Chapter jumps read a ref: the query cache
   // fills asynchronously, long after this one-time listener is attached.
@@ -373,6 +383,13 @@ export default function Shell() {
             <NavItem to="/history" icon="clock" label="History" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/artists" icon="users" label="Artists" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/albums" icon="tag" label="Albums" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
+            <NavItem
+              to="/dj"
+              icon="sparkles"
+              label={djActive ? 'AI DJ Â· on air' : 'AI DJ'}
+              collapsed={!narrow && collapsed}
+              onNavigate={() => setMobileOpen(false)}
+            />
             <NavItem to="/api-keys" icon="key" label="API Keys" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/settings" icon="gear" label="Settings" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             {/* Server logout (revokes the session) with local fallback. */}
@@ -395,7 +412,7 @@ export default function Shell() {
               )}
               {(narrow || !collapsed) && (
                 <span className="font-medium tracking-wide text-sm">
-                  {signingOut ? 'Signing out…' : 'Sign out'}
+                  {signingOut ? 'Signing outâ€¦' : 'Sign out'}
                 </span>
               )}
             </button>
@@ -440,10 +457,13 @@ export default function Shell() {
         onToggleQueue={() => setQueueOpen((v) => !v)}
         onToggleLyrics={() => setLyricsOpen((v) => !v)}
         onOpenNowPlaying={() => setNowPlayingOpen(true)}
+        onOpenDj={() => setVibeOpen((open) => !open)}
         queueActive={queueOpen}
         lyricsActive={lyricsOpen}
+        djActive={djActive}
       />
       <QueueSheet open={queueOpen} onClose={() => setQueueOpen(false)} />
+      <DjVibePopover open={vibeOpen} onClose={() => setVibeOpen(false)} />
       {nowPlayingOpen && <NowPlaying onClose={() => setNowPlayingOpen(false)} />}
       <ShortcutHelp open={showHelp} onClose={() => setShowHelp(false)} />
     </div>

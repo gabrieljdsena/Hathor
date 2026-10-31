@@ -1,3 +1,4 @@
+using Hathor.Application.AiDj;
 using Hathor.Application.Dtos;
 using Hathor.Application.Mix;
 using Hathor.Application.Ports;
@@ -23,7 +24,8 @@ public sealed class RebuildQueueHandler(
     ISongReadModel songs,
     IHistoryReadModel history,
     ILibraryStorage storage,
-    IPlaybackHub hub) : IRequestHandler<RebuildQueueCommand, RebuildQueueResult>
+    IPlaybackHub hub,
+    AiDjService? aiDj = null) : IRequestHandler<RebuildQueueCommand, RebuildQueueResult>
 {
     public async Task<RebuildQueueResult> Handle(RebuildQueueCommand cmd, CancellationToken ct)
     {
@@ -87,6 +89,11 @@ public sealed class RebuildQueueHandler(
                 return (await history.GetDownloadHistoryFilesAsync(userId, 500, ct)).ToList();
             case QueueSourceTypes.Podcast:
                 return storage.PodcastExists(userId, current) ? [current] : null;
+            case QueueSourceTypes.AiDj:
+                if (aiDj is null) return null;
+                return (await aiDj.GetSessionFilesAsync(userId, ct))
+                    ?.Where(f => storage.SongExists(userId, f))
+                    .ToList();
             default: // all_songs and unknown types fall back to the general list
                 return null;
         }

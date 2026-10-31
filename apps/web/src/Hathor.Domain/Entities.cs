@@ -357,4 +357,41 @@ public sealed class UserSettings
     // Podcast chapter auto-skip: when on, timestamped episodes start at the
     // first chapter and jump to the next chapter at each end time.
     public bool ChapterSkip { get; set; }
+    public string? AiDjSettingsJson { get; set; }
+}
+
+// Active/current AI DJ run. One row per user; the batch graph is JSON because
+// it is read as one snapshot and never queried independently.
+public sealed class AiDjSessionRecord
+{
+    public Guid UserId { get; set; }
+    public Guid SessionId { get; set; }
+    public string Status { get; set; } = "active";
+    public string StateJson { get; set; } = "{}";
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+// One generated voice-over clip. Files live outside the library under the
+// configured AI DJ clip directory; only their metadata is in the database.
+public sealed class AiDjClipRecord
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; }
+    public string FilePath { get; set; } = "";
+    public string Mime { get; set; } = "audio/mpeg";
+    public double DurationSec { get; set; }
+    public string Text { get; set; } = "";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public sealed class AiDjFeedbackRecord
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid? BatchId { get; set; }
+    public string? TrackFile { get; set; }
+    public string Event { get; set; } = "";
+    public DateTime CreatedAtUtc { get; set; }
 }
