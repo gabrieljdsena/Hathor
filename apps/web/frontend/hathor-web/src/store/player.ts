@@ -132,23 +132,30 @@ function djTransitionUrls(): { urls: string[]; duck: number } | null {
   }
 }
 
-function maybeStartDjVoice(file: string): void {
+function isDjBatchLastTrack(file: string | null): boolean {
   const dj = useAiDj.getState().state
-  if (!dj || dj.status !== 'active' || !dj.currentBatch) return
+  if (!file || !dj || dj.status !== 'active' || !dj.currentBatch) return false
   const tracks = dj.currentBatch.tracks
-  if (tracks.length === 0) return
-  if (tracks[tracks.length - 1]?.file !== file) return
+  return tracks.length > 0 && tracks[tracks.length - 1]?.file === file
+}
+
+function startDjBoundaryVoice(): boolean {
+  if (engine.isVoicePlaying()) return true
   const transition = djTransitionUrls()
-  if (!transition) {
-    djHoldNext = true
-    useAiDj.getState().setWaiting(true)
-    return
-  }
+  if (!transition) return false
   djHoldNext = false
   djHeldAtEnd = false
   useAiDj.getState().setWaiting(false)
   useAiDj.getState().setVoicePlaying(true)
   engine.playVoice(transition.urls, transition.duck)
+  return true
+}
+
+function maybeStartDjVoice(file: string): void {
+  if (!isDjBatchLastTrack(file)) return
+  if (startDjBoundaryVoice()) return
+  djHoldNext = true
+  useAiDj.getState().setWaiting(true)
 }
 
 function tryResumeHeldDj(): void {
@@ -570,6 +577,14 @@ function requestNext(auto: boolean): void {
 // Exported for tests (the onEnded/onTailStuck wiring itself is module scope).
 export function autoAdvance(diedInstantly: boolean): void {
   if (holdDjAtBoundary()) return
+  const currentFile = usePlayer.getState().currentSong?.file ?? null
+  if (isDjBatchLastTrack(currentFile) && !startDjBoundaryVoice()) {
+    djHoldNext = true
+    djHeldAtEnd = true
+    useAiDj.getState().setWaiting(true)
+    holdDjAtBoundary()
+    return
+  }
   if (noteAutoAdvance(diedInstantly)) {
     breakAdvanceChain()
     return
@@ -776,9 +791,20 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
   },
 
   skipNext: async () => {
-    resetDjHold()
-    engine.stopVoice()
-    useAiDj.getState().setVoicePlaying(false)
+    const currentFile = usePlayer.getState().currentSong?.file ?? null
+    if (isDjBatchLastTrack(currentFile)) {
+      if (!startDjBoundaryVoice()) {
+        djHoldNext = true
+        djHeldAtEnd = true
+        useAiDj.getState().setWaiting(true)
+        holdDjAtBoundary()
+        return
+      }
+    } else {
+      resetDjHold()
+      engine.stopVoice()
+      useAiDj.getState().setVoicePlaying(false)
+    }
     cancelPlaybackIntent()
     const gen = claimTransport()
     try {

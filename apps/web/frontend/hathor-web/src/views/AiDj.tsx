@@ -77,10 +77,6 @@ export default function AiDj() {
           <div className="min-w-0 flex-1">
             <div className="text-xs uppercase tracking-[0.35em] text-orange-300/80">Hathor private radio</div>
             <h1 className="mt-1 text-3xl sm:text-4xl font-semibold text-white">Vohithe</h1>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-300">
-              Your AI DJ. She picks a small set from your library, recaps what just played,
-              and introduces the next one in her own voice.
-            </p>
             <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
               <span className={`rounded-full border px-3 py-1 ${
                 active ? 'border-orange-500/30 bg-orange-500/10 text-orange-300' : 'border-white/10 bg-white/[0.04] text-zinc-400'
@@ -92,9 +88,6 @@ export default function AiDj() {
                   {dj.settings.language === 'pt-BR' ? 'Português' : 'English'}
                 </span>
               )}
-              <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-zinc-400">
-                Always speaks between sets
-              </span>
             </div>
           </div>
         </div>
@@ -169,9 +162,6 @@ export default function AiDj() {
                 Stop DJ
               </GhostButton>
             )}
-            <span className="text-xs text-zinc-600">
-              Batches are 3-4 tracks; the language and vibe are chosen for this run.
-            </span>
           </div>
         </section>
 
