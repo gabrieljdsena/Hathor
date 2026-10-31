@@ -18,10 +18,18 @@ public sealed class HistoryController(IMediator mediator) : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken ct = default) =>
         Ok(await mediator.Send(new GetDownloadHistoryQuery(CurrentUserId(), page, pageSize), ct));
 
+    [HttpGet("downloads/files")]
+    public async Task<ActionResult<IReadOnlyList<string>>> DownloadFiles(CancellationToken ct = default) =>
+        Ok(await mediator.Send(new GetDownloadHistoryFilesQuery(CurrentUserId()), ct));
+
     [HttpGet("played-songs")]
     public async Task<ActionResult<PagedResult<HistoryItemDto>>> PlayedSongs(
         [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken ct = default) =>
         Ok(await mediator.Send(new GetPlayedHistoryQuery(CurrentUserId(), page, pageSize), ct));
+
+    [HttpGet("played-songs/files")]
+    public async Task<ActionResult<IReadOnlyList<string>>> PlayedFiles(CancellationToken ct = default) =>
+        Ok(await mediator.Send(new GetPlayedHistoryFilesQuery(CurrentUserId()), ct));
 
     [HttpGet("played-playlists")]
     public async Task<ActionResult<PagedResult<PlayedPlaylistItemDto>>> PlayedPlaylists(

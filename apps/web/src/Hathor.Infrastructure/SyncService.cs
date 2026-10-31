@@ -1,4 +1,5 @@
 using Hathor.Application.Ports;
+using Hathor.Application.Playlists;
 using Hathor.Application.Sync;
 using Hathor.Domain.Entities;
 using Hathor.Infrastructure.Ef;
@@ -190,12 +191,23 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
             mixes, deletions, chapters));
     }
 
-    public async Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
+    public async Task SaveFileFromStreamAsync(Guid userId, string file, bool isPodcast, Stream content,
         CancellationToken ct = default)
     {
         if (storage is null) throw new InvalidOperationException("Library storage is not configured.");
         var path = isPodcast ? storage.PodcastPath(userId, file) : storage.SongPath(userId, file);
-        await File.WriteAllBytesAsync(path, bytes, ct);
+        // Streamed straight to disk: a 100 MB push never sits in LOH.
+        // The using block closes (and flushes) before the size check below.
+        await using (var dest = File.Create(path))
+        {
+            await content.CopyToAsync(dest, ct);
+            await dest.FlushAsync(ct);
+        }
+        if (new FileInfo(path).Length == 0)
+        {
+            File.Delete(path);
+            throw new InvalidOperationException("Empty file body.");
+        }
         var title = Path.GetFileNameWithoutExtension(file);
         if (isPodcast)
         {
@@ -228,6 +240,19 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
         bool reconcileLinks = false)
     {
         var counts = new int[11];
+        // RAM: flush the change tracker every 500 rows — big first-run
+        // imports would otherwise hold every row (plus the snapshot DTOs)
+        // until the final save. Slightly more round trips, flat memory.
+        // Remap dicts are plain memory and survive Clear(); FindAsync
+        // re-reads flushed rows from the database.
+        var sinceFlush = 0;
+        async Task FlushAsync()
+        {
+            if (++sinceFlush < 500) return;
+            sinceFlush = 0;
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+        }
         // Explicit snapshot ids come from per-device sequences and collide
         // across users (single-column PKs are one global namespace, like the
         // desktop remote DB). Colliding rows are re-keyed; FKs are remapped.
@@ -262,6 +287,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     // with a remote null (older remotes lack the column).
                     if (r.LoudnessDb.HasValue) existing.LoudnessDb = r.LoudnessDb;
                 }
+                await FlushAsync();
             }
 
         if (s.Podcasts is not null)
@@ -284,18 +310,20 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     existing.DateDownloadUtc = r.DateDownloadUtc;
                     existing.Artist = r.Artist;
                 }
+                await FlushAsync();
             }
 
         if (s.Playlists is not null)
             foreach (var r in s.Playlists)
             {
+                var thumbnail = PlaylistCover.Normalize(r.Thumbnail);
                 var existing = await db.Playlists.FindAsync([r.Id], ct);
                 if (existing is null)
                 {
                     await db.Playlists.AddAsync(new Playlist
                     {
                         Id = r.Id, UserId = userId, Title = r.Title,
-                        Description = r.Description, Thumbnail = r.Thumbnail,
+                        Description = r.Description, Thumbnail = thumbnail,
                     }, ct);
                     counts[2]++;
                 }
@@ -303,7 +331,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 {
                     existing.Title = r.Title;
                     existing.Description = r.Description;
-                    existing.Thumbnail = r.Thumbnail;
+                    existing.Thumbnail = thumbnail;
                 }
                 else
                 {
@@ -311,7 +339,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     var clone = new Playlist
                     {
                         UserId = userId, Title = r.Title,
-                        Description = r.Description, Thumbnail = r.Thumbnail,
+                        Description = r.Description, Thumbnail = thumbnail,
                     };
                     await db.Playlists.AddAsync(clone, ct);
                     await db.SaveChangesAsync(ct);
@@ -350,6 +378,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     }, ct);
                     counts[3]++;
                 }
+                await FlushAsync();
             }
 
         if (s.PodcastTags is not null)
@@ -401,6 +430,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     }, ct);
                     counts[5]++;
                 }
+                await FlushAsync();
             }
 
         // Pull reconciliation: drop local link rows absent from a full remote
@@ -462,12 +492,14 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     }, ct);
                     counts[6]++;
                 }
+                await FlushAsync();
             }
 
         // Append-only history: insert-if-absent by id (desktop INSERT IGNORE),
         // re-keying on cross-user collisions.
         if (s.MusicHistory is not null)
             foreach (var r in s.MusicHistory)
+            {
                 if (!await db.MusicHistory.AnyAsync(h => h.Id == r.Id, ct))
                 {
                     await db.MusicHistory.AddAsync(new MusicHistoryEntry
@@ -485,6 +517,8 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     }, ct);
                     counts[7]++;
                 }
+                await FlushAsync();
+            }
 
         if (s.PlaylistHistory is not null)
             foreach (var r in s.PlaylistHistory)
@@ -507,6 +541,7 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                     }, ct);
                     counts[8]++;
                 }
+                await FlushAsync();
             }
 
         // Episode chapters (desktop scoped-replace semantics on push live

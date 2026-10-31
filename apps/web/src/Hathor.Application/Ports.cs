@@ -1,4 +1,6 @@
+using Hathor.Application.AiDj;
 using Hathor.Application.Dtos;
+using Hathor.Domain.Services;
 
 namespace Hathor.Application.Ports;
 
@@ -11,11 +13,22 @@ public interface ISongReadModel
     Task<SongDto?> GetByFileAsync(Guid userId, string file, bool includeCover, CancellationToken ct = default);
     Task<IReadOnlyList<SongDto>> GetManyAsync(Guid userId, IEnumerable<string> files,
         bool includeCover, CancellationToken ct = default);
+    // Raw cover bytes + mime + version stamp (mtime/size) for the
+    // browser-cached /cover endpoint. Null when the file has no art.
+    (byte[] Bytes, string Mime, string Version)? ReadCover(Guid userId, string file);
     // Raw file metadata without DB (library scans).
     SongDto ReadLocalSong(Guid userId, string file);
     // Exact-metadata matches, desktop-sorted (artist view: Album+Title, album view: Artist+Title).
+    // Paging is opt-in (null = whole list, legacy callers); infinite scroll
+    // passes page/pageSize, queue building uses the Files variants.
     Task<IReadOnlyList<string>> GetArtistsAsync(Guid userId, CancellationToken ct = default);
-    Task<IReadOnlyList<SongDto>> GetSongsByArtistAsync(Guid userId, string artist, CancellationToken ct = default);
+    Task<IReadOnlyList<SongDto>> GetSongsByArtistAsync(Guid userId, string artist,
+        string? search = null, string? sort = null, string? dir = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default);
+    Task<int> GetArtistSongCountAsync(Guid userId, string artist, string? search = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetArtistFilesAsync(Guid userId, string artist, string? search = null,
+        string? sort = null, string? dir = null, CancellationToken ct = default);
     // Owned file for a title/artist pair (normalized MediaKeys match),
     // or null — drives the "already in your library?" download confirm.
     Task<string?> FindFileByMetadataAsync(Guid userId, string title, string? artist,
@@ -24,7 +37,17 @@ public interface ISongReadModel
     Task<IReadOnlyList<string>> GetFilesMissingLoudnessAsync(Guid userId, int limit,
         CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetAlbumsAsync(Guid userId, CancellationToken ct = default);
-    Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(Guid userId, string album, CancellationToken ct = default);
+    Task<IReadOnlyList<SongDto>> GetSongsByAlbumAsync(Guid userId, string album,
+        string? search = null, string? sort = null, string? dir = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default);
+    Task<int> GetAlbumSongCountAsync(Guid userId, string album, string? search = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetAlbumFilesAsync(Guid userId, string album, string? search = null,
+        string? sort = null, string? dir = null, CancellationToken ct = default);
+    // Ordered file names only (same search/sort as ListAsync, no metadata
+    // reads): queue building for play-all without holding full Song[] lists.
+    Task<IReadOnlyList<string>> ListFilesAsync(Guid userId, string? search, string? sort, string? dir,
+        CancellationToken ct = default);
 }
 
 // Playlist read-model port (Dapper): lists + song counts for grids/submenus.
@@ -35,12 +58,18 @@ public interface IPlaylistReadModel
     Task<PlaylistDto?> GetAsync(Guid userId, long id, CancellationToken ct = default);
 }
 
-// Discover taste read-model port (Dapper): top artists by history plays,
-// owned title/artist pairs, and in-flight download pairs for dedupe
-// (packages/contracts/discover.md rules 1-2).
+// Discover taste read-model port (Dapper): recency-weighted top artists /
+// tracks / tags, owned title+artist pairs, and in-flight download pairs for
+// dedupe (packages/contracts/discover.md rules 1-2). Local-only signals.
 public interface IDiscoverTasteReadModel
 {
-    Task<IReadOnlyList<(string Artist, long Plays)>> GetTopArtistsAsync(
+    Task<IReadOnlyList<Hathor.Domain.Services.TasteArtist>> GetTopArtistsAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<Hathor.Domain.Services.TasteTrack>> GetTopTracksAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetTopTagsAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<TasteFile>> GetTopPlayedFilesAsync(
         Guid userId, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<(string Title, string Artist)>> GetLibraryPairsAsync(
         Guid userId, CancellationToken ct = default);
@@ -67,6 +96,8 @@ public interface IHistoryReadModel
         GetPlayedPlaylistPageAsync(Guid userId, int page, int pageSize, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetRecentPlayedFilesAsync(Guid userId, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetRecentDownloadedFilesAsync(Guid userId, int limit, CancellationToken ct = default);
+    // Same filter/order as the Download History tab (DownloadedLink present).
+    Task<IReadOnlyList<string>> GetDownloadHistoryFilesAsync(Guid userId, int limit, CancellationToken ct = default);
 }
 public interface ILibraryStorage
 {
@@ -79,8 +110,10 @@ public interface ILibraryStorage
     string PodcastPath(Guid userId, string file);
     bool PodcastExists(Guid userId, string file);
     // Custom background image (desktop background_path): single file per user.
+    // Streamed upload (no byte[] buffering): the handler enforces the size
+    // cap, the implementation deletes stale files then moves into place.
     string? FindBackground(Guid userId);
-    Task<string> SaveBackgroundAsync(Guid userId, byte[] bytes, string contentType,
+    Task<string> SaveBackgroundFromStreamAsync(Guid userId, Stream content, string contentType,
         CancellationToken ct = default);
     Task DeleteBackgroundAsync(Guid userId, CancellationToken ct = default);
     string BackgroundPath(Guid userId, string file);
@@ -88,10 +121,18 @@ public interface ILibraryStorage
 
 // Podcast read-model port: lightweight list (DB titles + disk files,
 // no durations/covers until details) + full per-episode details.
+// Paging is opt-in (null = whole list, legacy callers).
 public interface IPodcastReadModel
 {
-    Task<IReadOnlyList<SongDto>> ListAsync(Guid userId, CancellationToken ct = default);
+    Task<IReadOnlyList<SongDto>> ListAsync(Guid userId, string? search = null, long? tagId = null,
+        int? page = null, int? pageSize = null, CancellationToken ct = default);
+    Task<int> CountAsync(Guid userId, string? search = null, long? tagId = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<string>> ListFilesAsync(Guid userId, string? search = null, long? tagId = null,
+        CancellationToken ct = default);
     Task<SongDto?> GetByFileAsync(Guid userId, string file, CancellationToken ct = default);
+    // Raw cover bytes + mime + version stamp (see ISongReadModel.ReadCover).
+    (byte[] Bytes, string Mime, string Version)? ReadCover(Guid userId, string file);
     // Raw file metadata without DB (library scans).
     SongDto ReadLocalEpisode(Guid userId, string file);
 }
@@ -113,8 +154,9 @@ public interface ISyncService
     Task<Application.Sync.SyncDelta> GetDeltaAsync(Guid userId, string cursor,
         CancellationToken ct = default);
     // Persist raw MP3 bytes pushed by a device (PUT /sync/files/{file}):
-    // writes to the shared library folder and upserts the catalog row.
-    Task SaveFileAsync(Guid userId, string file, bool isPodcast, byte[] bytes,
+    // streamed from the request body to the shared library folder (no
+    // MemoryStream buffering) and upserts the catalog row.
+    Task SaveFileFromStreamAsync(Guid userId, string file, bool isPodcast, Stream content,
         CancellationToken ct = default);
 }
 
@@ -152,8 +194,33 @@ public interface IMetadataWriter
 public interface IPlaybackHub
 {
     Task BroadcastStateAsync(Guid userId, PlayerStateDto state, CancellationToken ct = default);
-    Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue, CancellationToken ct = default);
+    // Extra SignalR args are ignored by old external clients, so the
+    // version rides along without breaking them.
+    Task BroadcastQueueAsync(Guid userId, IReadOnlyList<SongDto> queue,
+        int queueVersion = 0, CancellationToken ct = default);
     Task BroadcastDownloadAsync(Guid userId, DownloadJobDto job, CancellationToken ct = default);
+    Task BroadcastAiDjStateAsync(Guid userId, AiDjStateDto state, CancellationToken ct = default);
+}
+
+// AI DJ taste read-model (Dapper): playable library candidates with local
+// frequency/quality signals. No external catalog data.
+public interface IAiDjReadModel
+{
+    Task<IReadOnlyList<AiDjCandidateRow>> GetCandidatesAsync(
+        Guid userId, int limit, CancellationToken ct = default);
+}
+
+// Server-to-server Vohithe planner. Returns null when the assistant is
+// unconfigured or unreachable so the local fallback can keep music playing.
+public interface IAiDjPlanner
+{
+    bool IsConfigured { get; }
+    Task<AiDjPlanResponse?> PlanAsync(
+        AiDjPlanRequest request, CancellationToken ct = default);
+    Task<IReadOnlyList<AiDjPlanClip>> SynthesizeAsync(
+        string text, string language, CancellationToken ct = default);
+    Task<string?> TranscribeAsync(
+        string audioBase64, string language, CancellationToken ct = default);
 }
 
 // YouTube ingest engine port (YoutubeExplode in Infrastructure):
@@ -203,6 +270,109 @@ public interface IDiscoverySuggester
     Task<IReadOnlyList<(string Title, string Artist)>> SuggestAsync(
         IReadOnlyList<(string Artist, long Plays)> taste, int maxSuggestions,
         CancellationToken ct = default);
+}
+
+// Open-data candidate source (packages/contracts/discover.md): each source
+// contributes candidates from raw public data; the local ranker decides the
+// final order. Sources never call a provider's recommendation endpoint.
+public interface ICandidateSource
+{
+    string Name { get; }
+    // Fallback sources run only when the open-data pool is empty or too
+    // small (cold start), so charts/same-artist expansion never dominate.
+    bool IsFallback { get; }
+    Task<IReadOnlyList<DiscoverCandidate>> GetCandidatesAsync(
+        TasteProfile taste, int limit, CancellationToken ct = default);
+}
+
+// Fills artwork/catalog metadata for ranked candidates (iTunes is a
+// resolver here, never a recommendation source).
+public interface ICandidateResolver
+{
+    Task<DiscoverCandidate> ResolveAsync(
+        DiscoverCandidate candidate, CancellationToken ct = default);
+}
+
+// MusicBrainz catalog/graph client (CC0 core data). Callers see parsed
+// records only; HTTP/rate-limit/caching details stay in Infrastructure.
+public interface IMusicBrainzClient
+{
+    Task<MbArtistDto?> SearchArtistAsync(string name, CancellationToken ct = default);
+    Task<MbRecordingDto?> SearchRecordingAsync(
+        string title, string artist, CancellationToken ct = default);
+    Task<MbRecordingDto?> GetRecordingAsync(string mbid, CancellationToken ct = default);
+    Task<IReadOnlyList<MbRecordingDto>> GetArtistRecordingsAsync(
+        string artistMbid, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<MbArtistDto>> GetRelatedArtistsAsync(
+        string artistMbid, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<MbRecordingDto>> GetTagRecordingsAsync(
+        string tag, int limit, CancellationToken ct = default);
+}
+
+// ListenBrainz Labs public similarity + open listen counts. No user token,
+// no profile: queries carry seed MBIDs only.
+public interface IListenBrainzClient
+{
+    Task<IReadOnlyList<SimilarArtistDto>> GetSimilarArtistsAsync(
+        string artistMbid, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<SimilarRecordingDto>> GetSimilarRecordingsAsync(
+        string recordingMbid, int limit, CancellationToken ct = default);
+    // Global listen counts for a batch of recordings (main ListenBrainz API,
+    // POST /1/popularity/recording). Known counts only.
+    Task<IReadOnlyDictionary<string, long>> GetRecordingPopularityAsync(
+        IReadOnlyList<string> recordingMbids, CancellationToken ct = default);
+}
+
+// Batch audio embedding provider (CLAP sidecar). Returns null entries when
+// the sidecar/model is unavailable; callers treat that as "no audio signal".
+public interface IEmbeddingProvider
+{
+    Task<IReadOnlyList<float[]?>> EmbedFilesAsync(
+        IReadOnlyList<string> paths, CancellationToken ct = default);
+}
+
+// Adds content similarity to candidates that have cached CLAP embeddings.
+// Best-effort: missing embeddings/model leave candidates unchanged.
+public interface IAudioSimilarityScorer
+{
+    Task<IReadOnlyList<DiscoverCandidate>> ScoreAsync(
+        Guid userId, TasteProfile taste, IReadOnlyList<DiscoverCandidate> candidates,
+        CancellationToken ct = default);
+}
+
+// Global recording popularity (LB listen counts), cached by MBID.
+public interface ITrackPopularityService
+{
+    Task<IReadOnlyDictionary<string, long>> GetAsync(
+        IReadOnlyList<string> recordingMbids, CancellationToken ct = default);
+}
+
+// Builds the user's historical popularity band from top played tracks.
+public interface IPopularityProfileBuilder
+{
+    Task<PopularityProfile?> BuildAsync(
+        Guid userId, IReadOnlyList<TasteTrack> tracks, CancellationToken ct = default);
+}
+
+// Resolves the ranker weights for a user: tuned model when fresh/valid,
+// otherwise defaults. CacheVersion changes when a tuned model is applied so
+// the daily Discover cache invalidates immediately.
+public sealed record RankingOptionsSnapshot(
+    DiscoverRankingOptions Options, string CacheVersion, string? PresetName);
+
+public interface IRankingOptionsProvider
+{
+    Task<RankingOptionsSnapshot> GetAsync(
+        Guid userId, CancellationToken ct = default);
+}
+
+// Postgres-backed cache for public-data HTTP responses (survives restarts
+// and keeps MusicBrainz/ListenBrainz calls inside their rate limits).
+public interface IRecommendationCache
+{
+    Task<T?> GetAsync<T>(string key, CancellationToken ct = default) where T : class;
+    Task SetAsync<T>(string key, T value, TimeSpan ttl, CancellationToken ct = default)
+        where T : class;
 }
 
 // Loudness analyzer port (ffmpeg loudnorm): integrated LUFS for a file,

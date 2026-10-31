@@ -2,66 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import Icon from './icons'
 
-// Cover image with music-note fallback. List endpoints omit covers (payload
-// would be megabytes of base64), so rows pass `file` and the art is fetched
-// lazily when the row scrolls into view — the desktop lazy-cover observer
-// (ui/index.html lazyCoverObserver + get_cover_art_base64) ported to React.
-// Results are cached module-wide (desktop window._coverCache, capped).
-const coverCache = new Map<string, string | null>()
-const inflight = new Map<string, Promise<string | null>>()
+// Cover image with music-note fallback. Art is served as bytes from
+// GET .../{file}/cover (ETag/browser-cached), so NO base64 ever sits in
+// JS state — the previous module-wide base64 Map (30 entries) plus one
+// lazy string per row was tens of MB of retained heap. Rows pass `file`
+// and the <img> mounts only when the row scrolls near (same observer +
+// debounce as before); the browser HTTP cache dedupes repeat views.
+// `src` (data: URL) still wins when provided: edit-modal previews and the
+// current-song payload that already carries art.
+const versions = new Map<string, number>()
 
-// Drop a file's cached art (metadata edit / remove / delete / redownload):
-// otherwise the next lazy read serves the pre-edit bytes forever.
+// Bump a file's cover version (metadata edit / remove / delete /
+// redownload): rows re-render on query invalidation and read the new
+// version, busting the browser cache for that file only.
 export function evictCoverCache(file: string) {
-  coverCache.delete(file)
-  inflight.delete(file)
+  versions.set(file, (versions.get(file) ?? 0) + 1)
 }
 
-function cacheSet(file: string, src: string | null) {
-  if (coverCache.size > 50) {
-    const first = coverCache.keys().next().value
-    if (first !== undefined) coverCache.delete(first)
-  }
-  coverCache.set(file, src)
-}
-
-// Shared concurrency cap: a fresh list render fans out one detail fetch
-// per row (each carrying a base64 cover), which saturated the browser's
-// ~6-connection pool and stalled transport fetches (play/toggle/seek)
-// behind it for seconds — stale responses then resurrected old tracks.
-// Four at a time keeps covers flowing without starving playback.
-const MAX_COVER_FETCHES = 4
-let activeCoverFetches = 0
-const coverQueue: Array<() => void> = []
-
-function pumpCoverQueue() {
-  while (activeCoverFetches < MAX_COVER_FETCHES && coverQueue.length > 0) {
-    const run = coverQueue.shift()
-    run?.()
-  }
-}
-
-function fetchCover(file: string, isPodcast: boolean): Promise<string | null> {
-  const hit = inflight.get(file)
-  if (hit) return hit
-  const p = new Promise<string | null>((resolve) => {
-    const run = () => {
-      activeCoverFetches += 1
-      ;(isPodcast ? api.podcastDetails(file) : api.song(file, true))
-        .then((song) => song.coverArt)
-        .catch(() => null)
-        .then((cover) => {
-          activeCoverFetches -= 1
-          inflight.delete(file)
-          pumpCoverQueue()
-          resolve(cover)
-        })
-    }
-    coverQueue.push(run)
-    pumpCoverQueue()
-  })
-  inflight.set(file, p)
-  return p
+function versionOf(file: string | undefined): string | null {
+  if (!file) return null
+  const v = versions.get(file) ?? 0
+  return v === 0 ? null : String(v)
 }
 
 export default function CoverArt({
@@ -81,55 +42,36 @@ export default function CoverArt({
   iconClassName?: string
   imgClassName?: string
 }) {
-  const [lazy, setLazy] = useState<string | null>(null)
+  const [near, setNear] = useState(false)
   const [failed, setFailed] = useState(false)
   const boxRef = useRef<HTMLDivElement | null>(null)
 
-  // A fresh src (player-bar current song, post-edit refresh) wins immediately.
-  useEffect(() => {
-    if (src && file) cacheSet(file, src)
-  }, [src, file])
+  const url = !src && file ? api.coverUrl(file, versionOf(file), isPodcast) : null
 
-  // New file → drop the previous lazy result.
+  // New target → drop previous failure/visibility state.
   useEffect(() => {
-    setLazy(null)
+    setNear(false)
     setFailed(false)
-  }, [file])
+  }, [url])
 
   useEffect(() => {
-    if (src || lazy || !file) return
-    if (coverCache.has(file)) {
-      setLazy(coverCache.get(file) ?? null)
-      return
-    }
-    const load = () => {
-      void fetchCover(file, isPodcast).then((cover) => {
-        cacheSet(file, cover)
-        setLazy(cover)
-      })
-    }
-    // Phones: fetch eagerly. Small viewports + nested overflow containers
-    // (#main scrolls, strips scroll sideways) make intersection delivery
-    // unreliable, which left phone rows stuck on the note fallback.
-    if (typeof window !== 'undefined' && window.innerWidth <= 700) {
-      const t = window.setTimeout(load, 50)
-      return () => window.clearTimeout(t)
-    }
+    if (src || !file || near) return
     const el = boxRef.current
     if (!el || typeof IntersectionObserver === 'undefined') {
-      void load()
+      setNear(true)
       return
     }
     let timer: number | undefined
-    let fallback: number | undefined
+    // NOTE: deliberately no fallback force-load (an old 2500ms timer once
+    // loaded EVERY offscreen row's cover — the 2.3GB blowup). Rows stay on
+    // the note fallback until scrolled near; rootMargin preloads ahead.
     const io = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
             io.disconnect()
-            if (fallback !== undefined) window.clearTimeout(fallback)
             // Debounce fast scrolls so a fling doesn't fan out requests.
-            timer = window.setTimeout(load, 150)
+            timer = window.setTimeout(() => setNear(true), 150)
           }
         }
       },
@@ -138,20 +80,13 @@ export default function CoverArt({
       { rootMargin: '400px' },
     )
     io.observe(el)
-    // Safety net: if the observer never fires (nested scroller quirks),
-    // still resolve the art instead of showing the fallback forever.
-    fallback = window.setTimeout(() => {
-      io.disconnect()
-      load()
-    }, 2500)
     return () => {
       io.disconnect()
       if (timer !== undefined) window.clearTimeout(timer)
-      if (fallback !== undefined) window.clearTimeout(fallback)
     }
-  }, [src, lazy, file, isPodcast])
+  }, [src, file, near])
 
-  const effective = failed ? null : (src ?? lazy)
+  const effective = failed ? null : (src ?? (near ? url : null))
   if (effective) {
     return (
       <img
@@ -160,12 +95,7 @@ export default function CoverArt({
         className={`${className} object-cover opacity-0 transition-opacity duration-500 ${imgClassName}`}
         loading="lazy"
         onLoad={(e) => e.currentTarget.classList.remove('opacity-0')}
-        onError={() => {
-          // Broken data (e.g. stale cache after REMOVE) → fall back to the note.
-          if (file) cacheSet(file, null)
-          setLazy(null)
-          setFailed(true)
-        }}
+        onError={() => setFailed(true)}
       />
     )
   }

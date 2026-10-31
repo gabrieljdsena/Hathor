@@ -9,7 +9,8 @@ import { ControlButton, PlayPauseButton } from './ui/buttons'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { useChapterAutoSkip, useChapterJump } from './ui/PodcastTimestamps'
-import ResumeSpot, { useResumeSpot } from './ui/ResumeSpot'
+import { useResumeSpot } from './ui/ResumeSpot'
+import ResumeBento from './ui/ResumeBento'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 
 // Self-ticking progress row (engine media time; display-only).
@@ -18,6 +19,12 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   const sliderRef = useRef<HTMLInputElement>(null)
   const curRef = useRef<HTMLSpanElement>(null)
   const totRef = useRef<HTMLSpanElement>(null)
+  // True between press and release of a scrub (pointer or arrow keys). The
+  // ticker holds off the thumb while set so it never fights the user's own
+  // drag; a focus check can't do this job — the slider keeps focus after
+  // release, which used to freeze the thumb (but not the counter) until the
+  // next click elsewhere blurred it.
+  const scrubbingRef = useRef(false)
 
   // Effective duration: the element's own once metadata loads (ground
   // truth for what can play), the song's stored duration before that so a
@@ -39,7 +46,7 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
         const dur = effDuration()
         const pos = engine.time()
         if (dur > 0) slider.max = String(dur)
-        if (document.activeElement !== slider) slider.value = String(pos)
+        if (!scrubbingRef.current) slider.value = String(pos)
         if (curRef.current) curRef.current.textContent = formatTime(pos)
         if (totRef.current) totRef.current.textContent = formatTime(dur)
         const max = Number.parseFloat(slider.max) || 100
@@ -52,6 +59,7 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
   }, [])
 
   const commitSeek = () => {
+    scrubbingRef.current = false
     const slider = sliderRef.current
     if (!slider) return
     // Same clamp as the engine's live scrub: server and element agree, so
@@ -81,8 +89,20 @@ function ProgressSlider({ idPrefix }: { idPrefix: string }) {
           // follows once on release so a drag doesn't fan out seeks.
           engine.seek(Number.parseFloat(e.target.value))
         }}
+        onPointerDown={() => {
+          scrubbingRef.current = true
+        }}
         onPointerUp={commitSeek}
+        onPointerCancel={() => {
+          scrubbingRef.current = false
+        }}
+        onKeyDown={(e) => {
+          if (e.key.startsWith('Arrow')) scrubbingRef.current = true
+        }}
         onKeyUp={commitSeek}
+        onBlur={() => {
+          scrubbingRef.current = false
+        }}
         className="w-full cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
       />
       <span ref={totRef} className="text-xs text-zinc-500 font-medium font-mono">
@@ -136,6 +156,20 @@ export function VolumeSlider({ volume, className, id }: { volume: number; classN
 // select their file out of it — never one fetch per chip.
 export function PendingEditChip({ file }: { file: string }) {
   const queryClient = useQueryClient()
+  // The stash flushes server-side on track change AND on queue-exhausted
+  // stop (same file, playing -> paused): refetch then so the chip clears
+  // promptly instead of lingering on the 30s stale window. Pauses refetch
+  // too (harmless — the row is still there, so the chip stays).
+  const currentFile = usePlayer((s) => s.currentSong?.file)
+  const isPlaying = usePlayer((s) => s.isPlaying)
+  const prev = useRef({ file: currentFile, playing: isPlaying })
+  useEffect(() => {
+    const p = prev.current
+    prev.current = { file: currentFile, playing: isPlaying }
+    if (p.file !== currentFile || (p.playing && !isPlaying)) {
+      void queryClient.invalidateQueries({ queryKey: ['pending-edits'] })
+    }
+  }, [currentFile, isPlaying, queryClient])
   const { data: hasPending } = useQuery({
     queryKey: ['pending-edits'],
     queryFn: api.pendingEdits,
@@ -154,30 +188,50 @@ export function PendingEditChip({ file }: { file: string }) {
     <button
       onClick={discard}
       title="Edit queued — applies when this track changes. Click to discard."
-      className="text-[10px] font-semibold uppercase tracking-[0.15em] text-orange-300/90 hover:text-orange-200 transition-colors cursor-pointer"
+      className="ml-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-orange-300/90 hover:text-orange-200 transition-colors cursor-pointer"
     >
       Edit queued
     </button>
   )
 }
 
+// Subtle "not dead" cue while the stream buffers or a transport command is
+// retrying against a flaky connection.
+function NetworkStatus({ label }: { label: string }) {
+  return (
+    <span
+      role="status"
+      className="inline-flex items-center gap-1 ml-1 text-[10px] font-medium uppercase tracking-[0.12em] text-orange-300/80 align-middle"
+      title={label === 'Buffering' ? 'Buffering audio…' : 'Syncing with the server…'}
+    >
+      <span className="spinner-btn" aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
 // Bottom player bar cloned from Music Player/ui/index.html #controls
-// (h-28, orange top border, glass). Audio renders server state; crossfade
+// (orange top border, glass). Audio renders server state; crossfade
 // and gapless arrive in a later phase — manual next/prev stay instant.
-// Mobile stacks a compact transport row over a full-width progress slider
-// (repeat/shuffle/volume stay on sm+ where they fit).
+// Mobile is a compact 2-row stack: song + full transport (shuffle, prev,
+// play, next, repeat) + bento/lyrics/queue actions over a full-width
+// progress slider. Volume lives on desktop + the Now Playing overlay.
 export default function PlayerBar({
   onToggleQueue,
   onToggleLyrics,
   onOpenNowPlaying,
+  onOpenDj,
   queueActive = false,
   lyricsActive = false,
+  djActive = false,
 }: {
   onToggleQueue: () => void
   onToggleLyrics: () => void
   onOpenNowPlaying: () => void
+  onOpenDj?: () => void
   queueActive?: boolean
   lyricsActive?: boolean
+  djActive?: boolean
 }) {
   // Granular subscriptions: the 500ms progress ticker writes store state
   // elsewhere, so subscribing field-by-field keeps the bar from re-rendering
@@ -188,8 +242,16 @@ export default function PlayerBar({
   const shuffle = usePlayer((s) => s.shuffle)
   const repeat = usePlayer((s) => s.repeat)
   const source = usePlayer((s) => s.source)
+  const buffering = usePlayer((s) => s.buffering)
+  const syncing = usePlayer((s) => s.syncing)
   const toggle = usePlayer((s) => s.toggle)
+  const skipNext = usePlayer((s) => s.skipNext)
+  const skipPrev = usePlayer((s) => s.skipPrev)
+  const toggleRepeat = usePlayer((s) => s.toggleRepeat)
   const boot = usePlayer((s) => s.boot)
+  // Reconnecting to the stream (audio stalled/retrying) vs. retrying a
+  // pause/resume command. Both look frozen otherwise.
+  const networkLabel = buffering ? 'Buffering' : syncing ? 'Syncing' : null
   const navigate = useNavigate()
   // Podcast chapters: auto-skip pump + chapter-aware transport arrows.
   useChapterAutoSkip()
@@ -209,8 +271,8 @@ export default function PlayerBar({
   }, [])
 
   // OS media integration (desktop SMTC overlay): lock-screen / headset
-  // metadata + play/pause/next/prev handlers. Cover falls back to the
-  // embedded art the server already attached to the current song.
+  // metadata + play/pause/next/prev handlers. Artwork uses the cached
+  // /cover URL (current-song payloads no longer carry base64 art).
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const song = usePlayer.getState().currentSong
@@ -220,7 +282,7 @@ export default function PlayerBar({
             title: song.title,
             artist: song.artist,
             album: song.album !== 'Unknown' ? song.album : undefined,
-            artwork: song.coverArt ? [{ src: song.coverArt }] : undefined,
+            artwork: [{ src: song.coverArt ?? api.coverUrl(song.file, null, song.isPodcast) }],
           })
         : null
     } catch {
@@ -231,22 +293,8 @@ export default function PlayerBar({
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const toggle = () => void usePlayer.getState().toggle()
-    const next = () =>
-      void api
-        .next()
-        .then((s) => {
-          usePlayer.setState(s)
-          usePlayer.getState().syncAudio()
-        })
-        .catch(() => {})
-    const prev = () =>
-      void api
-        .prev()
-        .then((s) => {
-          usePlayer.setState(s)
-          usePlayer.getState().syncAudio()
-        })
-        .catch(() => {})
+    const next = () => void usePlayer.getState().skipNext()
+    const prev = () => void usePlayer.getState().skipPrev()
     try {
       navigator.mediaSession.setActionHandler('play', toggle)
       navigator.mediaSession.setActionHandler('pause', toggle)
@@ -273,26 +321,14 @@ export default function PlayerBar({
     // (chapter seek, not a track change) — even with auto-skip off. Past
     // the last chapter it falls through to the next track.
     if (chapterJump.next()) return
-    void api
-      .next()
-      .then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio() // hard switch; cancels any fade
-      })
-      .catch(() => {})
+    void skipNext()
   }
   const doPrev = () => {
     // Same deal backwards (restarts the chapter when well inside it).
     if (chapterJump.prev()) return
-    void api
-      .prev()
-      .then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio() // hard switch; cancels any fade
-      })
-      .catch(() => {})
+    void skipPrev()
   }
-  const doRepeat = () => void api.repeat().then((s) => usePlayer.setState(s))
+  const doRepeat = () => void toggleRepeat()
   const doShuffle = () => void api.shuffle().then((s) => usePlayer.setState(s))
   const doMute = () => {
     if (volume > 0) {
@@ -309,6 +345,15 @@ export default function PlayerBar({
       id="controls"
       className="fixed bottom-0 left-0 right-0 flex flex-col min-[1100px]:flex-row min-[1100px]:items-center min-[1100px]:justify-between gap-1 min-[1100px]:gap-0 border-t border-orange-500/10 bg-black/40 backdrop-blur-2xl px-3 min-[1100px]:px-6 py-2 min-[1100px]:py-0 min-[1100px]:h-28 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
     >
+      {resumeSpot && (
+        <div className="min-[1100px]:hidden">
+          <ResumeBento
+            key={resumeSpot.file + resumeSpot.updatedUtc}
+            spot={resumeSpot}
+            variant="banner"
+          />
+        </div>
+      )}
       {/* The AudioEngine owns its elements (double-buffered for crossfade);
           UI polls engine time — no DOM <audio> needed here. */}
       {/* Compact stacked layout (below 1100px): song + centered transport, progress below */}
@@ -342,19 +387,15 @@ export default function PlayerBar({
               <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
             )}
             {song && <PendingEditChip file={song.file} />}
-            {song && resumeSpot && resumeSpot.file !== song.file && (
-              <ResumeSpot
-                key={resumeSpot.file + resumeSpot.updatedUtc}
-                spot={resumeSpot}
-                compact
-              />
-            )}
+            {networkLabel && <NetworkStatus label={networkLabel} />}
           </div>
         </div>
-        <div className="flex items-center justify-center gap-1">
+        <div className="flex items-center justify-center gap-0.5 sm:gap-1">
+          <ControlButton icon="shuffle" title="Toggle Shuffle" active={shuffle} iconClass="w-5 h-5" onClick={doShuffle} />
           <ControlButton icon="prev" title="Previous Song" iconClass="w-5 h-5" onClick={doPrev} />
           <PlayPauseButton playing={isPlaying} id="playPauseBtn-mobile" small onClick={() => void toggle()} />
           <ControlButton icon="next" title="Next Song" iconClass="w-5 h-5" onClick={doNext} />
+          <ControlButton icon="repeat" title="Toggle Repeat" active={repeat} iconClass="w-5 h-5" onClick={doRepeat} />
         </div>
         <div className="flex items-center justify-end">
           <button
@@ -366,36 +407,23 @@ export default function PlayerBar({
           >
             <Icon name="musicNote" className="w-5 h-5" />
           </button>
-          <button
-            onClick={onToggleQueue}
-            title="Toggle Queue"
-            className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${
-              queueActive ? 'text-orange-400' : 'text-zinc-400 active:text-white'
-            }`}
-          >
-            <Icon name="queue" className="w-5 h-5" />
-          </button>
+          {!djActive && (
+            <button
+              onClick={onToggleQueue}
+              title="Toggle Queue"
+              className={`cursor-pointer transition-colors p-2 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0 ${
+                queueActive ? 'text-orange-400' : 'text-zinc-400 active:text-white'
+              }`}
+            >
+              <Icon name="queue" className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
-      {/* Compact stacked layout (below 1100px): full-width progress + volume */}
+      {/* Compact stacked layout (below 1100px): full-width progress.
+          Volume lives on desktop + the Now Playing overlay. */}
       <div className="flex min-[1100px]:hidden w-full items-center gap-2">
         <ProgressSlider idPrefix="m" />
-      </div>
-      <div className="flex min-[1100px]:hidden w-full items-center gap-2">
-        <button
-          onClick={doMute}
-          title="Mute / unmute"
-          className="cursor-pointer text-zinc-400 active:text-white transition-colors p-1 rounded-full active:bg-white/5 focus:outline-none flex-shrink-0"
-        >
-          <Icon
-            name={volume === 0 ? 'volumeMuted' : volume < 0.5 ? 'volumeLow' : 'volume'}
-            className="w-4 h-4"
-          />
-        </button>
-        <VolumeSlider
-          volume={volume}
-          className="flex-1 cursor-pointer outline-none border-none shadow-none focus:outline-none focus:ring-0"
-        />
       </div>
 
       {/* Desktop: song card */}
@@ -428,13 +456,6 @@ export default function PlayerBar({
             <div className="text-xs text-zinc-500 truncate">{song?.artist ?? 'Pick a song to start'}</div>
           )}
           {song && <PendingEditChip file={song.file} />}
-          {song && resumeSpot && resumeSpot.file !== song.file && (
-            <ResumeSpot
-              key={resumeSpot.file + resumeSpot.updatedUtc}
-              spot={resumeSpot}
-              compact
-            />
-          )}
         </div>
       </div>
       {song && (
@@ -473,8 +494,23 @@ export default function PlayerBar({
         </div>
       </div>
 
-      {/* Desktop: lyrics / queue / volume */}
+      {/* Desktop: resume bento / lyrics / queue / volume */}
       <div className="hidden min-[1100px]:flex flex-1 items-center justify-end gap-2 min-w-0">
+        {resumeSpot && (
+          <ResumeBento
+            key={resumeSpot.file + resumeSpot.updatedUtc}
+            spot={resumeSpot}
+          />
+        )}
+        <button
+          onClick={onOpenDj}
+          title="Vohithe AI DJ"
+          className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
+            djActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Icon name="sparkles" className="w-5 h-5" />
+        </button>
         <button
           onClick={onToggleLyrics}
           title="Toggle Lyrics"
@@ -484,15 +520,17 @@ export default function PlayerBar({
         >
           <Icon name="musicNote" className="w-5 h-5" />
         </button>
-        <button
-          onClick={onToggleQueue}
-          title="Toggle Queue"
-          className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
-            queueActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <Icon name="queue" className="w-5 h-5" />
-        </button>
+        {!djActive && (
+          <button
+            onClick={onToggleQueue}
+            title="Toggle Queue"
+            className={`cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 p-2 rounded-full hover:bg-white/5 focus:outline-none ${
+              queueActive ? 'text-orange-400 hover:text-orange-300' : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Icon name="queue" className="w-5 h-5" />
+          </button>
+        )}
         <button
           onClick={doMute}
           title="Mute / unmute"

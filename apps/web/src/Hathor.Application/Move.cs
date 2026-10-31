@@ -142,6 +142,6 @@ internal static class MoveHelpers
 
         var dto = await Player.PlayerHelpers.ToDtoAsync(state, songs, userId, ct);
         await hub.BroadcastStateAsync(userId, dto, ct);
-        await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(userId, dto.Queue, dto.QueueVersion, ct);
     }
 }

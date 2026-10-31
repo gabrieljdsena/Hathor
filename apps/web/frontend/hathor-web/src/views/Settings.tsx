@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type FfmpegDownloadStatus, type LibraryInfo, type SessionInfo } from '../api/client'
+import { api, type FfmpegDownloadStatus, type LibraryInfo, type SessionInfo, type YoutubeProtectionStatus } from '../api/client'
 import { engine } from '../audio/engine'
 import { useAuth } from '../auth/AuthContext'
 import { usePlayer } from '../store/player'
 import ToggleSwitch from '../components/ui/ToggleSwitch'
 import ViewHeader from '../components/ui/ViewHeader'
+import { parseServerDate } from '../utils/dates'
 
 // Settings cloned from ui/views/settings.html: folders + rescans, remote
 // pull per library, background, download limit, crossfade, system retry.
@@ -93,8 +94,8 @@ export function uploadBackgroundFile(
   })
 }
 
-function formatDate(iso: string): string {  const d = new Date(iso)
-  return Number.isNaN(d.getTime())
+function formatDate(iso: string): string {  const d = parseServerDate(iso)
+  return !d
     ? iso
     : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
         ' ' +
@@ -146,7 +147,7 @@ function SessionRow({
 
 export default function Settings() {
   const queryClient = useQueryClient()
-  const { logout } = useAuth()
+  const { logout, signOutLocal } = useAuth()
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [limit, setLimit] = useState(3)
@@ -173,6 +174,12 @@ export default function Settings() {
   const dlState = dl?.state
   const [ytDl, setYtDl] = useState<FfmpegDownloadStatus | null>(null)
   const ytDlState = ytDl?.state
+  const { data: protection, refetch: refetchProtection } = useQuery({
+    queryKey: ['youtube-protection'],
+    queryFn: api.protectionStatus,
+  })
+  const [pot, setPot] = useState<YoutubeProtectionStatus | null>(null)
+  const potState = pot?.provisionState ?? (protection?.enabled ? 'ready' : undefined)
 
   // Poll the FFmpeg self-install until it lands (ready/failed).
   useEffect(() => {
@@ -213,6 +220,30 @@ export default function Settings() {
     }, 2000)
     return () => clearInterval(t)
   }, [ytDlState])
+
+  // Poll the bot-check protection setup until it lands (ready/failed).
+  useEffect(() => {
+    if (!potState || !['downloading', 'extracting', 'building', 'starting'].includes(potState)) return
+    const t = setInterval(() => {
+      void api
+        .protectionStatus()
+        .then((s) => {
+          setPot(s)
+          if (s.provisionState === 'ready' && s.enabled) {
+            say(
+              s.providerRunning
+                ? 'YouTube protection is active — downloads carry proof-of-origin tokens.'
+                : 'YouTube protection installed, but the provider is not answering yet.',
+            )
+            void refetchProtection()
+          } else if (s.provisionState === 'failed') {
+            say(`YouTube protection setup failed: ${s.error ?? 'unknown error'}`)
+          }
+        })
+        .catch(() => {})
+    }, 2000)
+    return () => clearInterval(t)
+  }, [potState])
 
   useEffect(() => {
     if (!settings) return
@@ -552,8 +583,10 @@ export default function Settings() {
               run(
                 'sessions-all',
                 api.logoutEverywhere().then(() => {
-                  void queryClient.invalidateQueries({ queryKey: ['sessions'] })
-                  return 'Logged out everywhere. This device is signed out too — please sign in again.'
+                  // logout-all revoked this session too: drop local tokens
+                  // now instead of waiting for the access token to expire.
+                  signOutLocal()
+                  return 'Logged out everywhere.'
                 }),
               )
             }
@@ -688,6 +721,108 @@ export default function Settings() {
           >
             {spin('ytdlp-update')}Update
           </button>
+        </Row>
+
+        <Row
+          icon={
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          }
+          title="YouTube bot-check protection"
+          hint={(() => {
+            const view = pot ?? protection
+            if (!view) return 'Checking…'
+            if (['downloading', 'extracting', 'building', 'starting'].includes(view.provisionState)) {
+              const pct = view.provisionProgress >= 0 ? ` ${Math.round(view.provisionProgress * 100)}%` : ''
+              return `Setting up…${pct} (downloads a token provider — takes a few minutes once).`
+            }
+            if (view.provisionState === 'failed')
+              return `Setup failed: ${view.error ?? 'unknown error'}`
+            if (view.enabled && !view.pluginReady)
+              return 'Enabled, but the install is incomplete — press Update to repair it.'
+            if (view.enabled && view.providerRunning)
+              return `Active${view.version ? ` (v${view.version})` : ''} — downloads carry proof-of-origin tokens, no login or cookies needed.${view.pluginVerified ? ' (verified end-to-end)' : ' (installed — pickup check could not reach YouTube)'}`
+            if (view.enabled)
+              return 'Enabled, but the provider is not answering — it restarts automatically; Disable/Re-enable if it stays down.'
+            if (!view.nodeFound)
+              return 'Off — needs Node.js 22+ on the server PATH to build the token provider.'
+            return 'Off — enable to stop YouTube “sign in to confirm you’re not a bot” failures without logins or cookies.'
+          })()}
+          extra={
+            pot && ['downloading', 'extracting', 'building', 'starting'].includes(pot.provisionState) && pot.provisionProgress >= 0 ? (
+              <div className="mt-2 h-1.5 w-48 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-orange-500 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.round(pot.provisionProgress * 100)}%` }}
+                />
+              </div>
+            ) : undefined
+          }
+        >
+          {(() => {
+            const view = pot ?? protection
+            const working =
+              busy !== null ||
+              (!!view && ['downloading', 'extracting', 'building', 'starting'].includes(view.provisionState))
+            const enable = (force: boolean, key: string) => {
+              setBusy(key)
+              void api
+                .startProtection(force)
+                .then((s) => {
+                  setPot(s)
+                  if (s.provisionState === 'ready' && s.enabled) void refetchProtection()
+                })
+                .catch((e: unknown) => say(msgOf(e)))
+                .finally(() => setBusy(null))
+            }
+            return (
+              <>
+                {!view?.enabled && (
+                  <button
+                    className={btn}
+                    disabled={working}
+                    title="Downloads a proof-of-origin token provider and starts it. Needs Node.js on the server."
+                    onClick={() => enable(false, 'pot-enable')}
+                  >
+                    {spin('pot-enable')}Enable
+                  </button>
+                )}
+                {view?.enabled && view.provisionState === 'ready' && (
+                  <button
+                    className={btn}
+                    disabled={working}
+                    title="Re-download and rebuild the token provider (update to the configured version)."
+                    onClick={() => enable(true, 'pot-update')}
+                  >
+                    {spin('pot-update')}Update
+                  </button>
+                )}
+                {view?.enabled && (
+                  <button
+                    className={btn}
+                    disabled={working}
+                    title="Stop the token provider. Downloads fall back to plain yt-dlp (+ any configured cookies)."
+                    onClick={() => {
+                      const key = 'pot-disable'
+                      setBusy(key)
+                      void api
+                        .disableProtection()
+                        .then((s) => {
+                          setPot(s)
+                          say('YouTube protection disabled.')
+                          void refetchProtection()
+                        })
+                        .catch((e: unknown) => say(msgOf(e)))
+                        .finally(() => setBusy(null))
+                    }}
+                  >
+                    {spin('pot-disable')}Disable
+                  </button>
+                )}
+              </>
+            )
+          })()}
         </Row>
 
         <Row

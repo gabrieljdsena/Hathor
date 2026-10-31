@@ -18,6 +18,8 @@ public sealed record GetRecentlyPlayedQuery(Guid UserId, int Limit = 15)
     : IRequest<IReadOnlyList<SongDto>>;
 public sealed record GetRecentlyDownloadedQuery(Guid UserId, int Limit = 15)
     : IRequest<IReadOnlyList<SongDto>>;
+public sealed record GetDownloadHistoryFilesQuery(Guid UserId) : IRequest<IReadOnlyList<string>>;
+public sealed record GetPlayedHistoryFilesQuery(Guid UserId) : IRequest<IReadOnlyList<string>>;
 
 public sealed class HistoryHandlers(
     IHistoryReadModel history,
@@ -27,8 +29,13 @@ public sealed class HistoryHandlers(
     IRequestHandler<GetPlayedHistoryQuery, PagedResult<HistoryItemDto>>,
     IRequestHandler<GetPlayedPlaylistHistoryQuery, PagedResult<PlayedPlaylistItemDto>>,
     IRequestHandler<GetRecentlyPlayedQuery, IReadOnlyList<SongDto>>,
-    IRequestHandler<GetRecentlyDownloadedQuery, IReadOnlyList<SongDto>>
+    IRequestHandler<GetRecentlyDownloadedQuery, IReadOnlyList<SongDto>>,
+    IRequestHandler<GetDownloadHistoryFilesQuery, IReadOnlyList<string>>,
+    IRequestHandler<GetPlayedHistoryFilesQuery, IReadOnlyList<string>>
 {
+    // Queue-context cap; matches RebuildQueue's recent-source resolution.
+    private const int QueueFileLimit = 500;
+
     public async Task<PagedResult<HistoryItemDto>> Handle(GetDownloadHistoryQuery q, CancellationToken ct)
     {
         var (page, pageSize) = Clamp(q.Page, q.PageSize);
@@ -84,6 +91,12 @@ public sealed class HistoryHandlers(
         return await songs.GetManyAsync(q.UserId, files, includeCover: false, ct);
     }
 
+    public Task<IReadOnlyList<string>> Handle(GetDownloadHistoryFilesQuery q, CancellationToken ct) =>
+        history.GetDownloadHistoryFilesAsync(q.UserId, QueueFileLimit, ct);
+
+    public Task<IReadOnlyList<string>> Handle(GetPlayedHistoryFilesQuery q, CancellationToken ct) =>
+        history.GetRecentPlayedFilesAsync(q.UserId, QueueFileLimit, ct);
+
     private static (int Page, int PageSize) Clamp(int page, int pageSize) =>
         (Math.Max(1, page), Math.Clamp(pageSize, 1, 100));
 
@@ -94,6 +107,5 @@ public sealed class HistoryHandlers(
         return new PagedResult<T>(items, totalPages, current);
     }
 
-    private static string Iso(DateTime dt) =>
-        dt.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+    private static string Iso(DateTime dt) => Domain.UtcIso.Format(dt);
 }

@@ -1,3 +1,4 @@
+using FluentValidation;
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
 using Hathor.Domain.Entities;
@@ -9,17 +10,53 @@ namespace Hathor.Application.Podcasts;
 // Second library (desktop Podcasts table + podcasts folder): lightweight
 // listing, on-demand details, shared edit modal, delete with tag cleanup.
 
-public sealed record ListPodcastsQuery(Guid UserId) : IRequest<IReadOnlyList<SongDto>>;
+public sealed record ListPodcastsQuery(Guid UserId, string? Search = null, long? TagId = null,
+    int? Page = null, int? PageSize = null) : IRequest<IReadOnlyList<SongDto>>;
 public sealed record GetPodcastDetailsQuery(Guid UserId, string File) : IRequest<SongDto?>;
+// GET /api/v1/podcasts/{file}/cover (raw bytes for browser caching)
+public sealed record GetPodcastCoverQuery(Guid UserId, string File) : IRequest<SongCoverDto?>;
+public sealed record PodcastCountQuery(Guid UserId, string? Search = null, long? TagId = null)
+    : IRequest<int>;
+public sealed record PodcastFilesQuery(Guid UserId, string? Search = null, long? TagId = null)
+    : IRequest<IReadOnlyList<string>>;
+
+public sealed class ListPodcastsValidator : AbstractValidator<ListPodcastsQuery>
+{
+    public ListPodcastsValidator()
+    {
+        RuleFor(x => x.Page).Must(p => p is null || p >= 1).WithMessage("Page must be >= 1.");
+        RuleFor(x => x.PageSize).Must(p => p is null || (p >= 1 && p <= 5000))
+            .WithMessage("PageSize must be 1..5000.");
+    }
+}
 
 public sealed class PodcastQueryHandlers(IPodcastReadModel podcasts) :
     IRequestHandler<ListPodcastsQuery, IReadOnlyList<SongDto>>,
-    IRequestHandler<GetPodcastDetailsQuery, SongDto?>
+    IRequestHandler<GetPodcastDetailsQuery, SongDto?>,
+    IRequestHandler<GetPodcastCoverQuery, SongCoverDto?>,
+    IRequestHandler<PodcastCountQuery, int>,
+    IRequestHandler<PodcastFilesQuery, IReadOnlyList<string>>
 {
     public Task<IReadOnlyList<SongDto>> Handle(ListPodcastsQuery q, CancellationToken ct) =>
-        podcasts.ListAsync(q.UserId, ct);
+        podcasts.ListAsync(q.UserId, q.Search, q.TagId, q.Page, q.PageSize, ct);
     public Task<SongDto?> Handle(GetPodcastDetailsQuery q, CancellationToken ct) =>
         podcasts.GetByFileAsync(q.UserId, q.File, ct);
+    public Task<SongCoverDto?> Handle(GetPodcastCoverQuery q, CancellationToken ct)
+    {
+        var art = podcasts.ReadCover(q.UserId, q.File);
+        return Task.FromResult(art is null
+            ? null
+            : new SongCoverDto(art.Value.Bytes, art.Value.Mime, art.Value.Version));
+    }
+    public Task<int> Handle(PodcastCountQuery q, CancellationToken ct) =>
+        podcasts.CountAsync(q.UserId, q.Search, q.TagId, ct);
+    public async Task<IReadOnlyList<string>> Handle(PodcastFilesQuery q, CancellationToken ct)
+    {
+        var files = await podcasts.ListFilesAsync(q.UserId, q.Search, q.TagId, ct);
+        if (files.Count > Library.LibraryLimits.MaxFiles)
+            throw new ValidationException($"Too many files ({files.Count}, max {Library.LibraryLimits.MaxFiles}).");
+        return files;
+    }
 }
 
 public sealed record UpdatePodcastMetadataCommand(
@@ -116,6 +153,7 @@ public sealed class DeletePodcastHandler(
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
         state.NextFiles.RemoveAll(f => string.Equals(f, cmd.File, StringComparison.OrdinalIgnoreCase));
         state.PrevFiles.RemoveAll(f => string.Equals(f, cmd.File, StringComparison.OrdinalIgnoreCase));
+        Player.QueueVersions.Bump(cmd.UserId); // delete evicts queue entries
         if (string.Equals(state.CurrentFile, cmd.File, StringComparison.OrdinalIgnoreCase))
         {
             state.IsPlaying = false;
@@ -129,7 +167,7 @@ public sealed class DeletePodcastHandler(
 
         var dto = await Player.PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return true;
     }
 }

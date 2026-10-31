@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
 using Hathor.Infrastructure.Ef;
@@ -23,6 +24,8 @@ public sealed class EfPlaybackSpotRepository(HathorDbContext db) : IPlaybackSpot
         row.IsPodcast = spot.IsPodcast;
         row.DeviceLabel = spot.DeviceLabel;
         row.UpdatedUtc = spot.UpdatedUtc;
+        row.QueueFilesJson = JsonSerializer.Serialize(spot.QueueFiles ?? []);
+        row.QueueSourceJson = spot.QueueSourceJson;
     }
 
     public async Task<PlaybackSpot?> LatestForeignAsync(
@@ -48,7 +51,22 @@ public sealed class EfPlaybackSpotRepository(HathorDbContext db) : IPlaybackSpot
                 IsPodcast = row.IsPodcast,
                 DeviceLabel = row.DeviceLabel,
                 UpdatedUtc = row.UpdatedUtc,
+                QueueFiles = ParseFiles(row.QueueFilesJson),
+                QueueSourceJson = row.QueueSourceJson,
             };
+    }
+
+    private static List<string> ParseFiles(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     public Task SaveChangesAsync(CancellationToken ct = default) =>

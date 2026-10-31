@@ -22,6 +22,113 @@ namespace Hathor.Migrations.Postgres.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Hathor.Domain.Entities.AiDjClipRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("DurationSec")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("Mime")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAtUtc");
+
+                    b.ToTable("AiDj_Clips", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.AiDjFeedbackRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Event")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TrackFile")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAtUtc");
+
+                    b.HasIndex("UserId", "SessionId");
+
+                    b.ToTable("AiDj_Feedback", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.AiDjSessionRecord", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("SessionId")
+                        .IsUnique();
+
+                    b.ToTable("AiDj_Sessions", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Domain.Entities.ApiKey", b =>
                 {
                     b.Property<Guid>("Id")
@@ -101,9 +208,99 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.HasKey("UserId", "Date");
 
                     b.ToTable("Discover_Cache", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.DiscoverFeedback", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Artist")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Event")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("ItemKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("Mbid")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<double?>("Score")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("SeedArtist")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAtUtc");
+
+                    b.HasIndex("UserId", "ItemKey");
+
+                    b.ToTable("Rec_Feedback", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.DiscoverImpression", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Date")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ModelVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ItemsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("UserId", "Date", "ModelVersion");
+
+                    b.HasIndex("UserId", "Date");
+
+                    b.ToTable("Rec_Impressions", (string)null);
                 });
 
             modelBuilder.Entity("Hathor.Domain.Entities.DownloadJob", b =>
@@ -268,6 +465,57 @@ namespace Hathor.Migrations.Postgres.Migrations
                         .IsUnique();
 
                     b.ToTable("Pending_Metadata_Edits", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.PlaybackEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("Completed")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("DurationSec")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("PositionSec")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("SegmentId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("Skipped")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SongFile")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "SegmentId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "SongFile");
+
+                    b.HasIndex("UserId", "StartedAtUtc");
+
+                    b.ToTable("Playback_Events", (string)null);
                 });
 
             modelBuilder.Entity("Hathor.Domain.Entities.Playlist", b =>
@@ -453,6 +701,66 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.ToTable("Podcast_Timestamps", (string)null);
                 });
 
+            modelBuilder.Entity("Hathor.Domain.Entities.RankingModel", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BaseVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PresetName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Samples")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Snapshots")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WeightsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("Rec_Model", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.RecommendationCacheEntry", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.ToTable("Rec_HttpCache", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Domain.Entities.Session", b =>
                 {
                     b.Property<Guid>("Id")
@@ -610,6 +918,57 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.ToTable("Sync_Deletions", (string)null);
                 });
 
+            modelBuilder.Entity("Hathor.Domain.Entities.TrackEmbedding", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OwnerType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("OwnerKey")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Dimension")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VectorJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("UserId", "OwnerType", "OwnerKey", "Model");
+
+                    b.HasIndex("UserId", "OwnerType", "Model");
+
+                    b.ToTable("Rec_Embeddings", (string)null);
+                });
+
+            modelBuilder.Entity("Hathor.Domain.Entities.TrackPopularity", b =>
+                {
+                    b.Property<string>("Mbid")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("ListenCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Mbid");
+
+                    b.ToTable("Rec_TrackPopularity", (string)null);
+                });
+
             modelBuilder.Entity("Hathor.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -641,6 +1000,9 @@ namespace Hathor.Migrations.Postgres.Migrations
                     b.Property<Guid>("UserId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("AiDjSettingsJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("BackgroundPath")
                         .HasColumnType("text");
@@ -694,6 +1056,13 @@ namespace Hathor.Migrations.Postgres.Migrations
 
                     b.Property<double>("PositionSec")
                         .HasColumnType("double precision");
+
+                    b.Property<string>("QueueFilesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("QueueSourceJson")
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");

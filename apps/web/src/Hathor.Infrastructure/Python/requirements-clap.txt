@@ -1,0 +1,8 @@
+# Optional CLAP audio-embedding sidecar.
+# Install into the Python environment used by Discovery:AudioEmbeddingPythonPath.
+# Model weights download on first use (or point AudioEmbeddingCheckpoint at a
+# local laion_clap checkpoint).
+laion-clap
+torch
+torchaudio
+librosa

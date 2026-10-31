@@ -39,12 +39,13 @@ export const LYRICS_OFFSET_LIMIT_MS = 20000;
 
 // Server-persisted per-song highlight timing correction (sparse: the API
 // deletes the row when the offset returns to 0). Shared by the header
-// control and the highlight math below through one query key.
-export function useLyricsOffset(file: string | null | undefined) {
+// control and the highlight math below through one query key. Podcast
+// chapters scope it per chapter (falls back to the file offset).
+export function useLyricsOffset(file: string | null | undefined, chapterId?: number | null) {
   const queryClient = useQueryClient()
   const query = useQuery({
-    queryKey: ['lyrics-offset', file ?? ''],
-    queryFn: () => api.lyricsOffset(file!),
+    queryKey: ['lyrics-offset', file ?? '', chapterId ?? ''],
+    queryFn: () => api.lyricsOffset(file!, chapterId),
     enabled: !!file,
     retry: false,
     staleTime: 1000 * 60 * 5,
@@ -55,15 +56,15 @@ export function useLyricsOffset(file: string | null | undefined) {
       LYRICS_OFFSET_LIMIT_MS,
       Math.max(-LYRICS_OFFSET_LIMIT_MS, Math.round(ms) || 0),
     )
-    queryClient.setQueryData(['lyrics-offset', file], { offsetMs: clamped })
+    queryClient.setQueryData(['lyrics-offset', file, chapterId ?? ''], { offsetMs: clamped })
     return api
-      .setLyricsOffset(file, clamped)
+      .setLyricsOffset(file, clamped, chapterId)
       .then((r) => {
-        queryClient.setQueryData(['lyrics-offset', file], r)
+        queryClient.setQueryData(['lyrics-offset', file, chapterId ?? ''], r)
         return r.offsetMs
       })
       .catch(() => {
-        void queryClient.invalidateQueries({ queryKey: ['lyrics-offset', file] })
+        void queryClient.invalidateQueries({ queryKey: ['lyrics-offset', file, chapterId ?? ''] })
         return query.data?.offsetMs ?? 0
       })
   }

@@ -27,9 +27,52 @@ public sealed class PlaybackSyncTests
             Arg.Is<PlaybackSpot>(s =>
                 s.UserId == UserId && s.DeviceId == "browser-1" &&
                 s.File == "s.mp3" && s.PositionSec == 42.5 &&
-                s.IsPodcast == false && s.DeviceLabel == "Chrome"),
+                s.IsPodcast == false && s.DeviceLabel == "Chrome" &&
+                s.QueueFiles.Count == 1 && s.QueueFiles[0] == "s.mp3"),
             Arg.Any<CancellationToken>());
         await spots.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PushPlayback_QueueSnapshot_CurrentFirstCapped()
+    {
+        var spots = Substitute.For<IPlaybackSpotRepository>();
+        var files = new List<string> { "b.mp3", " ", "s.mp3", "c.mp3", "b.mp3" };
+
+        await new PushPlaybackStateHandler(spots).Handle(
+            new PushPlaybackStateCommand(UserId, "browser-1", null, "s.mp3", 10, false,
+                files, new Dtos.QueueSourceDto("playlist", "7")),
+            CancellationToken.None);
+
+        await spots.Received(1).UpsertAsync(
+            Arg.Is<PlaybackSpot>(s =>
+                s.QueueFiles.SequenceEqual(new[] { "s.mp3", "b.mp3", "c.mp3" }) &&
+                s.QueueSourceJson != null && s.QueueSourceJson.Contains("playlist")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LatestPlayback_SurfacesQueueSnapshot()
+    {
+        var spots = Substitute.For<IPlaybackSpotRepository>();
+        spots.LatestForeignAsync(
+                UserId, "browser-1", Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
+            .Returns(new PlaybackSpot
+            {
+                UserId = UserId, DeviceId = "phone-9", File = "s.mp3",
+                PositionSec = 95, IsPodcast = false, DeviceLabel = "Android",
+                UpdatedUtc = DateTime.UtcNow,
+                QueueFiles = new List<string> { "s.mp3", "n.mp3" },
+                QueueSourceJson = """{"Type":"all_songs","Id":null}""",
+            });
+
+        var spot = await new GetLatestPlaybackHandler(spots)
+            .Handle(new GetLatestPlaybackQuery(UserId, "browser-1"), CancellationToken.None);
+
+        spot.Should().NotBeNull();
+        spot!.QueueFiles.Should().Equal(new[] { "s.mp3", "n.mp3" });
+        spot.QueueSource.Should().NotBeNull();
+        spot.QueueSource!.Type.Should().Be("all_songs");
     }
 
     [Fact]

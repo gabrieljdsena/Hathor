@@ -2,8 +2,10 @@ using FluentAssertions;
 using Hathor.Application.Metadata;
 using Hathor.Application.Player;
 using Hathor.Application.Ports;
+using Hathor.Domain.Entities;
 using Hathor.Domain.Playback;
 using Hathor.Domain.Repositories;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 
 namespace Hathor.Application.Tests;
@@ -196,6 +198,62 @@ public sealed class PlayHandlerTests
         dto.IsPlaying.Should().BeFalse();
         dto.PositionSec.Should().BeLessThan(1);
     }
+    [Fact]
+    public async Task Next_WithEmptyQueue_StoppingOnSameFile_AppliesStashedEdit()
+    {
+        // Deferred edit for the playing file (PATCH stashes while current):
+        // stopping on the same file must flush it — no track change will
+        // ever come to trigger the normal hook, and the finished stream is
+        // done with the old bytes. The stop response already carries the
+        // updated metadata.
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var userId = Guid.NewGuid();
+        var state = new PlaybackState
+        {
+            UserId = userId,
+            CurrentFile = "s.mp3",
+            FirstPlay = false,
+            IsPlaying = true,
+            NextFiles = new List<string>(),
+        };
+        playback.GetOrCreateAsync(userId, Arg.Any<CancellationToken>()).Returns(state);
+
+        var pending = Substitute.For<IPendingEditRepository>();
+        pending.GetAsync(userId, "s.mp3", Arg.Any<CancellationToken>())
+            .Returns(new PendingMetadataEdit
+            {
+                UserId = userId, File = "s.mp3", Title = "New Title",
+                CreatedUtc = DateTime.UtcNow,
+            });
+        var writer = Substitute.For<IMetadataWriter>();
+        var storage = Substitute.For<ILibraryStorage>();
+        storage.SongExists(userId, "s.mp3").Returns(true);
+        songs.GetByFileAsync(Arg.Any<Guid>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new Dtos.SongDto("s.mp3", "Artist", "New Title", "Album", "2026", 200, null, null));
+        songs.GetManyAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.SongDto>());
+        var applier = new PendingMetadataApplier(
+            pending, writer, storage,
+            Substitute.For<ISongRecordRepository>(), songs,
+            Substitute.For<IPodcastRecordRepository>(), Substitute.For<IPodcastReadModel>(),
+            Substitute.For<ILogger<PendingMetadataApplier>>());
+
+        var dto = await new NextHandler(playback, songs, applier, hub)
+            .Handle(new NextCommand(userId), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.CurrentSong.Should().NotBeNull();
+        dto.CurrentSong!.File.Should().Be("s.mp3");
+        dto.CurrentSong!.Title.Should().Be("New Title");
+        await writer.Received(1).WriteSongAsync(
+            userId, "s.mp3", "New Title", null, null, null, null, null,
+            Arg.Any<CancellationToken>());
+        await pending.Received(1).DeleteAsync(userId, "s.mp3", Arg.Any<CancellationToken>());
+    }
 
     [Fact]
     public async Task StateDto_ClampsRunawayPositionToTrackDuration()
@@ -224,6 +282,104 @@ public sealed class PlayHandlerTests
             .Handle(new NextCommand(userId, ExpectedFile: "a.mp3"), CancellationToken.None);
 
         dto.PositionSec.Should().Be(200);
+    }
+}
+
+public sealed class PauseResumeHandlerTests
+{
+    private static (IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub, PlaybackState state)
+        Setup(string file, double duration, bool playing, double position)
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var state = new PlaybackState
+        {
+            UserId = Guid.NewGuid(),
+            CurrentFile = file,
+            FirstPlay = false,
+            IsPlaying = playing,
+            PositionOffsetSec = position,
+            PausePositionSec = position,
+            LastPlayUtc = DateTime.UtcNow,
+        };
+        playback.GetOrCreateAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(state);
+        songs.GetByFileAsync(Arg.Any<Guid>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new Dtos.SongDto(file, "Artist", "Title", "Album", "2026", duration, null, null));
+        songs.GetManyAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Dtos.SongDto>());
+        return (playback, songs, hub, state);
+    }
+
+    [Fact]
+    public async Task Pause_WithLocalPosition_PreservesTheSpotEvenWhenTheRetryLandsLate()
+    {
+        // The pause request originally failed; playback stayed running on the
+        // server for minutes. The retry carries the position from the click,
+        // so the user resumes where they paused instead of at the stale end.
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: true, position: 0);
+        state.LastPlayUtc = DateTime.UtcNow.AddMinutes(-10);
+
+        var dto = await new PauseHandler(playback, songs, hub)
+            .Handle(new PauseCommand(state.UserId, "s.mp3", 42.5), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeApproximately(42.5, 0.001);
+        state.PausePositionSec.Should().BeApproximately(42.5, 0.001);
+    }
+
+    [Fact]
+    public async Task Pause_WithMismatchedFile_DoesNotRewindATrackThatMovedOn()
+    {
+        var (playback, songs, hub, state) = Setup("next.mp3", 200, playing: true, position: 30);
+
+        var dto = await new PauseHandler(playback, songs, hub)
+            .Handle(new PauseCommand(state.UserId, "old.mp3", 10), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeApproximately(30, 0.5);
+    }
+
+    [Fact]
+    public async Task Pause_IsIdempotentAtTheSameSpot()
+    {
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: false, position: 50);
+
+        var dto = await new PauseHandler(playback, songs, hub)
+            .Handle(new PauseCommand(state.UserId, "s.mp3", 50), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeFalse();
+        dto.PositionSec.Should().BeApproximately(50, 0.001);
+    }
+
+    [Fact]
+    public async Task Resume_WhenPaused_ResumesFromTheStoredSpot()
+    {
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: false, position: 50);
+
+        var dto = await new ResumeHandler(playback, songs, hub)
+            .Handle(new ResumeCommand(state.UserId), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeTrue();
+        dto.PositionSec.Should().BeApproximately(50, 0.5);
+    }
+
+    [Fact]
+    public async Task Resume_WhenAlreadyPlaying_DoesNotRewindToTheStalePausePosition()
+    {
+        // A lost resume response must be safe to retry: the second call is a
+        // no-op, not a jump back to the position stored at the last pause.
+        var (playback, songs, hub, state) = Setup("s.mp3", 200, playing: true, position: 100);
+        state.PausePositionSec = 20;
+        state.LastPlayUtc = DateTime.UtcNow.AddSeconds(-5);
+
+        var dto = await new ResumeHandler(playback, songs, hub)
+            .Handle(new ResumeCommand(state.UserId), CancellationToken.None);
+
+        dto.IsPlaying.Should().BeTrue();
+        dto.PositionSec.Should().BeApproximately(105, 0.5);
     }
 }
 
@@ -323,7 +479,7 @@ public sealed class ReplaceQueueBroadcastTests
         await hub.DidNotReceive().BroadcastStateAsync(
             Arg.Any<Guid>(), Arg.Any<Dtos.PlayerStateDto>(), Arg.Any<CancellationToken>());
         await hub.Received(1).BroadcastQueueAsync(
-            userId, Arg.Any<IReadOnlyList<Dtos.SongDto>>(), Arg.Any<CancellationToken>());
+            userId, Arg.Any<IReadOnlyList<Dtos.SongDto>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

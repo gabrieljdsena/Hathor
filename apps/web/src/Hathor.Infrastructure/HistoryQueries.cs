@@ -125,4 +125,23 @@ public sealed class DapperHistoryReadModel(
             }, cancellationToken: ct));
         return rows.ToList();
     }
+
+    public async Task<IReadOnlyList<string>> GetDownloadHistoryFilesAsync(
+        Guid userId, int limit, CancellationToken ct = default)
+    {
+        var t = factory.Quote("Songs");
+        var link = factory.Quote("DownloadedLink");
+        var sql = $"SELECT {factory.Quote("File")} FROM {t} " +
+            $"WHERE {factory.UserIdPredicate()} " +
+            $"AND {link} IS NOT NULL AND {link} != '' " +
+            $"ORDER BY {factory.Quote("DateDownloadUtc")} DESC LIMIT @Limit";
+        using var conn = factory.Create();
+        var rows = await conn.QueryAsync<string>(
+            new CommandDefinition(sql, new
+            {
+                UserId = Hathor.Infrastructure.Dapper.DapperConnectionFactory.UserKey(userId),
+                Limit = limit,
+            }, cancellationToken: ct));
+        return rows.ToList();
+    }
 }

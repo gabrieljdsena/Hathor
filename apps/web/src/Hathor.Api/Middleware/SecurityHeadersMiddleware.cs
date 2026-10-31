@@ -52,7 +52,7 @@ public const string ContentSecurityPolicy =
         headers["X-Content-Type-Options"] = "nosniff";
         headers["Referrer-Policy"] = "no-referrer";
         headers["X-Frame-Options"] = "DENY";
-        headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+        headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=(), payment=(), usb=()";
         headers["Cross-Origin-Opener-Policy"] = "same-origin";
         headers["Content-Security-Policy"] = ContentSecurityPolicy;
         if (context.Request.IsHttps)

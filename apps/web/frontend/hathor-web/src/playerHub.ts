@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { hasInflightTransport, usePlayer } from './store/player'
-import type { PlayerState, Song } from './api/client'
+import { hasInflightTransport, hasPendingPlaybackIntent, usePlayer } from './store/player'
+import { useAiDj } from './store/aiDj'
+import { authToken, type AiDjState, type PlayerState, type Song } from './api/client'
 
 // Multi-tab transport sync: every control mutation (toggle, play, next,
 // prev, seek, queue edits — from any tab, phone, or headless client) makes
@@ -24,13 +25,9 @@ export function usePlayerHub(username: string | null) {
     try {
       const built = new HubConnectionBuilder()
         .withUrl('/hubs/player', {
-          accessTokenFactory: () => {
-            try {
-              return localStorage.getItem('hathor:token') ?? ''
-            } catch {
-              return ''
-            }
-          },
+          // Reconnects can happen long after the 15-minute access token
+          // expired: refresh near expiry instead of replaying a dead token.
+          accessTokenFactory: () => authToken(),
         })
         .withAutomaticReconnect()
         .configureLogging(LogLevel.Warning)
@@ -42,18 +39,50 @@ export function usePlayerHub(username: string | null) {
           // One of OUR OWN transports is mid-flight (overlapping rapid
           // clicks): its REST responses decide the outcome. A broadcast
           // landing now reflects pre-flight server state and would flip us
-          // back to the old song — skip it. Genuine remote changes arriving
-          // with no local flight in progress always apply.
-          if (hasInflightTransport()) return
-          usePlayer.setState(state)
+          // back to the old song — skip it. The same applies while a
+          // pause/resume intent is retrying: the user's desired state wins
+          // until the server acknowledges it, not a stale broadcast.
+          if (hasInflightTransport() || hasPendingPlaybackIntent()) return
+          // RAM: the queue array is the fattest retained structure (full
+          // library on play-all). When its version matches what we hold,
+          // apply scalars only and keep our array — no new retained MBs.
+          // A version mismatch (reorder, jump, advance elsewhere) or a
+          // version reset (service restart) applies the whole state.
+          const held = usePlayer.getState()
+          if (
+            typeof state.queueVersion === 'number' &&
+            state.queueVersion === held.queueVersion &&
+            state.queueVersion !== 0
+          ) {
+            const { queue: _dropped, queueTotal: _same, ...scalars } = state
+            void _dropped
+            void _same
+            usePlayer.setState(scalars)
+          } else {
+            usePlayer.setState(state)
+          }
           usePlayer.getState().syncAudio()
         } catch {
           /* a bad payload must never break the socket */
         }
       })
-      built.on('QueueUpdated', (queue: Song[]) => {
+      // QueueUpdated carries the version as a second arg (old servers send
+      // one arg — then the version is unknown and the array applies, which
+      // also reconverges after a service restart reset it to 0).
+      built.on('QueueUpdated', (queue: Song[], version?: number) => {
         try {
-          if (Array.isArray(queue)) usePlayer.setState({ queue })
+          if (Array.isArray(queue)) {
+            usePlayer.setState(
+              typeof version === 'number' ? { queue, queueVersion: version } : { queue },
+            )
+          }
+        } catch {
+          /* ignore */
+        }
+      })
+      built.on('AiDjStateChanged', (state: AiDjState) => {
+        try {
+          if (state && typeof state === 'object') useAiDj.getState().setState(state)
         } catch {
           /* ignore */
         }

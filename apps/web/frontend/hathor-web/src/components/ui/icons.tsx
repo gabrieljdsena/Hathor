@@ -30,6 +30,7 @@ export type IconName =
   | 'warning'
   | 'dots'
   | 'chevronsLeft'
+  | 'chevronDown'
   | 'logout'
   | 'key'
   | 'menu'
@@ -114,6 +115,7 @@ const PATHS: Record<IconName, string[]> = {
   ],
   dots: [],
   chevronsLeft: ['m18.75 4.5-7.5 7.5 7.5 7.5m-6-15L5.25 12l7.5 7.5'],
+  chevronDown: ['m19.5 8.25-7.5 7.5-7.5-7.5'],
   menu: ['M4 7h16M4 12h16M4 17h16'],
   logout: ['M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9'],
   key: [
@@ -155,6 +157,7 @@ const STROKE_ONLY: ReadonlySet<IconName> = new Set([
   'check',
   'warning',
   'chevronsLeft',
+  'chevronDown',
   'logout',
   'menu',
 ])

@@ -10,6 +10,7 @@ import { lazyWithRetry } from './utils/lazyRetry'
 // render instantly). Named-export views map to default for lazy().
 // lazyWithRetry: a stale hashed chunk after a deploy reloads once instead
 // of white-screening (see utils/lazyRetry).
+const AiDj = lazyWithRetry(() => import('./views/AiDj'))
 const ApiKeys = lazyWithRetry(() => import('./views/ApiKeys'))
 const Discover = lazyWithRetry(() => import('./views/Discover'))
 const History = lazyWithRetry(() => import('./views/History'))
@@ -59,6 +60,7 @@ export default function App() {
         >
           <Route index element={<Home />} />
           <Route path="songs" element={<Songs />} />
+          <Route path="dj" element={<AiDj />} />
           <Route path="download" element={<Download />} />
           <Route path="discover" element={<Discover />} />
           <Route path="podcasts" element={<Podcasts />} />

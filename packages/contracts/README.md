@@ -21,7 +21,8 @@ Rules all apps follow:
   history stays exact via id comparison; `UpdatedAtUtc` is server-stamped on
   every write (single DbContext hook — no write path sets it manually)
 - History sync is incremental past remote `MAX(id)`
-- `Playlists.thumbnail`: TEXT (base64/url), BLOB normalized to UTF-8 text for remote
+- `Playlists.thumbnail`: TEXT (base64/url), BLOB normalized to UTF-8 text for remote;
+  the web API re-encodes data URLs to a max-800px JPEG before storing (sync shape unchanged)
 - Daily mix: newest-wins, prune `< today`
 - Files referenced by `file` key only; binaries on disk/S3, never in DB JSON
 - `lyrics` carries `offset_ms` (INT, ms, ±20000, default 0): highlight-timing
@@ -47,5 +48,10 @@ Rules all apps follow:
   browser (`hathor:device-id` in localStorage, shared by all tabs);
   mobile/desktop send theirs when they implement push (until then they
   simply get no spots). Nothing auto-plays — the pill is an explicit tap.
+
+AI DJ state (`AiDj_Sessions`, `AiDj_Clips`, `AiDj_Feedback`) and the
+`ai_dj` queue source are additive and web-only; they are not part of the
+desktop/mobile sync snapshot. Other clients can still play the flat song
+queue but do not render or speak the DJ commentary. See `ai-dj.md`.
 
 Do not change the wire shape in one app without updating the other two in the same PR.

@@ -48,12 +48,13 @@ public sealed class SettingsController(
     {
         if (file is null || file.Length == 0)
             return BadRequest(new { message = "An image file is required." });
-        using var ms = new MemoryStream();
-        await file.CopyToAsync(ms, ct);
+        // Streamed upload (no MemoryStream buffering): the handler +
+        // storage enforce the 10 MB cap during the copy.
+        await using var stream = file.OpenReadStream();
         try
         {
             var filename = await mediator.Send(new SetBackgroundCommand(
-                CurrentUserId(), ms.ToArray(), file.ContentType), ct);
+                CurrentUserId(), stream, file.ContentType, file.Length), ct);
             return Ok(new BackgroundDto(filename));
         }
         catch (InvalidOperationException ex)

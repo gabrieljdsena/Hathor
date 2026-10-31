@@ -74,10 +74,10 @@ describe('LyricsSheet offset control', () => {
     expect(input.value).toBe('0')
 
     fireEvent.click(screen.getByLabelText('Forward lyrics by 250 milliseconds'))
-    await waitFor(() => expect(mockSetOffset).toHaveBeenCalledWith('s.mp3', 250))
+    await waitFor(() => expect(mockSetOffset).toHaveBeenCalledWith('s.mp3', 250, null))
 
     fireEvent.click(screen.getByLabelText('Retard lyrics by 250 milliseconds'))
-    await waitFor(() => expect(mockSetOffset).toHaveBeenCalledWith('s.mp3', 0))
+    await waitFor(() => expect(mockSetOffset).toHaveBeenCalledWith('s.mp3', 0, null))
   })
 
   it('commits typed values on Enter', async () => {
@@ -87,6 +87,6 @@ describe('LyricsSheet offset control', () => {
     )) as HTMLInputElement
     fireEvent.change(input, { target: { value: '1000' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(mockSetOffset).toHaveBeenCalledWith('s.mp3', 1000))
+    await waitFor(() => expect(mockSetOffset).toHaveBeenCalledWith('s.mp3', 1000, null))
   })
 })

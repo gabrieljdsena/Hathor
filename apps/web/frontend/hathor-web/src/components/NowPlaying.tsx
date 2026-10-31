@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { api } from '../api/client'
 import { usePlayer } from '../store/player'
 import CoverArt from './ui/CoverArt'
 import Icon from './ui/icons'
 import { ControlButton } from './ui/buttons'
 import { VolumeSlider } from './PlayerBar'
 import { ChapterSkip, useActiveChapter, useChapterJump } from './ui/PodcastTimestamps'
-import ResumeSpot, { useResumeSpot } from './ui/ResumeSpot'
+import ResumeBento from './ui/ResumeBento'
+import { useResumeSpot } from './ui/ResumeSpot'
 import SyncedLyrics, { useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
 
 // Fullscreen Now Playing overlay (desktop Now Playing view): large art,
@@ -16,9 +16,10 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
   const isPlaying = usePlayer((s) => s.isPlaying)
   const volume = usePlayer((s) => s.volume)
   const toggle = usePlayer((s) => s.toggle)
-  const syncAudio = usePlayer((s) => s.syncAudio)
-  const { offsetMs } = useLyricsOffset(song?.file)
+  const skipNext = usePlayer((s) => s.skipNext)
+  const skipPrev = usePlayer((s) => s.skipPrev)
   const chapter = useActiveChapter(song?.file, song?.isPodcast)
+  const { offsetMs } = useLyricsOffset(song?.file, chapter?.id ?? null)
   const { data: lyrics, isLoading: lyricsLoading } = useSongLyrics(
     song?.file,
     chapter?.name ?? song?.title ?? '',
@@ -40,13 +41,7 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
 
   const step = (which: 'prev' | 'next') => () => {
     if (chapterJump[which]()) return
-    const call = which === 'prev' ? api.prev() : api.next()
-    void call
-      .then((s) => {
-        usePlayer.setState(s)
-        syncAudio()
-      })
-      .catch(() => {})
+    void (which === 'prev' ? skipPrev() : skipNext())
   }
 
   if (!song) return null
@@ -65,6 +60,12 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
           {song.title} • {song.artist}
         </span>
         <div className="flex items-center gap-1">
+          {resumeSpot && (
+            <ResumeBento
+              key={resumeSpot.file + resumeSpot.updatedUtc}
+              spot={resumeSpot}
+            />
+          )}
           <button
             onClick={() => void toggle()}
             title={isPlaying ? 'Pause' : 'Play'}
@@ -83,12 +84,6 @@ export default function NowPlaying({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
-
-      {resumeSpot && resumeSpot.file !== song.file && (
-        <div className="w-full flex justify-center px-4 pt-1 flex-shrink-0 min-w-0">
-          <ResumeSpot key={resumeSpot.file + resumeSpot.updatedUtc} spot={resumeSpot} />
-        </div>
-      )}
 
       {showLyrics ? (
         <div className="flex-1 min-h-0 w-full max-w-[88rem] mx-auto px-6 sm:px-10 pb-10 flex flex-col">

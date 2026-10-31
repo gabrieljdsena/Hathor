@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using FluentValidation;
+using Hathor.Application.AiDj;
 using Hathor.Application.Ports;
 using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
@@ -91,6 +92,17 @@ public static class InfrastructureServiceExtensions
         this IServiceCollection services, IConfiguration config)
     {
         var connectionString = Hathor.Infrastructure.Dapper.DatabaseConnection.Resolve(config);
+        var discoveryOptions = config.GetSection("Discovery")
+            .Get<Application.Discover.DiscoveryOptions>()
+            ?? new Application.Discover.DiscoveryOptions();
+        services.AddSingleton(discoveryOptions);
+        var aiDjOptions = config.GetSection("AiDj").Get<AiDjOptions>() ?? new AiDjOptions();
+        aiDjOptions.ClipDirectory = Path.GetFullPath(
+            string.IsNullOrWhiteSpace(aiDjOptions.ClipDirectory) ? "data/ai-dj" : aiDjOptions.ClipDirectory);
+        services.AddSingleton(aiDjOptions);
+        var refreshGraceSeconds = Math.Max(0, config.GetValue("Auth:RefreshReuseGraceSeconds", 30));
+        services.AddSingleton(new Application.Auth.AuthOptions(
+            TimeSpan.FromSeconds(refreshGraceSeconds)));
 
         services.AddDbContext<HathorDbContext>(options =>
         {
@@ -115,6 +127,24 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Domain.Repositories.ISongRecordRepository, Repositories.EfSongRecordRepository>();
         services.AddScoped<Domain.Repositories.IDailyMixRepository, Repositories.EfDailyMixRepository>();
         services.AddScoped<Domain.Repositories.IDiscoverCacheRepository, Repositories.EfDiscoverCacheRepository>();
+        services.AddScoped<Domain.Repositories.IDiscoverFeedbackRepository,
+            Repositories.EfDiscoverFeedbackRepository>();
+        services.AddScoped<Domain.Repositories.IDiscoverImpressionRepository,
+            Repositories.EfDiscoverImpressionRepository>();
+        services.AddScoped<Domain.Repositories.ITrackEmbeddingRepository,
+            Repositories.EfTrackEmbeddingRepository>();
+        services.AddScoped<Domain.Repositories.ITrackPopularityRepository,
+            Repositories.EfTrackPopularityRepository>();
+        services.AddScoped<Domain.Repositories.IRankingModelRepository,
+            Repositories.EfRankingModelRepository>();
+        services.AddScoped<Domain.Repositories.IPlaybackEventRepository,
+            Repositories.EfPlaybackEventRepository>();
+        services.AddScoped<Domain.Repositories.IAiDjRepository, Repositories.EfAiDjRepository>();
+        services.AddScoped<Application.Ports.IAiDjReadModel, Library.DapperAiDjReadModel>();
+        services.AddScoped<Application.Ports.IAiDjPlanner, AiDj.AiDjPlannerClient>();
+        services.AddScoped<Application.AiDj.AiDjCandidateService>();
+        services.AddScoped<Application.AiDj.AiDjService>();
+        services.AddSingleton<Application.AiDj.AiDjPrefetcher>();
         services.AddScoped<Domain.Repositories.IDownloadJobRepository, Repositories.EfDownloadJobRepository>();
         services.AddScoped<Domain.Repositories.ILyricsRepository, Repositories.EfLyricsRepository>();
         services.AddScoped<Domain.Repositories.IPodcastRecordRepository, Repositories.EfPodcastRecordRepository>();
@@ -132,6 +162,34 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<Application.Ports.IDiscoverTasteReadModel, Library.DapperDiscoverTasteReadModel>();
         services.AddScoped<Application.Mix.DailyMixService>();
         services.AddScoped<Application.Discover.DiscoverService>();
+        // Open-data recommendation stack: MusicBrainz catalog/graph +
+        // ListenBrainz public similarity, cached in Postgres. iTunes remains
+        // an artwork resolver and cold-start fallback only.
+        services.AddSingleton<Recommendations.MusicBrainzRateLimiter>();
+        services.AddSingleton<Recommendations.ListenBrainzRateLimiter>();
+        services.AddScoped<Application.Ports.IRecommendationCache,
+            Recommendations.EfRecommendationCache>();
+        services.AddScoped<Application.Ports.IMusicBrainzClient,
+            Recommendations.MusicBrainzClient>();
+        services.AddScoped<Application.Ports.IListenBrainzClient,
+            Recommendations.ListenBrainzClient>();
+        services.AddScoped<Application.Ports.ICandidateSource,
+            Recommendations.OpenDataCandidateSource>();
+        services.AddScoped<Application.Ports.ICandidateSource,
+            Recommendations.FallbackCandidateSource>();
+        services.AddScoped<Application.Ports.ICandidateResolver,
+            Recommendations.ITunesCandidateResolver>();
+        services.AddSingleton<Application.Ports.IEmbeddingProvider,
+            Recommendations.ClapEmbeddingProvider>();
+        services.AddScoped<Application.Ports.IAudioSimilarityScorer,
+            Recommendations.ClapAudioSimilarityScorer>();
+        services.AddScoped<Application.Ports.ITrackPopularityService,
+            Recommendations.TrackPopularityService>();
+        services.AddScoped<Application.Ports.IPopularityProfileBuilder,
+            Recommendations.PopularityProfileBuilder>();
+        services.AddScoped<Application.Ports.IRankingOptionsProvider,
+            Recommendations.RankingOptionsProvider>();
+        services.AddHostedService<Recommendations.AudioEmbeddingWorker>();
         services.AddScoped<Application.Ports.ILibraryStorage>(_ => new Library.LocalLibraryStorage(
             storageRoot,
             config.GetValue("Library:SongsPath", ""),
@@ -161,6 +219,11 @@ public static class InfrastructureServiceExtensions
                 sp.GetRequiredService<Ingest.YtDlpDownloader>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ingest.FallbackDownloadEngine>>()));
         services.AddSingleton<Maintenance.IYtDlpInstaller, Maintenance.YtDlpInstaller>();
+        // YouTube bot-check protection (PO-token provider): provisioned via
+        // Settings, runs as a loopback node child process, resumed at boot.
+        services.AddSingleton<Maintenance.IPotProtection, Maintenance.PotProtectionService>();
+        services.AddHostedService(sp =>
+            (Maintenance.PotProtectionService)sp.GetRequiredService<Maintenance.IPotProtection>());
         services.AddSingleton<Application.Ports.ILoudnessAnalyzer, Enrichment.LoudnessAnalyzer>();
         services.AddSingleton<Application.Ingest.IDownloadQueue, Ingest.DownloadQueueService>();
         services.AddScoped<Application.Ports.IITunesClient, Enrichment.ITunesClientImpl>();
@@ -180,12 +243,81 @@ public static class InfrastructureServiceExtensions
         services.AddHttpClient("itunes");
         services.AddHttpClient("lrclib");
         services.AddHttpClient("llm");
+        services.AddHttpClient("preview", c => c.Timeout = TimeSpan.FromSeconds(30));
+        var mbBase = string.IsNullOrWhiteSpace(discoveryOptions.MusicBrainzBaseUrl)
+            ? "https://musicbrainz.org/ws/2"
+            : discoveryOptions.MusicBrainzBaseUrl;
+        var lbBase = string.IsNullOrWhiteSpace(discoveryOptions.ListenBrainzBaseUrl)
+            ? "https://labs.api.listenbrainz.org"
+            : discoveryOptions.ListenBrainzBaseUrl;
+        var lbApiBase = string.IsNullOrWhiteSpace(discoveryOptions.ListenBrainzApiBaseUrl)
+            ? "https://api.listenbrainz.org"
+            : discoveryOptions.ListenBrainzApiBaseUrl;
+        services.AddHttpClient("musicbrainz", c =>
+        {
+            c.BaseAddress = new Uri(mbBase.TrimEnd('/') + "/");
+            c.Timeout = TimeSpan.FromSeconds(25);
+        });
+        services.AddHttpClient("listenbrainz", c =>
+        {
+            c.BaseAddress = new Uri(lbBase.TrimEnd('/') + "/");
+            c.Timeout = TimeSpan.FromSeconds(25);
+        });
+        services.AddHttpClient("listenbrainz-api", c =>
+        {
+            c.BaseAddress = new Uri(lbApiBase.TrimEnd('/') + "/");
+            c.Timeout = TimeSpan.FromSeconds(25);
+        });
         // FFmpeg static builds are ~80MB; the installer enforces its own
         // timeout, so the client itself never times out.
         services.AddHttpClient("ffmpeg").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
         // yt-dlp single-file binary (~30MB); same no-client-timeout shape.
         services.AddHttpClient("ytdlp").ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
         services.AddHttpClient("nuget").ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(15));
+        services.AddHttpClient("ai-dj", c =>
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(aiDjOptions.AssistantBaseUrl)
+                ? "http://127.0.0.1:5000"
+                : aiDjOptions.AssistantBaseUrl.TrimEnd('/');
+            c.BaseAddress = new Uri(baseUrl + "/");
+            c.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiDjOptions.TimeoutSeconds, 5, 120));
+        }).ConfigurePrimaryHttpMessageHandler(() =>
+        {
+            var handler = new HttpClientHandler();
+            if (aiDjOptions.AllowInsecureTls)
+            {
+                handler.ServerCertificateCustomValidationCallback =
+                    HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            }
+            else if (!string.IsNullOrWhiteSpace(aiDjOptions.AssistantCaCertificatePath))
+            {
+                var caPath = aiDjOptions.AssistantCaCertificatePath;
+                handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
+                {
+                    if (cert is null) return false;
+                    try
+                    {
+                        var ca = System.Security.Cryptography.X509Certificates.X509Certificate2
+                            .CreateFromPemFile(caPath);
+                        if (string.Equals(cert.Thumbprint, ca.Thumbprint,
+                            StringComparison.OrdinalIgnoreCase))
+                            return true;
+                        using var chain = new System.Security.Cryptography.X509Certificates.X509Chain();
+                        chain.ChainPolicy.TrustMode = System.Security.Cryptography.X509Certificates
+                            .X509ChainTrustMode.CustomRootTrust;
+                        chain.ChainPolicy.CustomTrustStore.Add(ca);
+                        chain.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates
+                            .X509RevocationMode.NoCheck;
+                        return chain.Build(cert);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                };
+            }
+            return handler;
+        });
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(
             typeof(Application.Auth.LoginCommand).Assembly));
         services.AddValidatorsFromAssembly(

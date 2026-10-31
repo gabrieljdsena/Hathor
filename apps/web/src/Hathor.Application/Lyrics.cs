@@ -166,8 +166,12 @@ public sealed class SaveLyricsHandler(
         if (cmd.Synced is null && cmd.Plain is null) return false;
         // Chapter context saves under the chapter key so the chapter view
         // reads back exactly what was picked (it never looks at the file row).
-        var (key, _) = await ChapterLyrics.ResolveAsync(
+        var (key, chapterName) = await ChapterLyrics.ResolveAsync(
             timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+        // An explicit chapter that no longer resolves (deleted/renamed,
+        // wrong file) must fail loudly — silently writing the file row
+        // would store lyrics no view ever reads back.
+        if (cmd.ChapterId.HasValue && chapterName is null) return false;
         await cache.UpsertAsync(cmd.UserId, key,
             System.Text.Json.JsonSerializer.Serialize(new LyricsDto(cmd.Synced, cmd.Plain)), ct);
         await cache.SaveChangesAsync(ct);
@@ -177,25 +181,55 @@ public sealed class SaveLyricsHandler(
 
 // Per-song highlight timing correction, persisted server-side (sparse:
 // zero removes the row when it holds no lyrics). Clamped to ±20 seconds
-// (desktop/mobile parity).
-public sealed record GetLyricsOffsetQuery(Guid UserId, string File) : IRequest<int>;
+// (desktop/mobile parity). With a chapter id the offset is stored per
+// chapter row ("{file}::chapter:{id}") so each song in a mix can carry its
+// own sync; reads fall back to the file offset when the chapter has none
+// (which also preserves pre-chapter behavior exactly).
+public sealed record GetLyricsOffsetQuery(Guid UserId, string File, long? ChapterId = null) : IRequest<int>;
 
-public sealed class GetLyricsOffsetHandler(ILyricsRepository cache)
+public sealed class GetLyricsOffsetHandler(
+    ILyricsRepository cache,
+    IPodcastTimestampRepository timestamps)
     : IRequestHandler<GetLyricsOffsetQuery, int>
 {
-    public Task<int> Handle(GetLyricsOffsetQuery q, CancellationToken ct) =>
-        cache.GetOffsetAsync(q.UserId, q.File, ct);
+    public async Task<int> Handle(GetLyricsOffsetQuery q, CancellationToken ct)
+    {
+        if (q.ChapterId.HasValue)
+        {
+            var (key, chapterName) = await ChapterLyrics.ResolveAsync(
+                timestamps, q.UserId, q.File, q.ChapterId, ct);
+            if (chapterName is not null)
+            {
+                var chapterOffset = await cache.GetOffsetAsync(q.UserId, key, ct);
+                if (chapterOffset != 0) return chapterOffset;
+            }
+        }
+        return await cache.GetOffsetAsync(q.UserId, q.File, ct);
+    }
 }
 
-public sealed record SetLyricsOffsetCommand(Guid UserId, string File, int OffsetMs) : IRequest<int>;
+public sealed record SetLyricsOffsetCommand(Guid UserId, string File, int OffsetMs, long? ChapterId = null) : IRequest<int>;
 
-public sealed class SetLyricsOffsetHandler(ILyricsRepository cache)
+public sealed class SetLyricsOffsetHandler(
+    ILyricsRepository cache,
+    IPodcastTimestampRepository timestamps)
     : IRequestHandler<SetLyricsOffsetCommand, int>
 {
     public async Task<int> Handle(SetLyricsOffsetCommand cmd, CancellationToken ct)
     {
         var offset = Math.Clamp(cmd.OffsetMs, -20000, 20000);
-        await cache.SetOffsetAsync(cmd.UserId, cmd.File, offset, ct);
+        var key = cmd.File;
+        if (cmd.ChapterId.HasValue)
+        {
+            var (resolved, chapterName) = await ChapterLyrics.ResolveAsync(
+                timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+            // Stale chapter (deleted/renamed since the UI listed it): write
+            // nothing and report the current effective offset instead of
+            // touching the file row the caller never meant.
+            if (chapterName is null) return await cache.GetOffsetAsync(cmd.UserId, cmd.File, ct);
+            key = resolved;
+        }
+        await cache.SetOffsetAsync(cmd.UserId, key, offset, ct);
         await cache.SaveChangesAsync(ct);
         return offset;
     }
@@ -211,8 +245,11 @@ public sealed class DeleteLyricsHandler(
 {
     public async Task<bool> Handle(DeleteLyricsCommand cmd, CancellationToken ct)
     {
-        var (key, _) = await ChapterLyrics.ResolveAsync(
+        var (key, chapterName) = await ChapterLyrics.ResolveAsync(
             timestamps, cmd.UserId, cmd.File, cmd.ChapterId, ct);
+        // Same guard as save: a stale chapter id must never wipe the file
+        // row (which every non-chapter view reads).
+        if (cmd.ChapterId.HasValue && chapterName is null) return false;
         if (!await cache.DeleteAsync(cmd.UserId, key, ct)) return false;
         await cache.SaveChangesAsync(ct);
         return true;

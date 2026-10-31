@@ -1,6 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import Discover from './views/Discover'
 import type { Discover as DiscoverPayload } from './api/client'
 
@@ -27,6 +33,18 @@ const payload: DiscoverPayload = {
       artworkUrl: '',
       source: 'chart',
       score: 0.4,
+    },
+    {
+      title: 'Alison',
+      artist: 'Slowdive',
+      album: 'Souvlaki',
+      year: '1993',
+      genre: 'Shoegaze',
+      artworkUrl: 'http://art/slowdive.jpg',
+      source: 'similar',
+      score: 0.8,
+      mbid: 'mb-alison',
+      reason: 'Because you play M83',
     },
   ],
 }
@@ -56,6 +74,10 @@ function renderDiscover() {
   )
 }
 
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 describe('Discover view', () => {
   it('renders suggestion cards with source badges', async () => {
     stubFetch(() => payload)
@@ -64,6 +86,81 @@ describe('Discover view', () => {
     expect(await screen.findByText('Midnight City')).toBeInTheDocument()
     expect(screen.getAllByText('From your artists')).toHaveLength(2) // chip + card badge
     expect(screen.getByRole('button', { name: 'Trending' })).toBeInTheDocument()
+  })
+
+  it('renders open-data source badges and the recommendation reason', async () => {
+    stubFetch(() => payload)
+    renderDiscover()
+
+    expect(await screen.findByText('Alison')).toBeInTheDocument()
+    expect(screen.getAllByText('Similar tracks')).toHaveLength(2) // chip + card badge
+    expect(screen.getByText('Because you play M83')).toBeInTheDocument()
+  })
+
+  it('dismisses a suggestion and posts dismiss feedback', async () => {
+    const calls = stubFetch((input) =>
+      String(input).endsWith('/discover/feedback') ? {} : payload,
+    )
+    renderDiscover()
+    await screen.findByText('Alison')
+
+    fireEvent.click(screen.getByLabelText('Not interested in Alison by Slowdive'))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Alison')).not.toBeInTheDocument()
+    })
+    const feedback = calls.find((c) =>
+      String(c.input).endsWith('/discover/feedback'),
+    )
+    expect(feedback?.init?.method).toBe('POST')
+    expect(String(feedback?.init?.body)).toContain('"event":"dismiss"')
+    expect(String(feedback?.init?.body)).toContain('"mbid":"mb-alison"')
+  })
+
+  it('posts download feedback after a successful queue', async () => {
+    const calls = stubFetch((input) =>
+      String(input).endsWith('/downloads') ? { qid: 'abc' } : payload,
+    )
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Download Midnight City by M83'))
+    await screen.findByText('Download queued: Midnight City')
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            String(c.input).endsWith('/discover/feedback') &&
+            String(c.init?.body).includes('"event":"download"'),
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('posts preview feedback when a preview is requested', async () => {
+    const calls = stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [{ id: 'vid123', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' }]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: null }
+      }
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            String(c.input).endsWith('/discover/feedback') &&
+            String(c.init?.body).includes('"event":"preview"'),
+        ),
+      ).toBe(true)
+    })
   })
 
   it('filters by source chip', async () => {
@@ -141,6 +238,32 @@ describe('Discover view', () => {
     })
     expect(frame!.getAttribute('src')).toContain('https://www.youtube.com/embed/vid123?autoplay=0')
     expect(frame!.getAttribute('src')).toContain('enablejsapi=1')
+  })
+
+  it('falls back to the next YouTube hit when the first has no preview', async () => {
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [
+          { id: 'blocked', title: 'Midnight City', uploader: 'M83', durationSec: 240, thumbnail: '' },
+          { id: 'playable', title: 'Midnight City (audio)', uploader: 'M83', durationSec: 240, thumbnail: '' },
+        ]
+      }
+      if (url.includes('/youtube/preview')) {
+        if (url.includes('id=blocked')) return { id: 'blocked', embeddable: false, audioUrl: null }
+        return { id: 'playable', embeddable: true, audioUrl: null }
+      }
+      return payload
+    })
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByLabelText('Preview Midnight City by M83'))
+    await waitFor(() => {
+      expect(document.querySelector('iframe')?.getAttribute('src')).toContain(
+        'https://www.youtube.com/embed/playable',
+      )
+    })
   })
 
   it('shows a notice when no preview exists', async () => {
@@ -269,5 +392,96 @@ describe('Discover view', () => {
     fireEvent.click(screen.getByText('Cancel'))
     expect(calls.some((c) => String(c.input).endsWith('/downloads'))).toBe(false)
     expect(screen.queryByText('Already in your library')).not.toBeInTheDocument()
+  })
+
+  it('streams a Play all queue without downloading', async () => {
+    const calls = stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [
+          {
+            id: 'vid123',
+            title: 'Midnight City',
+            uploader: 'M83',
+            durationSec: 240,
+            thumbnail: '',
+          },
+        ]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: 'https://audio/1' }
+      }
+      if (url.endsWith('/discover/feedback')) return {}
+      return payload
+    })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+
+    renderDiscover()
+    await screen.findByText('Midnight City')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play all suggestions' }))
+
+    const region = await screen.findByRole('region', {
+      name: 'Discover preview player',
+    })
+    await waitFor(() => {
+      expect(within(region).getByText('Midnight City')).toBeInTheDocument()
+      expect(within(region).getByText('1 / 3')).toBeInTheDocument()
+    })
+    expect(
+      calls.some(
+        (c) =>
+          String(c.input).endsWith('/downloads') && c.init?.method === 'POST',
+      ),
+    ).toBe(false)
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            String(c.input).endsWith('/discover/feedback') &&
+            String(c.init?.body).includes('"event":"preview"'),
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('starts the preview queue from a card play button', async () => {
+    stubFetch((input) => {
+      const url = String(input)
+      if (url.includes('/youtube/search')) {
+        return [
+          {
+            id: 'vid123',
+            title: 'Chart Hit',
+            uploader: 'Somebody',
+            durationSec: 240,
+            thumbnail: '',
+          },
+        ]
+      }
+      if (url.includes('/youtube/preview')) {
+        return { id: 'vid123', embeddable: true, audioUrl: 'https://audio/1' }
+      }
+      if (url.endsWith('/discover/feedback')) return {}
+      return payload
+    })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+
+    renderDiscover()
+    await screen.findByText('Chart Hit')
+
+    fireEvent.click(screen.getByLabelText('Play Chart Hit by Somebody'))
+
+    const region = await screen.findByRole('region', {
+      name: 'Discover preview player',
+    })
+    await waitFor(() => {
+      expect(within(region).getByText('Chart Hit')).toBeInTheDocument()
+      expect(within(region).getByText('1 / 2')).toBeInTheDocument()
+    })
   })
 })

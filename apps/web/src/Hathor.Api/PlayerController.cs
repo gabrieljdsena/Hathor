@@ -2,6 +2,8 @@ using System.Security.Claims;
 using Hathor.Api.Auth;
 using Hathor.Application.Dtos;
 using Hathor.Application.Player;
+using Hathor.Application.Podcasts;
+using Hathor.Application.Songs;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -28,9 +30,44 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
     public async Task<ActionResult<NowPlayingDto>> NowPlaying(CancellationToken ct)
     {
         var state = await mediator.Send(new GetPlayerStateQuery(UserId), ct);
+        // External widgets expect the data: URL here (unchanged contract):
+        // resolve art on demand instead of attaching it to every state DTO.
+        string? cover = null;
+        var current = state.CurrentSong;
+        if (current is not null)
+        {
+            var art = current.IsPodcast
+                ? await mediator.Send(new GetPodcastCoverQuery(UserId, current.File), ct)
+                : await mediator.Send(new GetSongCoverQuery(UserId, current.File), ct);
+            cover = ToDataUrl(art);
+        }
         return Ok(new NowPlayingDto(
             state.CurrentSong?.Title, state.CurrentSong?.Artist,
-            state.CurrentSong?.CoverArt, state.PositionSec, state.CurrentSong?.Duration));
+            cover, state.PositionSec, state.CurrentSong?.Duration));
+    }
+
+    private static string? ToDataUrl(SongCoverDto? art) =>
+        art is null ? null : $"data:{art.Mime};base64,{Convert.ToBase64String(art.Bytes)}";
+
+    [HttpPost("playback-events")]
+    [Authorize(Policy = ScopeAuthorization.PlayerControl)]
+    public async Task<IActionResult> PlaybackEvent(
+        [FromBody] PlaybackEventRequest? body, CancellationToken ct)
+    {
+        if (body is null)
+            return BadRequest(new { message = "Playback event body is required." });
+        try
+        {
+            await mediator.Send(new RecordPlaybackEventCommand(
+                UserId, body.SegmentId, body.File, body.PositionSec,
+                body.DurationSec, body.Completed, body.Skipped,
+                body.StartedAtUtc), ct);
+            return NoContent();
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("play")]
@@ -47,8 +84,14 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
 
     [HttpPost("pause")]
     [Authorize(Policy = ScopeAuthorization.PlayerControl)]
-    public async Task<ActionResult<PlayerStateDto>> Pause(CancellationToken ct) =>
-        Ok(await mediator.Send(new PauseCommand(UserId), ct));
+    public async Task<ActionResult<PlayerStateDto>> Pause(
+        [FromBody] PauseRequest? body, CancellationToken ct) =>
+        Ok(await mediator.Send(new PauseCommand(UserId, body?.File, body?.PositionSec), ct));
+
+    [HttpPost("resume")]
+    [Authorize(Policy = ScopeAuthorization.PlayerControl)]
+    public async Task<ActionResult<PlayerStateDto>> Resume(CancellationToken ct) =>
+        Ok(await mediator.Send(new ResumeCommand(UserId), ct));
 
     [HttpPost("next")]
     [Authorize(Policy = ScopeAuthorization.PlayerControl)]
@@ -59,7 +102,7 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
         if (key is not null && idempotency.TryGetValue(key, out PlayerStateDto? cached) && cached is not null)
             return Ok(cached);
         var dto = await mediator.Send(new NextCommand(UserId, body?.Auto ?? false, key, body?.ExpectedFile), ct);
-        if (key is not null) idempotency.Set(key, dto, TimeSpan.FromMinutes(10));
+        if (key is not null) idempotency.Set(key, dto, CacheEntry());
         return Ok(dto);
     }
 
@@ -71,7 +114,7 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
         if (key is not null && idempotency.TryGetValue(key, out PlayerStateDto? cached) && cached is not null)
             return Ok(cached);
         var dto = await mediator.Send(new PrevCommand(UserId, key), ct);
-        if (key is not null) idempotency.Set(key, dto, TimeSpan.FromMinutes(10));
+        if (key is not null) idempotency.Set(key, dto, CacheEntry());
         return Ok(dto);
     }
 
@@ -84,7 +127,7 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
         if (key is not null && idempotency.TryGetValue(key, out PlayerStateDto? cached) && cached is not null)
             return Ok(cached);
         var dto = await mediator.Send(new SeekCommand(UserId, body.Seconds, key), ct);
-        if (key is not null) idempotency.Set(key, dto, TimeSpan.FromMinutes(10));
+        if (key is not null) idempotency.Set(key, dto, CacheEntry());
         return Ok(dto);
     }
 
@@ -208,12 +251,21 @@ public sealed class PlayerController(IMediator mediator, IMemoryCache idempotenc
 
     private string? IdempotencyKey() =>
         Request.Headers.TryGetValue("Idempotency-Key", out var v) &&
+        v.ToString().Length is > 0 and <= 64 &&
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid)
             ? $"{uid}:{v}"
             : null;
+
+    // RAM: idempotency entries hold a full PlayerStateDto — size-counted
+    // (SizeLimit above) with a short 2min TTL (was 10min, uncounted).
+    private static MemoryCacheEntryOptions CacheEntry() =>
+        new MemoryCacheEntryOptions()
+            .SetSize(1)
+            .SetAbsoluteExpiration(TimeSpan.FromMinutes(2));
 }
 
 public sealed record PlayRequest(string? File, bool? IsPodcast, string? InstanceId, bool Opening = false);
+public sealed record PauseRequest(string? File, double? PositionSec);
 public sealed record NextRequest(bool Auto = false, string? ExpectedFile = null);
 public sealed record SeekRequest(double Seconds);
 public sealed record SeekByRequest(double DeltaSeconds);

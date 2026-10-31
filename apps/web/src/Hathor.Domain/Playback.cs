@@ -13,12 +13,14 @@ public static class QueueSourceTypes
     public const string Album = "album";
     public const string RecentlyPlayed = "recently_played";
     public const string RecentlyDownloaded = "recently_downloaded";
+    public const string DownloadHistory = "download_history";
     public const string Podcast = "podcast";
+    public const string AiDj = "ai_dj";
 
     public static readonly IReadOnlySet<string> Valid = new HashSet<string>(StringComparer.Ordinal)
     {
         Playlist, DailyMix, AllSongs, Artist, Album,
-        RecentlyPlayed, RecentlyDownloaded, Podcast,
+        RecentlyPlayed, RecentlyDownloaded, DownloadHistory, Podcast, AiDj,
     };
 
     public static bool IsValid(string? type) => type is not null && Valid.Contains(type);

@@ -78,7 +78,7 @@ public sealed class PlayerSettingsHandlers(IUserSettingsRepository settings) :  
     }
 }
 
-public sealed record SetBackgroundCommand(Guid UserId, byte[] Bytes, string ContentType)
+public sealed record SetBackgroundCommand(Guid UserId, Stream Content, string ContentType, long? ContentLength)
     : IRequest<string>;
 public sealed record RemoveBackgroundCommand(Guid UserId) : IRequest<bool>;
 
@@ -97,9 +97,11 @@ public sealed class BackgroundHandlers(
     {
         if (!AllowedTypes.Contains(cmd.ContentType))
             throw new InvalidOperationException("Only JPEG, PNG, GIF, WebP or BMP images are allowed.");
-        if (cmd.Bytes.Length == 0 || cmd.Bytes.Length > 10 * 1024 * 1024)
+        // Fast-path reject before streaming (chunked uploads without a
+        // length fall through to the in-copy cap in storage).
+        if (cmd.ContentLength.HasValue && (cmd.ContentLength.Value <= 0 || cmd.ContentLength.Value > 10 * 1024 * 1024))
             throw new InvalidOperationException("Image must be non-empty and under 10 MB.");
-        var filename = await storage.SaveBackgroundAsync(cmd.UserId, cmd.Bytes, cmd.ContentType, ct);
+        var filename = await storage.SaveBackgroundFromStreamAsync(cmd.UserId, cmd.Content, cmd.ContentType, ct);
         var s = await settings.GetOrCreateAsync(cmd.UserId, ct);
         s.BackgroundPath = filename;
         await settings.SaveChangesAsync(ct);

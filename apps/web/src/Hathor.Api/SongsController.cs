@@ -39,6 +39,26 @@ public sealed class SongsController(
     public async Task<ActionResult<int>> Count([FromQuery] string? search, CancellationToken ct = default) =>
         Ok(await mediator.Send(new GetSongCountQuery(CurrentUserId(), search), ct));
 
+    // Ordered file names for queue building (same search/sort as List,
+    // capped server-side): play-all without downloading full Song[] lists.
+    // Declared before {file} so the literal wins over the file parameter.
+    [HttpGet("files")]
+    [Authorize(Policy = ScopeAuthorization.LibraryRead)]
+    public async Task<ActionResult<IReadOnlyList<string>>> Files(
+        [FromQuery] string? search, [FromQuery] string? sort, [FromQuery] string? dir,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            return Ok(await mediator.Send(
+                new ListSongFilesQuery(CurrentUserId(), search, sort, dir), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpGet("recently-played")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
     public async Task<ActionResult<IReadOnlyList<SongDto>>> RecentlyPlayed(
@@ -132,6 +152,35 @@ public sealed class SongsController(
             Application.Library.LibraryMoveResult.Conflict c => Conflict(new { message = c.Message }),
             _ => NotFound(),
         };
+    }
+
+    // Embedded cover bytes for <img> (browser-cached by ETag): keeps
+    // base64 art out of the tab's JS heap. Auth mirrors Stream (media
+    // elements cannot set headers — ?token= validated identically).
+    // ?v= is a client cache-buster (bumped on metadata edits), ignored here.
+    [HttpGet("{file}/cover")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Cover(string file, [FromQuery] string? v, [FromQuery] string? token)
+    {
+        _ = v;
+        var userId = AuthenticatedUserId();
+        if (userId is null && !string.IsNullOrEmpty(token))
+        {
+            var principal = await tokens.ValidateAsync(token);
+            if (principal is not null &&
+                TokenValidator.SatisfiesLibraryRead(principal) &&
+                Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var tokenUser))
+                userId = tokenUser;
+        }
+        if (userId is null) return Unauthorized();
+        var cover = await mediator.Send(new GetSongCoverQuery(userId.Value, file));
+        if (cover is null) return NotFound();
+        var etag = $"\"{cover.Version}\"";
+        if (Request.Headers.IfNoneMatch.ToString().Contains(etag, StringComparison.Ordinal))
+            return StatusCode(StatusCodes.Status304NotModified);
+        Response.Headers.ETag = etag;
+        Response.Headers.CacheControl = "public, max-age=3600, must-revalidate";
+        return File(cover.Bytes, cover.Mime);
     }
 
     // Byte-range streaming for web <audio> and external players.

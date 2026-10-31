@@ -33,7 +33,10 @@ export function usePodcastChapters(file: string | null | undefined) {
   })
 }
 
-function seekTo(secs: number) {
+// Chapter seek shared by the transport arrows, the chapter strip and the
+// lyrics panel's "jump to chapter": clamped into playable range, mirrored
+// to the server, and pausable-resume-safe like the progress slider.
+export function seekTo(secs: number) {
   // Clamp chapter seeks into playable range (same rule as the progress
   // slider): a user-entered chapter past EOF must park near the end, never
   // poison the server position past the track (which would yank a later

@@ -1,3 +1,4 @@
+using Hathor.Application.AiDj;
 using Hathor.Application.Dtos;
 using Hathor.Application.Mix;
 using Hathor.Application.Ports;
@@ -23,7 +24,8 @@ public sealed class RebuildQueueHandler(
     ISongReadModel songs,
     IHistoryReadModel history,
     ILibraryStorage storage,
-    IPlaybackHub hub) : IRequestHandler<RebuildQueueCommand, RebuildQueueResult>
+    IPlaybackHub hub,
+    AiDjService? aiDj = null) : IRequestHandler<RebuildQueueCommand, RebuildQueueResult>
 {
     public async Task<RebuildQueueResult> Handle(RebuildQueueCommand cmd, CancellationToken ct)
     {
@@ -49,10 +51,11 @@ public sealed class RebuildQueueHandler(
                 long.TryParse(source.Id, out var pid) ? pid : state.CurrentPlaylistId,
             rng: Random.Shared);
         await playback.SaveChangesAsync(ct);
+        QueueVersions.Bump(cmd.UserId); // SetQueue rebuilt the order above
 
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return new RebuildQueueResult(true, dto);
     }
 
@@ -73,17 +76,24 @@ public sealed class RebuildQueueHandler(
                     .Where(f => storage.SongExists(userId, f))
                     .ToList();
             case QueueSourceTypes.Artist when source.Id is not null:
-                return (await songs.GetSongsByArtistAsync(userId, source.Id, ct))
+                return (await songs.GetSongsByArtistAsync(userId, source.Id, ct: ct))
                     .Select(s => s.File).ToList();
             case QueueSourceTypes.Album when source.Id is not null:
-                return (await songs.GetSongsByAlbumAsync(userId, source.Id, ct))
+                return (await songs.GetSongsByAlbumAsync(userId, source.Id, ct: ct))
                     .Select(s => s.File).ToList();
             case QueueSourceTypes.RecentlyPlayed:
                 return (await history.GetRecentPlayedFilesAsync(userId, 500, ct)).ToList();
             case QueueSourceTypes.RecentlyDownloaded:
                 return (await history.GetRecentDownloadedFilesAsync(userId, 500, ct)).ToList();
+            case QueueSourceTypes.DownloadHistory:
+                return (await history.GetDownloadHistoryFilesAsync(userId, 500, ct)).ToList();
             case QueueSourceTypes.Podcast:
                 return storage.PodcastExists(userId, current) ? [current] : null;
+            case QueueSourceTypes.AiDj:
+                if (aiDj is null) return null;
+                return (await aiDj.GetSessionFilesAsync(userId, ct))
+                    ?.Where(f => storage.SongExists(userId, f))
+                    .ToList();
             default: // all_songs and unknown types fall back to the general list
                 return null;
         }

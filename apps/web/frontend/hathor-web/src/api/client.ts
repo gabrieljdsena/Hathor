@@ -96,6 +96,22 @@ export interface FfmpegDownloadStatus {
   error: string | null
 }
 
+// YouTube bot-check protection: provisionState reuses the installer
+// vocabulary plus building|starting while the token provider is set up.
+export interface YoutubeProtectionStatus {
+  enabled: boolean
+  provisionState: string
+  provisionProgress: number
+  nodeFound: boolean
+  nodeVersion: string | null
+  pluginReady: boolean
+  providerRunning: boolean
+  providerPort: number
+  version: string | null
+  pluginVerified: boolean
+  error: string | null
+}
+
 export interface ApiKey {
   id: string
   name: string
@@ -168,7 +184,9 @@ export function deviceLabel(): string | null {
 
 // Resume-across-devices spot: another device's paused playback state.
 // userKey is the writer's device id. Pull only surfaces it — tapping plays
-// explicitly, nothing auto-plays.
+// explicitly, nothing auto-plays. queueFiles is the writer's Up Next
+// snapshot (current track first); queueSource preserves its context.
+// Older spots omit both — resume falls back to the single file.
 export interface PlaybackSpot {
   userKey: string
   file: string
@@ -176,6 +194,8 @@ export interface PlaybackSpot {
   isPodcast: boolean
   device: string | null
   updatedUtc: string
+  queueFiles?: string[] | null
+  queueSource?: QueueSource | null
 }
 
 export interface HistoryItem {
@@ -202,6 +222,17 @@ export interface DailyMix {
   cached: boolean
 }
 
+export type DiscoverSource =
+  | 'artist'
+  | 'chart'
+  | 'llm'
+  | 'similar'
+  | 'cf'
+  | 'graph'
+  | 'tag'
+  | 'audio'
+  | 'popular'
+
 export interface DiscoverItem {
   title: string
   artist: string
@@ -209,14 +240,73 @@ export interface DiscoverItem {
   year: string
   genre: string
   artworkUrl: string
-  source: 'artist' | 'chart' | 'llm'
+  source: DiscoverSource
   score: number
+  mbid?: string | null
+  reason?: string | null
+  seedArtist?: string | null
 }
 
 export interface Discover {
   date: string
   items: DiscoverItem[]
   cached: boolean
+}
+
+export interface DiscoverSourceInsight {
+  source: string
+  downloads: number
+  dismissals: number
+  previews: number
+  clicks: number
+  conversionRate: number
+  learnedPrior: number
+}
+
+export interface DiscoverInsights {
+  windowDays: number
+  downloads: number
+  dismissals: number
+  previews: number
+  clicks: number
+  conversionRate: number
+  completedPlays: number
+  skippedPlays: number
+  playbackCompletionRate: number
+  uniqueArtists: number
+  sources: DiscoverSourceInsight[]
+}
+
+export interface DiscoverTuningWeights {
+  similarity: number
+  tag: number
+  affinity: number
+  popularity: number
+  source: number
+  audio: number
+}
+
+export interface DiscoverTuning {
+  applied: boolean
+  insufficientData: boolean
+  preset: string | null
+  snapshots: number
+  labeled: number
+  currentScore: number
+  bestScore: number
+  weights: DiscoverTuningWeights | null
+}
+
+export type DiscoverFeedbackEvent = 'dismiss' | 'preview' | 'click' | 'download'
+
+export interface DiscoverFeedback {
+  title: string
+  artist: string
+  mbid?: string | null
+  source: DiscoverSource
+  event: DiscoverFeedbackEvent
+  seedArtist?: string | null
+  score?: number | null
 }
 
 export interface VideoHit {
@@ -254,6 +344,16 @@ export interface LyricsHit {
   plainLyrics: string | null
 }
 
+export interface PlaybackEventPayload {
+  segmentId: string
+  file: string
+  positionSec: number
+  durationSec: number
+  completed: boolean
+  skipped: boolean
+  startedAtUtc: string
+}
+
 export interface PlayerState {
   currentSong: Song | null
   isPlaying: boolean
@@ -266,6 +366,58 @@ export interface PlayerState {
   isCustomQueue: boolean
   firstPlay: boolean
   queueTotal: number
+  // Monotonic per user, bumped on every queue-structure change. Tabs skip
+  // re-retaining the queue array when it matches the held version.
+  queueVersion: number
+}
+
+export interface AiDjSettings {
+  batchSize: number
+  commentaryMode: 'auto' | 'always' | 'off'
+  language: 'auto' | 'pt-BR' | 'en-US'
+  discoveryLevel: number
+  brief: string
+  preferredGenres: string
+  avoidArtists: string
+  duckLevel: number
+  voiceLeadSeconds: number
+}
+
+export interface AiDjBatch {
+  id: string
+  number: number
+  status: string
+  tracks: Song[]
+  outroText: string | null
+  outroClipIds: string[]
+  outroDurationSec: number
+  introText: string | null
+  introClipIds: string[]
+  introDurationSec: number
+  shouldComment: boolean
+  mood: string | null
+  reason: string | null
+}
+
+export interface AiDjState {
+  enabled: boolean
+  configured: boolean
+  sessionId: string | null
+  status: string
+  settings: AiDjSettings
+  currentBatch: AiDjBatch | null
+  nextBatch: AiDjBatch | null
+  error: string | null
+}
+
+export interface AiDjStartPayload {
+  batchSize?: number | null
+  commentaryMode?: string | null
+  language?: string | null
+  discoveryLevel?: number | null
+  brief?: string | null
+  preferredGenres?: string | null
+  avoidArtists?: string | null
 }
 
 function authHeaders(): HeadersInit {
@@ -273,40 +425,104 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-// Single-flight silent refresh: on 401 (non-auth endpoints only),
-// rotate via the stored refresh token once, then retry the request.
-// Returns false when there is nothing to refresh with (logged out).
-let refreshFlight: Promise<boolean> | null = null
+// Endpoints that are legitimately allowed to answer 401 without a session
+// (bad credentials, malformed refresh token). Every other auth endpoint
+// (/auth/me, /sessions, /logout, logout-all, change-password) needs the
+// same silent-refresh path as the rest of the API.
+const ANONYMOUS_AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/status']
 
-function tryRefresh(): Promise<boolean> {
-  const refreshToken = localStorage.getItem('hathor:refresh')
-  if (!refreshToken) return Promise.resolve(false)
-  refreshFlight ??= fetch(`${BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  })
-    .then(async (res) => {
-      if (!res.ok) throw new Error('refresh rejected')
-      const tokens = (await res.json()) as { accessToken: string; refreshToken: string }
-      localStorage.setItem('hathor:token', tokens.accessToken)
-      localStorage.setItem('hathor:refresh', tokens.refreshToken)
-      return true
+function isAnonymousAuthPath(path: string): boolean {
+  return ANONYMOUS_AUTH_PATHS.some((p) => path === p || path.startsWith(`${p}?`))
+}
+
+// Single-flight silent refresh: on 401, rotate via the stored refresh token
+// once, then retry the request. Returns 'rejected' only when the server
+// explicitly invalidated the token; network/5xx/429 keep the session so a
+// temporary outage never logs the user out.
+type RefreshResult = 'ok' | 'rejected' | 'unavailable'
+let refreshFlight: Promise<RefreshResult> | null = null
+
+async function postRefresh(refreshToken: string): Promise<RefreshResult> {
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
     })
-    .catch(() => {
-      localStorage.removeItem('hathor:token')
-      localStorage.removeItem('hathor:refresh')
-      return false
-    })
-    .finally(() => {
+    if (res.status === 400 || res.status === 401 || res.status === 403) return 'rejected'
+    if (!res.ok) return 'unavailable'
+    const tokens = (await res.json()) as { accessToken: string; refreshToken: string }
+    localStorage.setItem('hathor:token', tokens.accessToken)
+    localStorage.setItem('hathor:refresh', tokens.refreshToken)
+    return 'ok'
+  } catch {
+    return 'unavailable'
+  }
+}
+
+function refreshTokens(): Promise<RefreshResult> {
+  refreshFlight ??= (async (): Promise<RefreshResult> => {
+    try {
+      const started = localStorage.getItem('hathor:refresh')
+      if (!started) return 'rejected'
+      const rotate = async (): Promise<RefreshResult> => {
+        const current = localStorage.getItem('hathor:refresh')
+        if (!current) return 'rejected'
+        // Another tab rotated while this one waited for the lock: its new
+        // access token is already in shared storage, so reuse it instead of
+        // replaying the old refresh token (which would trip reuse detection
+        // and revoke every session).
+        if (current !== started) return 'ok'
+        return postRefresh(current)
+      }
+      return navigator.locks ? await navigator.locks.request('hathor:refresh', rotate) : await rotate()
+    } finally {
       refreshFlight = null
-    })
+    }
+  })()
   return refreshFlight
+}
+
+// JWT exp check for media URLs: streams bypass request(), so a 15-minute
+// access token baked into an <audio> URL goes stale with no 401-refresh path.
+export function tokenExpiresWithin(token: string, seconds: number): boolean {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return true
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4)
+    const json = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: unknown }
+    return typeof json.exp !== 'number' || json.exp * 1000 <= Date.now() + seconds * 1000
+  } catch {
+    return true
+  }
+}
+
+// Token for transports that bypass request() (media URLs, SignalR
+// reconnects). Refreshes when close to expiry; on a transient refresh
+// failure it still returns the current token so callers can retry instead
+// of killing playback/session.
+export async function authToken(): Promise<string> {
+  let token = ''
+  try {
+    token = localStorage.getItem('hathor:token') ?? ''
+  } catch {
+    return ''
+  }
+  if (!token || !tokenExpiresWithin(token, 60)) return token
+  if ((await refreshTokens()) === 'ok') {
+    try {
+      return localStorage.getItem('hathor:token') ?? token
+    } catch {
+      return token
+    }
+  }
+  return token
 }
 
 function logoutLocal() {
   localStorage.removeItem('hathor:token')
   localStorage.removeItem('hathor:refresh')
+  localStorage.removeItem('hathor:username')
   if (!location.pathname.startsWith('/login')) location.href = '/login'
 }
 
@@ -315,14 +531,24 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
     ...init,
     headers: { 'Content-Type': 'application/json', ...authHeaders(), ...init?.headers },
   })
-  if (res.status === 401 && retry && !path.startsWith('/auth/')) {
-    if (await tryRefresh()) return request<T>(path, init, false)
-    logoutLocal()
-    throw new Error('Unauthorized')
+  if (res.status === 401 && retry && !isAnonymousAuthPath(path)) {
+    const result = await refreshTokens()
+    if (result === 'ok') return request<T>(path, init, false)
+    if (result === 'rejected') {
+      logoutLocal()
+      throw new Error('Unauthorized')
+    }
+    // Transient refresh failure: keep the stored session and let the caller
+    // retry once the server is reachable again.
+    throw new Error('Session refresh unavailable — check your connection and retry.')
   }
   if (res.status === 401) {
-    logoutLocal()
-    throw new Error('Unauthorized')
+    if (!isAnonymousAuthPath(path)) {
+      logoutLocal()
+      throw new Error('Unauthorized')
+    }
+    const body = await res.text().catch(() => '')
+    throw new Error(body || 'Unauthorized')
   }
   if (res.status === 429) {
     const retryAfter = res.headers.get('Retry-After')
@@ -391,25 +617,46 @@ export const api = {
     }),
   revokeApiKey: (id: string) => request<void>(`/ApiKeys/${id}`, { method: 'DELETE' }),
 
-  // library
+  // library (paged: omit page/pageSize for the legacy whole list)
   songs: (params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.search) q.set('search', params.search)
     if (params.sort) q.set('sort', params.sort)
     if (params.dir) q.set('dir', params.dir)
-    q.set('page', String(params.page ?? 1))
-    q.set('pageSize', String(params.pageSize ?? 100))
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
     return request<Song[]>(`/songs?${q}`)
   },
   songCount: (search?: string) =>
     request<number>(`/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  // Ordered file names for queue building (same search/sort as songs,
+  // capped server-side): play-all without holding full Song[] lists.
+  songsFiles: (params: { search?: string; sort?: string; dir?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    return request<string[]>(`/songs/files?${q}`)
+  },
 
   // player state + headless controls (plan §4 — same surface external clients use)
   playerState: () => request<PlayerState>('/player/state'),
-  play: (file?: string, isPodcast?: boolean) =>
+  // Playback segment telemetry (completion/skip quality for Discover).
+  // keepalive lets the pagehide flush survive a tab close.
+  recordPlaybackEvent: (event: PlaybackEventPayload, keepalive = false) =>
+    request<void>('/player/playback-events', {
+      method: 'POST',
+      body: JSON.stringify(event),
+      keepalive,
+    }),
+  play: (file?: string, isPodcast?: boolean, instanceId?: string | null) =>
     request<PlayerState>('/player/play', {
       method: 'POST',
-      body: JSON.stringify({ file: file ?? null, isPodcast: isPodcast ?? null }),
+      body: JSON.stringify({
+        file: file ?? null,
+        isPodcast: isPodcast ?? null,
+        instanceId: instanceId ?? null,
+      }),
     }),
   setQueue: (currentFile: string | null, files: Song[], source: QueueSource | null, playlistId: number | null = null) =>
     request<PlayerState>('/player/queue', {
@@ -421,15 +668,38 @@ export const api = {
         source,
       }),
     }),
+  // Same queue replace with bare file names (infinite-scroll play flow:
+  // the full Song[] list is never materialized client-side).
+  setQueueFiles: (currentFile: string | null, files: string[], source: QueueSource | null, playlistId: number | null = null) =>
+    request<PlayerState>('/player/queue', {
+      method: 'PUT',
+      body: JSON.stringify({
+        currentFile,
+        files,
+        playlistId,
+        source,
+      }),
+    }),
   toggle: () => request<PlayerState>('/player/toggle', { method: 'POST' }),
-  pause: () => request<PlayerState>('/player/pause', { method: 'POST' }),
+  // Idempotent pause. positionSec/file let a delayed retry preserve the spot
+  // the user actually paused at (the server estimate keeps running while the
+  // request is lost); resume is the matching explicit, idempotent command.
+  pause: (positionSec?: number | null, file?: string | null) =>
+    request<PlayerState>('/player/pause', {
+      method: 'POST',
+      body: JSON.stringify({ file: file ?? null, positionSec: positionSec ?? null }),
+    }),
+  resume: () => request<PlayerState>('/player/resume', { method: 'POST' }),
   // expectedFile: conditional advance for the crossfade handoff — the
   // server skips the advance when the current track already moved on
   // (manual transport consumed it), converging instead of skipping a song.
-  next: (expectedFile?: string | null) =>
+  next: (expectedFile?: string | null, auto = false) =>
     request<PlayerState>(
       '/player/next',
-      { method: 'POST', body: JSON.stringify({ expectedFile: expectedFile ?? null }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({ expectedFile: expectedFile ?? null, auto }),
+      },
     ),
   prev: () => request<PlayerState>('/player/prev', { method: 'POST' }),
   seek: (seconds: number) =>
@@ -459,11 +729,41 @@ export const api = {
   queueRebuild: () =>
     request<{ rebuilt: boolean; state: PlayerState }>('/player/queue/rebuild', { method: 'POST' }),
 
+  // AI DJ (Vohithe)
+  aiDjState: () => request<AiDjState>('/ai-dj/state'),
+  aiDjStart: (payload: AiDjStartPayload = {}) =>
+    request<AiDjState>('/ai-dj/start', { method: 'POST', body: JSON.stringify(payload) }),
+  aiDjStop: () => request<AiDjState>('/ai-dj/stop', { method: 'POST' }),
+  aiDjFeedback: (payload: {
+    sessionId?: string | null
+    batchId?: string | null
+    trackFile?: string | null
+    event: string
+  }) => request<void>('/ai-dj/feedback', { method: 'POST', body: JSON.stringify(payload) }),
+  aiDjTranscribe: (audio: string, language?: string) =>
+    request<{ text: string }>('/ai-dj/transcribe', {
+      method: 'POST',
+      body: JSON.stringify({ audio, language: language ?? navigator.language ?? 'pt-BR' }),
+    }),
+  aiDjSettings: () => request<AiDjSettings>('/ai-dj/settings'),
+  aiDjUpdateSettings: (payload: AiDjStartPayload) =>
+    request<AiDjSettings>('/ai-dj/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  aiDjClipUrl: (id: string) =>
+    `/api/v1/ai-dj/clips/${encodeURIComponent(id)}/audio?token=${encodeURIComponent(
+      localStorage.getItem('hathor:token') ?? '',
+    )}`,
+  freshAiDjClipUrl: async (id: string) => {
+    const token = await authToken()
+    return `/api/v1/ai-dj/clips/${encodeURIComponent(id)}/audio?token=${encodeURIComponent(token)}`
+  },
+
   // history
   downloadHistory: (page = 1, pageSize = 10) =>
     request<PagedResult<HistoryItem>>(`/history/downloads?page=${page}&pageSize=${pageSize}`),
+  downloadHistoryFiles: () => request<string[]>('/history/downloads/files'),
   playedHistory: (page = 1, pageSize = 10) =>
     request<PagedResult<HistoryItem>>(`/history/played-songs?page=${page}&pageSize=${pageSize}`),
+  playedHistoryFiles: () => request<string[]>('/history/played-songs/files'),
   playedPlaylistHistory: (page = 1, pageSize = 10) =>
     request<PagedResult<PlayedPlaylistItem>>(`/history/played-playlists?page=${page}&pageSize=${pageSize}`),
   recentlyPlayed: (limit = 15) => request<Song[]>(`/songs/recently-played?limit=${limit}`),
@@ -475,7 +775,19 @@ export const api = {
 
   // discover (out-of-library recommendations, packages/contracts/discover.md)
   discover: () => request<Discover>('/discover'),
+  discoverInsights: (windowDays = 90) =>
+    request<DiscoverInsights>(`/discover/insights?windowDays=${windowDays}`),
+  tuneDiscover: (windowDays = 90) =>
+    request<DiscoverTuning>(
+      `/discover/tuning?windowDays=${windowDays}&k=10`,
+      { method: 'POST' },
+    ),
   refreshDiscover: () => request<Discover>('/discover/refresh', { method: 'POST' }),
+  submitDiscoverFeedback: (feedback: DiscoverFeedback) =>
+    request<void>('/discover/feedback', {
+      method: 'POST',
+      body: JSON.stringify(feedback),
+    }),
 
   // ingest
   youtubeSearch: (q: string, limit = 5) =>
@@ -557,10 +869,12 @@ export const api = {
       `/songs/${encodeURIComponent(file)}/lyrics${chapterId != null ? `?chapterId=${chapterId}` : ''}`,
       { method: 'DELETE' },
     ),
-  lyricsOffset: (file: string) =>
-    request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset`),
-  setLyricsOffset: (file: string, offsetMs: number) =>
-    request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset`, {
+  lyricsOffset: (file: string, chapterId?: number | null) =>
+    request<{ offsetMs: number }>(
+      `/songs/${encodeURIComponent(file)}/lyrics/offset${chapterId != null ? `?chapterId=${chapterId}` : ''}`,
+    ),
+  setLyricsOffset: (file: string, offsetMs: number, chapterId?: number | null) =>
+    request<{ offsetMs: number }>(`/songs/${encodeURIComponent(file)}/lyrics/offset${chapterId != null ? `?chapterId=${chapterId}` : ''}`, {
       method: 'PUT',
       body: JSON.stringify({ OffsetMs: offsetMs }),
     }),
@@ -574,6 +888,24 @@ export const api = {
     `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/stream?token=${encodeURIComponent(
       localStorage.getItem('hathor:token') ?? '',
     )}`,
+
+  // Recovery URL for the audio engine: refreshes an expiring access token
+  // first. The cached streamUrl above cannot do this — media requests never
+  // pass through request()'s 401 path.
+  freshStreamUrl: async (file: string, isPodcast = false) => {
+    const token = await authToken()
+    return `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/stream?token=${encodeURIComponent(token)}`
+  },
+
+  // Embedded art as a cacheable URL (browser HTTP cache owns the bytes —
+  // no base64 in JS state). <img> cannot set headers, so the token rides
+  // along like streamUrl. `version` busts the cache after metadata edits.
+  coverUrl: (file: string, version?: string | null, isPodcast = false) => {
+    const q = new URLSearchParams()
+    if (version) q.set('v', version)
+    q.set('token', localStorage.getItem('hathor:token') ?? '')
+    return `/api/v1/${isPodcast ? 'podcasts' : 'songs'}/${encodeURIComponent(file)}/cover?${q}`
+  },
 
   // library metadata + delete
   song: (file: string, includeCover = false) =>
@@ -598,10 +930,19 @@ export const api = {
     request<void>(`/pending-edits/${encodeURIComponent(file)}`, { method: 'DELETE' }),
   // Resume across devices: snapshot this device's spot (pause/pagehide/
   // paused-seek, fire-and-forget) / read the latest spot from ANOTHER
-  // device (excludeDevice = own id — never echo self).
+  // device (excludeDevice = own id — never echo self). queueFiles carries
+  // this device's Up Next (current first, capped) so the other side can
+  // restore the full queue on tap.
   pushPlayback: (
     id: string,
-    spot: { file: string; positionSec: number; isPodcast: boolean; deviceLabel?: string | null },
+    spot: {
+      file: string
+      positionSec: number
+      isPodcast: boolean
+      deviceLabel?: string | null
+      queueFiles?: string[] | null
+      queueSource?: QueueSource | null
+    },
   ) =>
     request<boolean>('/sync/playback', {
       method: 'POST',
@@ -611,6 +952,10 @@ export const api = {
         file: spot.file,
         positionSec: spot.positionSec,
         isPodcast: spot.isPodcast,
+        queueFiles: spot.queueFiles ?? null,
+        queueSource: spot.queueSource
+          ? { type: spot.queueSource.type, id: spot.queueSource.id ?? null }
+          : null,
       }),
     }),
   latestPlayback: (excludeDevice?: string | null) =>
@@ -618,13 +963,59 @@ export const api = {
       `/sync/playback${excludeDevice ? `?excludeDevice=${encodeURIComponent(excludeDevice)}` : ''}`,
     ),
 
-  // artists / albums
+  // artists / albums (paged: omit page/pageSize for the legacy whole list)
   artists: () => request<string[]>('/artists'),
-  artistSongs: (name: string) => request<Song[]>(`/artists/${encodeURIComponent(name)}/songs`),
+  artistSongs: (name: string, params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/artists/${encodeURIComponent(name)}/songs${qs ? `?${qs}` : ''}`)
+  },
+  artistSongCount: (name: string, search?: string) =>
+    request<number>(
+      `/artists/${encodeURIComponent(name)}/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ),
+  artistFiles: (name: string, search?: string, sort?: string, dir?: string) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (sort) q.set('sort', sort)
+    if (dir) q.set('dir', dir)
+    const qs = q.toString()
+    return request<string[]>(
+      `/artists/${encodeURIComponent(name)}/files${qs ? `?${qs}` : ''}`,
+    )
+  },
   artistImage: (name: string) =>
     request<Artwork>(`/artists/${encodeURIComponent(name)}/image`).catch(() => null),
   albums: () => request<string[]>('/albums'),
-  albumSongs: (title: string) => request<Song[]>(`/albums/${encodeURIComponent(title)}/songs`),
+  albumSongs: (title: string, params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/albums/${encodeURIComponent(title)}/songs${qs ? `?${qs}` : ''}`)
+  },
+  albumSongCount: (title: string, search?: string) =>
+    request<number>(
+      `/albums/${encodeURIComponent(title)}/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ),
+  albumFiles: (title: string, search?: string, sort?: string, dir?: string) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (sort) q.set('sort', sort)
+    if (dir) q.set('dir', dir)
+    const qs = q.toString()
+    return request<string[]>(
+      `/albums/${encodeURIComponent(title)}/files${qs ? `?${qs}` : ''}`,
+    )
+  },
   albumImage: (title: string, artist?: string) =>
     request<Artwork>(
       `/albums/${encodeURIComponent(title)}/image${artist ? `?artist=${encodeURIComponent(artist)}` : ''}`,
@@ -648,7 +1039,26 @@ export const api = {
       }),
     }),
   deletePlaylist: (id: number) => request<void>(`/playlists/${id}`, { method: 'DELETE' }),
-  playlistSongs: (id: number) => request<Song[]>(`/playlists/${id}/songs`),
+  playlistSongs: (id: number, params: { search?: string; sort?: string; dir?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.dir) q.set('dir', params.dir)
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/playlists/${id}/songs${qs ? `?${qs}` : ''}`)
+  },
+  playlistSongsCount: (id: number, search?: string) =>
+    request<number>(`/playlists/${id}/songs/count${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  playlistFiles: (id: number, search?: string, sort?: string, dir?: string) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (sort) q.set('sort', sort)
+    if (dir) q.set('dir', dir)
+    const qs = q.toString()
+    return request<string[]>(`/playlists/${id}/files${qs ? `?${qs}` : ''}`)
+  },
   addSongToPlaylist: (id: number, file: string) =>
     request<void>(`/playlists/${id}/songs`, { method: 'POST', body: JSON.stringify({ File: file }) }),
   removeSongFromPlaylist: (id: number, file: string) =>
@@ -674,8 +1084,30 @@ export const api = {
   unassignPodcastTag: (id: number, file: string) =>
     request<void>(`/podcasttags/${id}/episodes/${encodeURIComponent(file)}`, { method: 'DELETE' }),
 
-  // podcasts
-  podcasts: () => request<Song[]>('/podcasts'),
+  // podcasts (paged: omit page/pageSize for the legacy whole list)
+  podcasts: (params: { search?: string; tagId?: number | null; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.search) q.set('search', params.search)
+    if (params.tagId !== undefined && params.tagId !== null) q.set('tagId', String(params.tagId))
+    if (params.page !== undefined) q.set('page', String(params.page))
+    if (params.pageSize !== undefined) q.set('pageSize', String(params.pageSize))
+    const qs = q.toString()
+    return request<Song[]>(`/podcasts${qs ? `?${qs}` : ''}`)
+  },
+  podcastCount: (search?: string, tagId?: number | null) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (tagId !== undefined && tagId !== null) q.set('tagId', String(tagId))
+    const qs = q.toString()
+    return request<number>(`/podcasts/count${qs ? `?${qs}` : ''}`)
+  },
+  podcastFiles: (search?: string, tagId?: number | null) => {
+    const q = new URLSearchParams()
+    if (search) q.set('search', search)
+    if (tagId !== undefined && tagId !== null) q.set('tagId', String(tagId))
+    const qs = q.toString()
+    return request<string[]>(`/podcasts/files${qs ? `?${qs}` : ''}`)
+  },
   podcastDetails: (file: string) => request<Song>(`/podcasts/${encodeURIComponent(file)}`),
   // Episode chapter marks ("timestamps"): media offsets in seconds.
   podcastTimestamps: (file: string) =>
@@ -788,6 +1220,18 @@ export const api = {
   // Live NuGet check for YoutubeExplode/TagLibSharp (Settings → YouTube
   // downloader). An update means "update the package and redeploy".
   checkLibraryUpdates: () => request<LibraryInfo[]>('/system/libraries/check', { method: 'POST' }),
+  // YouTube bot-check protection (Settings → System): one-click PO-token
+  // provider — no logins, no manual cookies. startProtection provisions
+  // in the background (poll protectionStatus until ready/failed);
+  // force=true re-provisions even when already enabled (update).
+  protectionStatus: () => request<YoutubeProtectionStatus>('/system/youtube-protection'),
+  startProtection: (force = false) =>
+    request<YoutubeProtectionStatus>(
+      `/system/youtube-protection${force ? '?force=true' : ''}`,
+      { method: 'POST' },
+    ),
+  disableProtection: () =>
+    request<YoutubeProtectionStatus>('/system/youtube-protection', { method: 'DELETE' }),
   logClient: (message: string, route?: string, stack?: string) =>
     request<void>('/logs/client', {
       method: 'POST',

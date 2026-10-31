@@ -27,9 +27,19 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
     public DbSet<SyncDeletion> SyncDeletions => Set<SyncDeletion>();
     public DbSet<DailyMix> DailyMixes => Set<DailyMix>();
     public DbSet<DiscoverCache> DiscoverCaches => Set<DiscoverCache>();
+    public DbSet<DiscoverImpression> DiscoverImpressions => Set<DiscoverImpression>();
+    public DbSet<TrackEmbedding> TrackEmbeddings => Set<TrackEmbedding>();
+    public DbSet<TrackPopularity> TrackPopularities => Set<TrackPopularity>();
+    public DbSet<RankingModel> RankingModels => Set<RankingModel>();
+    public DbSet<RecommendationCacheEntry> RecommendationCache => Set<RecommendationCacheEntry>();
+    public DbSet<DiscoverFeedback> DiscoverFeedback => Set<DiscoverFeedback>();
+    public DbSet<PlaybackEvent> PlaybackEvents => Set<PlaybackEvent>();
     public DbSet<UserSettings> Settings => Set<UserSettings>();
     public DbSet<PlaybackStateRow> PlaybackStates => Set<PlaybackStateRow>();
     public DbSet<PlaybackSpotRow> PlaybackSpots => Set<PlaybackSpotRow>();
+    public DbSet<AiDjSessionRecord> AiDjSessions => Set<AiDjSessionRecord>();
+    public DbSet<AiDjClipRecord> AiDjClips => Set<AiDjClipRecord>();
+    public DbSet<AiDjFeedbackRecord> AiDjFeedback => Set<AiDjFeedbackRecord>();
 
     // Delta-sync change feed: every insert/update stamps UpdatedAtUtc, so
     // GET /sync/delta needs no per-write-path bookkeeping. Server clock only.
@@ -189,6 +199,69 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
         {
             e.ToTable("Discover_Cache");
             e.HasKey(x => new { x.UserId, x.Date });
+            e.Property(x => x.ModelVersion).HasMaxLength(64);
+        });
+        b.Entity<DiscoverImpression>(e =>
+        {
+            e.ToTable("Rec_Impressions");
+            e.HasKey(x => new { x.UserId, x.Date, x.ModelVersion });
+            e.Property(x => x.ModelVersion).HasMaxLength(64);
+            e.HasIndex(x => new { x.UserId, x.Date });
+        });
+        b.Entity<TrackEmbedding>(e =>
+        {
+            e.ToTable("Rec_Embeddings");
+            e.HasKey(x => new { x.UserId, x.OwnerType, x.OwnerKey, x.Model });
+            e.Property(x => x.OwnerType).HasMaxLength(16);
+            e.Property(x => x.OwnerKey).HasMaxLength(255);
+            e.Property(x => x.Model).HasMaxLength(64);
+            e.HasIndex(x => new { x.UserId, x.OwnerType, x.Model });
+        });
+        b.Entity<TrackPopularity>(e =>
+        {
+            e.ToTable("Rec_TrackPopularity");
+            e.HasKey(x => x.Mbid);
+            e.Property(x => x.Mbid).HasMaxLength(64);
+        });
+        b.Entity<RankingModel>(e =>
+        {
+            e.ToTable("Rec_Model");
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.BaseVersion).HasMaxLength(64);
+            e.Property(x => x.PresetName).HasMaxLength(64);
+        });
+        b.Entity<RecommendationCacheEntry>(e =>
+        {
+            e.ToTable("Rec_HttpCache");
+            e.HasKey(x => x.Key);
+            e.Property(x => x.Key).HasMaxLength(512);
+            e.HasIndex(x => x.ExpiresAtUtc);
+        });
+        b.Entity<DiscoverFeedback>(e =>
+        {
+            e.ToTable("Rec_Feedback");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.ItemKey).HasMaxLength(512);
+            e.Property(x => x.Mbid).HasMaxLength(64);
+            e.Property(x => x.Title).HasMaxLength(255);
+            e.Property(x => x.Artist).HasMaxLength(255);
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.Property(x => x.Event).HasMaxLength(16);
+            e.Property(x => x.SeedArtist).HasMaxLength(255);
+            e.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+            e.HasIndex(x => new { x.UserId, x.ItemKey });
+        });
+        b.Entity<PlaybackEvent>(e =>
+        {
+            e.ToTable("Playback_Events");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.SegmentId).HasMaxLength(64);
+            e.Property(x => x.SongFile).HasMaxLength(255);
+            e.HasIndex(x => new { x.UserId, x.SegmentId }).IsUnique();
+            e.HasIndex(x => new { x.UserId, x.StartedAtUtc });
+            e.HasIndex(x => new { x.UserId, x.SongFile });
         });
         b.Entity<UserSettings>(e =>
         {
@@ -209,11 +282,38 @@ public sealed class HathorDbContext(DbContextOptions<HathorDbContext> options) :
             e.Property(x => x.DeviceLabel).HasMaxLength(128);
             e.HasIndex(x => new { x.UserId, x.UpdatedUtc });
         });
+        b.Entity<AiDjSessionRecord>(e =>
+        {
+            e.ToTable("AiDj_Sessions");
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.Status).HasMaxLength(24);
+            e.HasIndex(x => x.SessionId).IsUnique();
+        });
+        b.Entity<AiDjClipRecord>(e =>
+        {
+            e.ToTable("AiDj_Clips");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FilePath).HasMaxLength(512);
+            e.Property(x => x.Mime).HasMaxLength(64);
+            e.Property(x => x.Text).HasMaxLength(1000);
+            e.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+        });
+        b.Entity<AiDjFeedbackRecord>(e =>
+        {
+            e.ToTable("AiDj_Feedback");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.TrackFile).HasMaxLength(255);
+            e.Property(x => x.Event).HasMaxLength(32);
+            e.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+            e.HasIndex(x => new { x.UserId, x.SessionId });
+        });
     }
 }
 
 // EF persistence shape for one device's resume spot (last write wins per
-// (user, device); readers exclude their own device id).
+// (user, device); readers exclude their own device id). Queue snapshot
+// columns let a tap restore the writer's Up Next, not just the file.
 public sealed class PlaybackSpotRow
 {
     public Guid UserId { get; set; }
@@ -223,6 +323,8 @@ public sealed class PlaybackSpotRow
     public bool IsPodcast { get; set; }
     public string? DeviceLabel { get; set; }
     public DateTime UpdatedUtc { get; set; }
+    public string QueueFilesJson { get; set; } = "[]";
+    public string? QueueSourceJson { get; set; }
 }
 
 // EF persistence shape for the PlaybackState aggregate (lists as JSON).

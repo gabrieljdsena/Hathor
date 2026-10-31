@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type LyricsHit } from '../api/client'
+import { api, type LyricsHit, type PodcastTimestamp } from '../api/client'
 import { usePlayer } from '../store/player'
 import Icon from './ui/icons'
 import { LoadingState } from './ui/states'
 import SyncedLyrics, { LYRICS_OFFSET_STEP_MS, useLyricsOffset, useSongLyrics } from './ui/SyncedLyrics'
-import { useActiveChapter } from './ui/PodcastTimestamps'
-import { splitChapterName } from '../utils/timestamps'
+import { seekTo, useActiveChapter, usePodcastChapters } from './ui/PodcastTimestamps'
+import { formatChapterTime, sortChapters, splitChapterName } from '../utils/timestamps'
 
 // Timing correction beside Romaji: −/+ steppers (250ms), numeric input
 // with native arrows, persisted server-side per song (0 = none, deleted).
@@ -28,7 +28,7 @@ function OffsetControl({
   }
   return (
     <div
-      className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5"
+      className="flex shrink-0 items-center gap-1 px-2 py-1 rounded-full bg-white/5 whitespace-nowrap"
       title="Shift lyric timing: positive delays the highlight, negative advances it"
     >
       <button
@@ -87,6 +87,10 @@ export default function LyricsSheet({
   // empty (track-only search). Chapter flips refetch under a new query key;
   // the loading state covers the swap so highlight and base never mismatch.
   const chapter = useActiveChapter(song?.file, song?.isPodcast)
+  // Full chapter list for the save-target picker (same cache key the
+  // transport arrows read — no extra fetch).
+  const { data: chaptersData } = usePodcastChapters(song?.isPodcast ? song?.file : null)
+  const chapters = useMemo(() => sortChapters(chaptersData ?? []), [chaptersData])
   // Chapter search prefill: split "Title - Artist" into the right fields
   // (the backend would read the whole name as the track and split it
   // backwards). Non-chapter songs keep their own metadata.
@@ -124,7 +128,7 @@ export default function LyricsSheet({
   const synced = romaji && romanized?.synced ? romanized.synced : lyrics?.synced
   const plain = romaji && romanized?.plain ? romanized.plain : lyrics?.plain
   const hasLyrics = !!synced || !!plain
-  const { offsetMs, setOffset } = useLyricsOffset(song?.file)
+  const { offsetMs, setOffset } = useLyricsOffset(song?.file, chapter?.id ?? null)
 
   if (!open) return null
   return (
@@ -134,16 +138,16 @@ export default function LyricsSheet({
         queueOpen ? 'sm:right-80' : ''
       }`}
     >
-      <div className="absolute top-0 inset-x-0 z-10 flex items-center justify-between px-5 sm:px-8 h-16">
+      <div className="relative z-10 flex w-full shrink-0 items-start justify-between gap-2 px-4 py-2 sm:absolute sm:top-0 sm:inset-x-0 sm:h-16 sm:items-center sm:px-8 sm:py-0">
         <button
           onClick={onClose}
           title="Back to Now Playing"
-          className="flex items-center gap-2 text-zinc-400 hover:text-white transition-all duration-200 px-3 py-2 rounded-xl hover:bg-white/10 cursor-pointer"
+          className="flex shrink-0 items-center gap-2 text-zinc-400 hover:text-white transition-all duration-200 px-3 py-2 rounded-xl hover:bg-white/10 cursor-pointer"
         >
           <Icon name="x" className="w-5 h-5" />
           <span className="text-xs font-semibold uppercase tracking-[0.2em] hidden sm:inline">Now Playing</span>
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           <span className="text-xs text-zinc-500 uppercase tracking-widest hidden sm:inline">
             {song ? `${song.title} • ${song.artist}` : ''}
           </span>
@@ -154,7 +158,7 @@ export default function LyricsSheet({
                 setShowSearch((v) => !v)
               }}
               title={hasLyrics ? 'Search / replace lyrics' : 'Search lyrics'}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
                 showSearch ? 'bg-orange-500 text-white' : 'bg-white/5 text-zinc-400 hover:text-white'
               }`}
             >
@@ -171,7 +175,7 @@ export default function LyricsSheet({
           <button
             onClick={() => setRomaji((v) => !v)}
             title="Toggle romaji"
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
               romaji ? 'bg-orange-500 text-white' : 'bg-white/5 text-zinc-400 hover:text-white'
             }`}
           >
@@ -180,12 +184,14 @@ export default function LyricsSheet({
         </div>
       </div>
 
-      <div className="relative w-full max-w-[88rem] mx-auto flex-1 min-h-0 px-4 pt-20 pb-24 flex flex-col">
+      <div className="relative w-full max-w-[88rem] mx-auto flex-1 min-h-0 px-4 pt-4 pb-24 flex flex-col sm:pt-20">
         {!song ? (
           <p className="text-zinc-500 text-xl font-semibold text-center">Select a song to load lyrics...</p>
         ) : showSearch ? (
           <LyricsSearchPanel
             songFile={song.file}
+            songTitle={song.title}
+            songArtist={song.artist === 'Unknown' ? '' : song.artist}
             initialTrack={chapterSplit?.title ?? song.title}
             initialArtist={chapterSplit?.artist ?? (song.artist === 'Unknown' ? '' : song.artist)}
             durationSec={song.duration}
@@ -193,7 +199,8 @@ export default function LyricsSheet({
             notice={notice}
             setNotice={setNotice}
             onDone={() => setShowSearch(false)}
-            chapterId={chapter?.id ?? null}
+            chapters={chapters}
+            activeChapterId={chapter?.id ?? null}
           />
         ) : (
           <SyncedLyrics
@@ -204,7 +211,9 @@ export default function LyricsSheet({
             chapterStartSecs={chapter?.startSecs ?? 0}
             emptySlot={
               <div className="flex flex-col items-center gap-4">
-                <p className="text-zinc-500 text-xl font-semibold">No lyrics found.</p>
+                <p className="text-zinc-500 text-xl font-semibold">
+                  {chapter ? `No lyrics saved for “${chapter.name}” yet.` : 'No lyrics found.'}
+                </p>
                 <button
                   onClick={() => {
                     setNotice(null)
@@ -236,6 +245,8 @@ function errMsg(e: unknown): string {
 
 function LyricsSearchPanel({
   songFile,
+  songTitle,
+  songArtist,
   initialTrack,
   initialArtist,
   durationSec,
@@ -243,9 +254,12 @@ function LyricsSearchPanel({
   notice,
   setNotice,
   onDone,
-  chapterId = null,
+  chapters = [],
+  activeChapterId = null,
 }: {
   songFile: string
+  songTitle: string
+  songArtist: string
   initialTrack: string
   initialArtist: string
   durationSec: number | undefined
@@ -253,9 +267,11 @@ function LyricsSearchPanel({
   notice: string | null
   setNotice: (m: string | null) => void
   onDone: () => void
-  // Chapter context: save/remove/refetch target the chapter cache row so
-  // the chapter view reads back exactly what was picked.
-  chapterId?: number | null
+  // Podcast chapters: lyrics are saved per chapter, so the panel lets the
+  // user pick the target instead of always using the active one. Empty for
+  // songs (no picker rendered).
+  chapters?: PodcastTimestamp[]
+  activeChapterId?: number | null
 }) {
   const queryClient = useQueryClient()
   const [track, setTrack] = useState(initialTrack)
@@ -265,6 +281,35 @@ function LyricsSearchPanel({
   const [savingId, setSavingId] = useState<number | null>(null)
   const [previewId, setPreviewId] = useState<number | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  // Save target: defaults to the chapter active when the panel opened.
+  // '' = the episode/file row (same as songs).
+  const [pickedId, setPickedId] = useState<number | ''>(activeChapterId ?? '')
+  // Chapter the last save went to (for the jump-to-chapter banner).
+  const [savedChapter, setSavedChapter] = useState<PodcastTimestamp | null>(null)
+
+  // The picked chapter may vanish from a stale list (renamed/re-added
+  // chapters get new ids): fall back to the active one, never to a guess.
+  const pickedChapter =
+    pickedId === '' ? null : (chapters.find((c) => c.id === pickedId) ?? null)
+  const effectiveChapter =
+    pickedChapter ?? chapters.find((c) => c.id === activeChapterId) ?? null
+  const effectiveChapterId = effectiveChapter?.id ?? null
+
+  const pickChapter = (id: number | '') => {
+    setPickedId(id)
+    // Prefill the search for the picked scope (user text stays editable).
+    if (id === '') {
+      setTrack(songTitle)
+      setArtist(songArtist)
+    } else {
+      const c = chapters.find((x) => x.id === id)
+      if (c) {
+        const split = splitChapterName(c.name)
+        setTrack(split.title)
+        setArtist(split.artist)
+      }
+    }
+  }
 
   // Reset when the song changes.
   useEffect(() => {
@@ -273,6 +318,8 @@ function LyricsSearchPanel({
     setHits(null)
     setPreviewId(null)
     setNotice(null)
+    setPickedId(activeChapterId ?? '')
+    setSavedChapter(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songFile])
 
@@ -308,12 +355,30 @@ function LyricsSearchPanel({
   const save = (hit: LyricsHit) => {
     setSavingId(hit.id)
     setNotice(null)
+    const target = effectiveChapter
     void api
-      .saveLyrics(songFile, hit.syncedLyrics, hit.plainLyrics, chapterId)
+      .saveLyrics(songFile, hit.syncedLyrics, hit.plainLyrics, effectiveChapterId)
       .then(() => {
         refreshLyrics()
-        setNotice(`Saved “${hit.trackName} — ${hit.artistName}”.`)
-        onDone()
+        // Seed the saved slot so the view shows instantly and survives a
+        // flaky refetch (React Query keeps set data when a background
+        // refetch errors; a later mount reconciles with the server).
+        queryClient.setQueryData(['lyrics', songFile, effectiveChapterId ?? ''], {
+          synced: hit.syncedLyrics,
+          plain: hit.plainLyrics,
+        })
+        setNotice(
+          target
+            ? `Saved “${hit.trackName} — ${hit.artistName}” for chapter “${target.name}”.`
+            : chapters.length > 0
+              ? `Saved “${hit.trackName} — ${hit.artistName}” for the whole episode (this chapter keeps its own row).`
+              : `Saved “${hit.trackName} — ${hit.artistName}”.`,
+        )
+        setSavedChapter(target)
+        // Saved for what's on screen: close so the fresh lyrics show
+        // (the view refetches on mount). Saved elsewhere: stay open for
+        // the jump banner instead of stranding a bare "Saved" notice.
+        if ((target?.id ?? null) === activeChapterId) onDone()
       })
       .catch((e: unknown) => setNotice(errMsg(e)))
       .finally(() => setSavingId(null))
@@ -323,9 +388,9 @@ function LyricsSearchPanel({
     setBusyAction('refetch')
     setNotice(null)
     void api
-      .songLyrics(songFile, track.trim() || initialTrack, artist.trim(), durationSec, true, chapterId)
+      .songLyrics(songFile, track.trim() || initialTrack, artist.trim(), durationSec, true, effectiveChapterId)
       .then((fresh) => {
-        queryClient.setQueryData(['lyrics', songFile, chapterId ?? ''], fresh)
+        queryClient.setQueryData(['lyrics', songFile, effectiveChapterId ?? ''], fresh)
         setNotice('Re-fetched from the provider.')
         onDone()
       })
@@ -337,7 +402,7 @@ function LyricsSearchPanel({
     setBusyAction('remove')
     setNotice(null)
     void api
-      .deleteLyrics(songFile, chapterId)
+      .deleteLyrics(songFile, effectiveChapterId)
       .then(() => {
         refreshLyrics()
         setNotice('Saved lyrics removed — re-fetching from the provider.')
@@ -347,11 +412,50 @@ function LyricsSearchPanel({
       .finally(() => setBusyAction(null))
   }
 
+  const jumpToSavedChapter = () => {
+    if (!savedChapter) return
+    seekTo(savedChapter.startSecs)
+    onDone()
+  }
+
   const inputClass =
     'w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 rounded-lg placeholder:text-zinc-600'
 
   return (
     <div className="w-full max-w-2xl mx-auto flex flex-col gap-3 overflow-y-auto pb-8">
+      {chapters.length > 0 && (
+        <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Save to chapter
+          <select
+            value={pickedId === '' ? '' : String(pickedId)}
+            onChange={(e) => {
+              const v = e.target.value
+              pickChapter(v === '' ? '' : Number.parseInt(v, 10))
+            }}
+            aria-label="Save lyrics to chapter"
+            className="w-full px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 rounded-lg cursor-pointer"
+          >
+            <option value="">Episode (whole file)</option>
+            {chapters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {formatChapterTime(c.startSecs)} · {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {savedChapter && savedChapter.id !== activeChapterId && (
+        <div className="flex items-center gap-3 text-sm text-orange-200 bg-orange-500/10 border border-orange-500/30 rounded-xl px-3 py-2">
+          <span className="flex-1">Saved for “{savedChapter.name}” — seek there to view it.</span>
+          <button
+            type="button"
+            onClick={jumpToSavedChapter}
+            className="px-2 py-1 rounded-md text-xs font-semibold text-orange-300 hover:text-orange-200 hover:bg-orange-500/10 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            Jump to chapter
+          </button>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row gap-2">
         <input
           value={track}

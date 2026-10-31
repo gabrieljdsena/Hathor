@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Song } from '../../api/client'
 import { formatTime } from '../../store/player'
+import { parseServerDate } from '../../utils/dates'
 import CoverArt from './CoverArt'
 
 // Standard song row (desktop table pattern): title+artist / album /
@@ -11,9 +12,8 @@ export const SONG_ROW_GRID =
   'grid-cols-[minmax(0,1fr)_auto_auto] sm:grid-cols-[minmax(0,4fr)_minmax(0,2.5fr)_100px_150px_auto]'
 
 export function formatAddedDate(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
+  const d = parseServerDate(iso)
+  if (!d) return '—'
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 

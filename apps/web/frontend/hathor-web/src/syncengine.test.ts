@@ -3,13 +3,14 @@ import { engine } from './audio/engine'
 import { usePlayer } from './store/player'
 import type { PlayerState } from './api/client'
 
-const { mockFile, mockDur, mockTime, mockPlaying, mockFading, mockToggle } = vi.hoisted(() => ({
+const { mockFile, mockDur, mockTime, mockPlaying, mockFading, mockPauseApi, mockResume } = vi.hoisted(() => ({
   mockFile: vi.fn(),
   mockDur: vi.fn(),
   mockTime: vi.fn(),
   mockPlaying: vi.fn(),
   mockFading: vi.fn(),
-  mockToggle: vi.fn(),
+  mockPauseApi: vi.fn(),
+  mockResume: vi.fn(),
 }))
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -18,7 +19,8 @@ vi.mock('./api/client', async (importOriginal) => {
     ...mod,
     api: {
       ...mod.api,
-      toggle: (...args: unknown[]) => mockToggle(...args),
+      pause: (...args: unknown[]) => mockPauseApi(...args),
+      resume: (...args: unknown[]) => mockResume(...args),
     },
   }
 })
@@ -27,7 +29,9 @@ vi.mock('./audio/engine', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./audio/engine')>()
   return {
     // Real pure helpers/consts (DRIFT_EDGE_MARGIN_SEC): only the engine
-    // singleton is fake.
+    // singleton is fake. driftTarget is re-implemented faithfully here
+    // (edge cap only — the mock has no recovery memory, so the ceiling
+    // never engages); the real ceiling is covered in engine.test.ts.
     ...mod,
     engine: {
       isFading: (...args: unknown[]) => mockFading(...args),
@@ -36,13 +40,27 @@ vi.mock('./audio/engine', async (importOriginal) => {
       load: vi.fn(),
       duration: (...args: unknown[]) => mockDur(...args),
       time: (...args: unknown[]) => mockTime(...args),
+      driftTarget: vi.fn((serverPos: number, catalogDuration: number) => {
+        if (!Number.isFinite(serverPos) || serverPos < 0) return null
+        const t = mockTime() as number
+        if (!Number.isFinite(t) || t < 0 || Math.abs(t - serverPos) <= 2) return null
+        const elDur = mockDur() as number
+        const known = elDur > 0 ? elDur : catalogDuration
+        const cap =
+          known > mod.DRIFT_EDGE_MARGIN_SEC + 1 ? known - mod.DRIFT_EDGE_MARGIN_SEC : known
+        return known > 0 ? Math.min(serverPos, cap) : serverPos
+      }),
       isPlaying: (...args: unknown[]) => mockPlaying(...args),
       play: vi.fn(),
       pause: vi.fn(),
       seek: vi.fn(),
       setVolume: vi.fn(),
       setNextProvider: vi.fn(),
+      setStreamUrlProvider: vi.fn(),
       onEnded: vi.fn(),
+      onTailStuck: vi.fn(),
+      onBuffering: vi.fn(),
+      onFatal: vi.fn(),
     },
   }
 })
@@ -71,7 +89,7 @@ function syncWith(over: Partial<PlayerState>) {
     source: null,
     isCustomQueue: false,
     firstPlay: false,
-    queueTotal: 0,
+    queueTotal: 0, queueVersion: 0,
     ...over,
   })
   usePlayer.getState().syncAudio()
@@ -114,8 +132,8 @@ describe('syncEngine drift correction cap', () => {
     syncWith({ positionSec: 5000 })
     // 180 would land exactly on the edge and fire `ended`, advancing away
     // mid-track — stop at the margin so the tail plays out instead.
-    expect(engine.seek).toHaveBeenCalledWith(178)
-    expect(engine.seek).not.toHaveBeenCalledWith(5000)
+    expect(engine.seek).toHaveBeenCalledWith(178, false)
+    expect(engine.seek).not.toHaveBeenCalledWith(5000, false)
   })
 
   it('passes sane corrections through untouched', () => {
@@ -125,7 +143,7 @@ describe('syncEngine drift correction cap', () => {
     mockPlaying.mockReturnValue(true)
     vi.mocked(engine.seek).mockClear()
     syncWith({ positionSec: 120 })
-    expect(engine.seek).toHaveBeenCalledWith(120)
+    expect(engine.seek).toHaveBeenCalledWith(120, false)
   })
 
   it('stops at the margin when the estimate sits on the edge', () => {
@@ -135,7 +153,7 @@ describe('syncEngine drift correction cap', () => {
     mockPlaying.mockReturnValue(true)
     vi.mocked(engine.seek).mockClear()
     syncWith({ positionSec: 180 })
-    expect(engine.seek).toHaveBeenCalledWith(178)
+    expect(engine.seek).toHaveBeenCalledWith(178, false)
   })
 
   it('keeps the legacy exact cap for tiny files', () => {
@@ -145,7 +163,7 @@ describe('syncEngine drift correction cap', () => {
     mockPlaying.mockReturnValue(true)
     vi.mocked(engine.seek).mockClear()
     syncWith({ positionSec: 2.9 })
-    expect(engine.seek).toHaveBeenCalledWith(2.9)
+    expect(engine.seek).toHaveBeenCalledWith(2.9, false)
   })
 })
 
@@ -164,7 +182,7 @@ describe('toggle during a fade', () => {
       source: null,
       isCustomQueue: false,
       firstPlay: false,
-      queueTotal: 0,
+      queueTotal: 0, queueVersion: 0,
     }
   }
 
@@ -177,11 +195,13 @@ describe('toggle during a fade', () => {
     mockDur.mockReturnValue(200)
     mockTime.mockReturnValue(197)
     mockPlaying.mockReturnValue(true)
-    mockToggle.mockResolvedValue(pausedB())
+    mockPauseApi.mockResolvedValue(pausedB())
     vi.mocked(engine.pause).mockClear()
     syncWith({ currentSong: songB as PlayerState['currentSong'], isPlaying: true, positionSec: 0 })
     await usePlayer.getState().toggle()
     expect(engine.pause).toHaveBeenCalled()
+    // No seek: the element is still on the outgoing file during the fade.
+    expect(mockPauseApi).toHaveBeenCalledWith(null, 'b.mp3')
     expect(usePlayer.getState().isPlaying).toBe(false)
   })
 
@@ -191,11 +211,13 @@ describe('toggle during a fade', () => {
     mockDur.mockReturnValue(200)
     mockTime.mockReturnValue(197)
     mockPlaying.mockReturnValue(false)
-    mockToggle.mockResolvedValue({ ...pausedB(), isPlaying: true })
+    mockResume.mockResolvedValue({ ...pausedB(), isPlaying: true })
     vi.mocked(engine.play).mockClear()
     syncWith({ currentSong: songB as PlayerState['currentSong'], isPlaying: false, positionSec: 0 })
     await usePlayer.getState().toggle()
     expect(engine.play).toHaveBeenCalled()
+    expect(mockResume).toHaveBeenCalledOnce()
     expect(usePlayer.getState().isPlaying).toBe(true)
   })
 })
+

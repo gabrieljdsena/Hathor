@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { api, type HistoryItem } from '../api/client'
+import { api, type HistoryItem, type QueueSource } from '../api/client'
 import { usePlayer } from '../store/player'
 import CoverArt from '../components/ui/CoverArt'
 import Icon from '../components/ui/icons'
@@ -9,21 +9,21 @@ import Pagination from '../components/ui/Pagination'
 import SongMenu, { type SongMenuHandle } from '../components/ui/SongMenu'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
+import { parseServerDate } from '../utils/dates'
 
 // History cloned from ui/views/history.html: Download / Played tabs,
 // paginated rows (cover + title + artist + date + play action).
 type Tab = 'download' | 'played'
 
 function formatDate(iso: string | null) {
-  if (!iso) return 'Unknown date'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? 'Unknown date' : d.toLocaleString()
+  const d = parseServerDate(iso)
+  return d ? d.toLocaleString() : 'Unknown date'
 }
 
 export default function History() {
   const [tab, setTab] = useState<Tab>('download')
   const [page, setPage] = useState(1)
-  const playSong = usePlayer((s) => s.playSong)
+  const playSongByFiles = usePlayer((s) => s.playSongByFiles)
   const currentFile = usePlayer((s) => s.currentSong?.file)
   const isPlaying = usePlayer((s) => s.isPlaying)
   const navigate = useNavigate()
@@ -42,14 +42,41 @@ export default function History() {
   })
   const query = tab === 'download' ? downloads : played
 
+  // Full-tab queue context (deduped server-side, capped like source rebuild).
+  // Prefetched per tab so a row click can start immediately; the current page
+  // is the fallback while this is still loading or if it fails.
+  const downloadFiles = useQuery({
+    queryKey: ['history-download-files'],
+    queryFn: api.downloadHistoryFiles,
+    staleTime: 30_000,
+    enabled: tab === 'download',
+  })
+  const playedFiles = useQuery({
+    queryKey: ['history-played-files'],
+    queryFn: api.playedHistoryFiles,
+    staleTime: 30_000,
+    enabled: tab === 'played',
+  })
+  const queueSource: QueueSource =
+    tab === 'download'
+      ? { type: 'download_history', id: null }
+      : { type: 'recently_played', id: null }
+  const queueFiles = tab === 'download' ? downloadFiles.data : playedFiles.data
+
   const switchTab = (t: Tab) => {
     setTab(t)
     setPage(1)
   }
 
   const playRow = (item: HistoryItem) => {
-    // History replay restarts the file (per-instance _historyId semantics).
-    void playSong(item.song, [item.song], { type: 'all_songs', id: null })
+    // History replay restarts the file, but next/prev stay inside the tab's
+    // recent context instead of falling back to the general list.
+    const pageFiles = Array.from(
+      new Set((query.data?.items ?? []).map((i) => i.song.file)),
+    )
+    const files = queueFiles?.length ? queueFiles : pageFiles
+    const context = files.includes(item.song.file) ? files : [item.song.file, ...files]
+    void playSongByFiles(item.song, context, queueSource)
   }
   const [queued, setQueued] = useState<string | null>(null)
   const redownload = (item: HistoryItem) => {
@@ -170,7 +197,8 @@ export default function History() {
                       menuRefs.current.set(rowKey(item), h)
                     }}
                     song={item.song}
-                    sourceType="all_songs"
+                    sourceType={queueSource.type}
+                    onPlay={() => playRow(item)}
                   />
                 </div>
               )

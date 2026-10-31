@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type DiscoverItem, type DownloadJob } from '../api/client'
+import {
+  api,
+  type Discover as DiscoverPayload,
+  type DiscoverFeedbackEvent,
+  type DiscoverItem,
+  type DownloadJob,
+} from '../api/client'
+import DiscoverInsightsCard from '../components/DiscoverInsightsCard'
+import DiscoverPreviewPlayer from '../components/DiscoverPreviewPlayer'
 import CoverArt from '../components/ui/CoverArt'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Icon from '../components/ui/icons'
@@ -9,6 +17,7 @@ import VideoPreview from '../components/ui/VideoPreview'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import ViewHeader from '../components/ui/ViewHeader'
+import { useDiscoverPreviewQueue } from '../hooks/useDiscoverPreviewQueue'
 
 // Discover view: out-of-library recommendations (packages/contracts/discover.md).
 // Cards carry iTunes artwork + source badge; download reuses the normal
@@ -16,15 +25,44 @@ import ViewHeader from '../components/ui/ViewHeader'
 // While a card's download runs, its download button morphs into a progress
 // pill fed by the shared download-jobs query (same polling rule as the
 // Download view: quiet when nothing is in flight).
-type SourceFilter = 'all' | 'artist' | 'chart' | 'llm'
+type SourceFilter =
+  | 'all'
+  | 'similar'
+  | 'cf'
+  | 'graph'
+  | 'tag'
+  | 'audio'
+  | 'popular'
+  | 'artist'
+  | 'chart'
+  | 'llm'
+
+type PreviewState = {
+  ids: string[]
+  index: number
+  title: string
+  artist: string
+}
 
 const SOURCE_LABEL: Record<Exclude<SourceFilter, 'all'>, string> = {
+  similar: 'Similar tracks',
+  cf: 'Similar listeners',
+  graph: 'Related artists',
+  tag: 'From your genres',
+  audio: 'Sounds like yours',
+  popular: 'Popular',
   artist: 'From your artists',
   chart: 'Trending',
   llm: 'Picked for you',
 }
 
 const SOURCE_BADGE: Record<Exclude<SourceFilter, 'all'>, string> = {
+  similar: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
+  cf: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
+  graph: 'text-sky-400 border-sky-500/30 bg-sky-500/10',
+  tag: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
+  audio: 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10',
+  popular: 'text-zinc-300 border-white/15 bg-white/5',
   artist: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
   chart: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
   llm: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
@@ -47,6 +85,8 @@ function DiscoverCard({
   progress,
   onDownload,
   onPreview,
+  onPlay,
+  onDismiss,
 }: {
   item: DiscoverItem
   pending: boolean
@@ -55,6 +95,8 @@ function DiscoverCard({
   progress: number | null
   onDownload: () => void
   onPreview: () => void
+  onPlay: () => void
+  onDismiss: () => void
 }) {
   return (
     <div className="group relative rounded-2xl overflow-hidden bg-zinc-900/40 border border-white/5 hover:border-orange-500/40 transition-all duration-300">
@@ -74,6 +116,14 @@ function DiscoverCard({
           </span>
         </div>
         <button
+          onClick={onPlay}
+          title={`Play ${item.title}`}
+          aria-label={`Play ${item.title} by ${item.artist}`}
+          className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-orange-500/90 hover:bg-orange-400 text-white shadow-xl shadow-orange-500/30 backdrop-blur-sm flex items-center justify-center transition-all duration-300 cursor-pointer opacity-90 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+        >
+          <Icon name="play" className="w-5 h-5 ml-0.5" />
+        </button>
+        <button
           onClick={onPreview}
           disabled={previewPending}
           title={previewPending ? 'Finding preview…' : `Preview ${item.title} on YouTube`}
@@ -81,6 +131,14 @@ function DiscoverCard({
           className="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 hover:bg-orange-500 disabled:bg-zinc-700 flex items-center justify-center text-white backdrop-blur-md transition-all duration-300 cursor-pointer disabled:cursor-default"
         >
           <Icon name="play" className="w-4 h-4 ml-0.5" />
+        </button>
+        <button
+          onClick={onDismiss}
+          title={`Not interested in ${item.title}`}
+          aria-label={`Not interested in ${item.title} by ${item.artist}`}
+          className="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-black/60 hover:bg-red-500 flex items-center justify-center text-white backdrop-blur-md opacity-60 hover:opacity-100 transition-all duration-300 cursor-pointer"
+        >
+          <Icon name="x" className="w-4 h-4" />
         </button>
         {progress === null ? (
           <button
@@ -117,8 +175,13 @@ function DiscoverCard({
         </div>
         <div className="text-xs text-zinc-500 truncate mt-0.5">{item.artist}</div>
         <div className="text-[11px] text-zinc-600 truncate mt-0.5">
-          {[item.album, item.year].filter(Boolean).join(' · ') || ' '}
+          {[item.album, item.year].filter(Boolean).join(' · ') || ' '}
         </div>
+        {item.reason && (
+          <div className="text-[10px] text-zinc-500 truncate mt-1" title={item.reason}>
+            {item.reason}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -138,8 +201,27 @@ export default function Discover() {
   // Pending already-owned confirm.
   const [confirm, setConfirm] = useState<DiscoverItem | null>(null)
   const [previewing, setPreviewing] = useState<ReadonlySet<string>>(new Set())
-  const [preview, setPreview] = useState<{ id: string; title: string; artist: string } | null>(null)
+  const [preview, setPreview] = useState<PreviewState | null>(null)
   const debounced = useDebouncedValue(search)
+
+  const sendFeedback = (item: DiscoverItem, event: DiscoverFeedbackEvent) => {
+    void api
+      .submitDiscoverFeedback({
+        title: item.title,
+        artist: item.artist,
+        mbid: item.mbid ?? null,
+        source: item.source,
+        event,
+        seedArtist: item.seedArtist ?? null,
+        score: item.score,
+      })
+      .catch(() => {
+        // Feedback is best-effort; never block playback/download UI.
+      })
+  }
+  const previewQueue = useDiscoverPreviewQueue((item) =>
+    sendFeedback(item, 'preview'),
+  )
 
   // Job progress per card, matched by submitted title/artist (the backend
   // echoes both onto the job). Key includes the limit: the Download view
@@ -210,17 +292,52 @@ export default function Discover() {
       })
   }
 
+  const dismiss = (item: DiscoverItem) => {
+    const key = `${item.title} — ${item.artist}`
+    queryClient.setQueryData<DiscoverPayload>(['discover'], (prev) =>
+      prev
+        ? {
+            ...prev,
+            items: prev.items.filter(
+              (i) => `${i.title} — ${i.artist}` !== key,
+            ),
+          }
+        : prev,
+    )
+    void api
+      .submitDiscoverFeedback({
+        title: item.title,
+        artist: item.artist,
+        mbid: item.mbid ?? null,
+        source: item.source,
+        event: 'dismiss',
+        seedArtist: item.seedArtist ?? null,
+        score: item.score,
+      })
+      .catch((err: unknown) => {
+        setNotice(err instanceof Error ? err.message : 'Could not save feedback.')
+        void queryClient.invalidateQueries({ queryKey: ['discover'] })
+      })
+  }
+
   const previewItem = async (item: DiscoverItem) => {
+    sendFeedback(item, 'preview')
     const key = `${item.title} — ${item.artist}`
     setPreviewing((prev) => new Set(prev).add(key))
     try {
-      const hits = await api.youtubeSearch(`${item.title} ${item.artist}`, 1)
-      const hit = hits[0]
-      if (!hit) {
+      const hits = await api.youtubeSearch(`${item.title} ${item.artist}`, 5)
+      if (hits.length === 0) {
         setNotice(`No YouTube preview found for ${item.title}.`)
         return
       }
-      setPreview({ id: hit.id, title: item.title, artist: item.artist })
+      // Keep every hit: if the first is age-restricted or has no audio,
+      // VideoPreview asks for the next candidate instead of dead-ending.
+      setPreview({
+        ids: hits.map((hit) => hit.id),
+        index: 0,
+        title: item.title,
+        artist: item.artist,
+      })
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Preview failed.')
     } finally {
@@ -232,10 +349,18 @@ export default function Discover() {
     }
   }
 
+  const tryNextPreview = () => {
+    setPreview((p) => {
+      if (!p || p.index + 1 >= p.ids.length) return p
+      return { ...p, index: p.index + 1 }
+    })
+  }
+
   const requestDownload = async (item: DiscoverItem) => {
     const key = `${item.title} — ${item.artist}`
     try {
       await api.submitDownload(`${item.title} ${item.artist} audio`, item.title, item.artist, false)
+      sendFeedback(item, 'download')
       setNotice(`Download queued: ${item.title}`)
       trackedRef.current.set(cardKey(item.title, item.artist), item.title)
       void queryClient.invalidateQueries({ queryKey: ['download-jobs'] })
@@ -311,6 +436,21 @@ export default function Discover() {
             }
           />
           <div className="ml-auto flex items-center gap-2">
+            {data && items.length > 0 && (
+              <button
+                onClick={() => void previewQueue.start(items)}
+                aria-label="Play all suggestions"
+                title={
+                  items.length > 20
+                    ? 'Preview the first 20 visible suggestions'
+                    : 'Preview all visible suggestions'
+                }
+                className="inline-flex items-center gap-2 rounded-full bg-orange-500 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-widest text-white shadow-lg shadow-orange-500/20 transition-colors hover:bg-orange-400 cursor-pointer"
+              >
+                <Icon name="play" className="w-3.5 h-3.5" />
+                Play all
+              </button>
+            )}
             {data && data.items.length > 0 && (
               <button
                 onClick={refresh}
@@ -328,7 +468,7 @@ export default function Discover() {
         <div className="flex items-center gap-3 mt-4 flex-wrap">
           <SearchInput value={search} onChange={setSearch} placeholder="Search suggestions..." id="discover_txt_search" />
           <div className="flex items-center gap-1.5">
-            {(['all', 'artist', 'chart', 'llm'] as const).map((s) => (
+            {(['all', 'similar', 'graph', 'tag', 'popular', 'artist', 'chart', 'llm'] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setSource(s)}
@@ -343,6 +483,7 @@ export default function Discover() {
             ))}
           </div>
         </div>
+        <DiscoverInsightsCard />
         {notice && (
           <div className="mt-4 text-sm text-zinc-300 bg-zinc-900/60 border border-white/10 rounded-xl px-4 py-2.5">
             {notice}
@@ -374,7 +515,7 @@ export default function Discover() {
       ) : (
         <div className="max-w-5xl w-full mx-auto px-6 sm:px-8 py-6">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {items.map((item) => (
+            {items.map((item, index) => (
               <DiscoverCard
                 key={`${item.title} — ${item.artist}`}
                 item={item}
@@ -383,11 +524,18 @@ export default function Discover() {
                 progress={progressFor(item)}
                 onDownload={() => void download(item)}
                 onPreview={() => void previewItem(item)}
+                onPlay={() => void previewQueue.start(items, index)}
+                onDismiss={() => dismiss(item)}
               />
             ))}
           </div>
         </div>
       )}
+
+      {previewQueue.active && (
+        <div className="h-28 shrink-0" aria-hidden="true" />
+      )}
+      <DiscoverPreviewPlayer queue={previewQueue} />
 
       <Modal
         open={preview !== null}
@@ -395,7 +543,14 @@ export default function Discover() {
         title={preview ? `Preview: ${preview.title}` : 'Preview'}
         wide
       >
-        {preview && <VideoPreview id={preview.id} title={preview.title} />}
+        {preview && (
+          <VideoPreview
+            key={preview.ids[preview.index]}
+            id={preview.ids[preview.index]}
+            title={preview.title}
+            onUnavailable={tryNextPreview}
+          />
+        )}
       </Modal>
 
       <ConfirmModal

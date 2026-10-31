@@ -194,6 +194,23 @@ public sealed class MusicHistoryEntry
     public DateTime DatePlayedUtc { get; set; }
 }
 
+// One row per client playback segment (web player telemetry). Music_History
+// remains the "played" event feed; this adds completion/skip quality used by
+// the Discover taste profile. SegmentId makes unload/retry reports idempotent.
+public sealed class PlaybackEvent
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public string SegmentId { get; set; } = "";
+    public string SongFile { get; set; } = "";
+    public double PositionSec { get; set; }
+    public double DurationSec { get; set; }
+    public bool Completed { get; set; }
+    public bool Skipped { get; set; }
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
 public sealed class PlaylistHistoryEntry
 {
     public long Id { get; set; }
@@ -226,13 +243,93 @@ public sealed class DiscoverCache
 {
     public Guid UserId { get; set; }
     public string Date { get; set; } = ""; // YYYY-MM-DD, PK with UserId
+    // Ranking pipeline version. A mismatch forces a recompute so a deploy
+    // cannot keep serving old-algorithm cards for the rest of the day.
+    public string ModelVersion { get; set; } = "";
     public string ItemsJson { get; set; } = "[]";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+// Daily ranking snapshot with the ranker's feature values, used by offline
+// evaluation/re-ranking. User-scoped; one row per day/model version.
+public sealed class DiscoverImpression
+{
+    public Guid UserId { get; set; }
+    public string Date { get; set; } = ""; // YYYY-MM-DD
+    public string ModelVersion { get; set; } = "";
+    public string ItemsJson { get; set; } = "[]";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+// CLAP audio embedding cache. OwnerType "song" keys are library filenames;
+// "preview" keys are recording MBIDs (30s external preview). JSON stores a
+// float array; cosine is computed in-process (no pgvector dependency).
+public sealed class TrackEmbedding
+{
+    public Guid UserId { get; set; }
+    public string OwnerType { get; set; } = "song";
+    public string OwnerKey { get; set; } = "";
+    public string Model { get; set; } = "clap-v1";
+    public string VectorJson { get; set; } = "[]";
+    public int Dimension { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+// Global ListenBrainz popularity cache keyed by recording MBID. Shared
+// across users (it is public catalog data, not a profile).
+public sealed class TrackPopularity
+{
+    public string Mbid { get; set; } = "";
+    public long ListenCount { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+// Per-user tuned ranker weights (offline evaluation). Absent = defaults.
+public sealed class RankingModel
+{
+    public Guid UserId { get; set; }
+    public string BaseVersion { get; set; } = "";
+    public string PresetName { get; set; } = "";
+    public string WeightsJson { get; set; } = "{}";
+    public int Samples { get; set; }
+    public int Snapshots { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+// Public-data response cache (MusicBrainz / ListenBrainz). Global, not
+// user-scoped: only catalog/similarity payloads live here, never profiles.
+public sealed class RecommendationCacheEntry
+{
+    public string Key { get; set; } = "";
+    public string PayloadJson { get; set; } = "";
+    public DateTime ExpiresAtUtc { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+// Discover feedback (packages/contracts/discover.md): user-scoped implicit
+// signals used by the local ranker. Dismissals expire after DismissDays;
+// downloads/previews/clicks decay over FeedbackDays.
+public sealed class DiscoverFeedback
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public string ItemKey { get; set; } = ""; // normalized title+artist identity
+    public string? Mbid { get; set; }
+    public string Title { get; set; } = "";
+    public string Artist { get; set; } = "";
+    public string Source { get; set; } = "";
+    public string Event { get; set; } = "";
+    public string? SeedArtist { get; set; }
+    public double? Score { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
 
 // Cross-device resume spot: one row per (user, device), last write wins.
 // Readers exclude their own device id, so a browser never echoes its own
-// paused track back as a "resume" pill (the single-user echo bug).
+// paused track back as a resume bento (the single-user echo bug).
+// QueueFiles carries the writer's Up Next snapshot (file keys, current
+// track first) so a tap can restore the foreign queue, not just the file.
 public sealed class PlaybackSpot
 {
     public Guid UserId { get; set; }
@@ -242,6 +339,8 @@ public sealed class PlaybackSpot
     public bool IsPodcast { get; set; }
     public string? DeviceLabel { get; set; } // human label, e.g. UA substring
     public DateTime UpdatedUtc { get; set; }
+    public List<string> QueueFiles { get; set; } = [];
+    public string? QueueSourceJson { get; set; } // serialized QueueSource (type+id), null = unknown
 }
 
 // Persisted prefs (desktop Settings row id=1 → per-user).
@@ -258,4 +357,41 @@ public sealed class UserSettings
     // Podcast chapter auto-skip: when on, timestamped episodes start at the
     // first chapter and jump to the next chapter at each end time.
     public bool ChapterSkip { get; set; }
+    public string? AiDjSettingsJson { get; set; }
+}
+
+// Active/current AI DJ run. One row per user; the batch graph is JSON because
+// it is read as one snapshot and never queried independently.
+public sealed class AiDjSessionRecord
+{
+    public Guid UserId { get; set; }
+    public Guid SessionId { get; set; }
+    public string Status { get; set; } = "active";
+    public string StateJson { get; set; } = "{}";
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+// One generated voice-over clip. Files live outside the library under the
+// configured AI DJ clip directory; only their metadata is in the database.
+public sealed class AiDjClipRecord
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; }
+    public string FilePath { get; set; } = "";
+    public string Mime { get; set; } = "audio/mpeg";
+    public double DurationSec { get; set; }
+    public string Text { get; set; } = "";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public sealed class AiDjFeedbackRecord
+{
+    public long Id { get; set; }
+    public Guid UserId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid? BatchId { get; set; }
+    public string? TrackFile { get; set; }
+    public string Event { get; set; } = "";
+    public DateTime CreatedAtUtc { get; set; }
 }

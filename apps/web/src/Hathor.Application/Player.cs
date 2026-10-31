@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Hathor.Application.Dtos;
 using Hathor.Application.Ports;
 using Hathor.Domain.Playback;
@@ -6,6 +7,21 @@ using Hathor.Application.Metadata;
 using MediatR;
 
 namespace Hathor.Application.Player;
+
+// In-memory per-user queue version (see PlayerStateDto.QueueVersion):
+// bumped on every queue-structure change so tabs can skip re-retaining
+// the queue array when it matches. Plain memory (no migration): resets
+// on service restart, and tabs reconverge via boot refresh + the
+// reconnect handler. Slightly slower convergence for passive tabs,
+// flat memory.
+internal static class QueueVersions
+{
+    private static readonly ConcurrentDictionary<Guid, int> Versions = new();
+    public static int Current(Guid userId) =>
+        Versions.TryGetValue(userId, out var v) ? v : 0;
+    public static int Bump(Guid userId) =>
+        Versions.AddOrUpdate(userId, 1, (_, v) => v + 1);
+}
 
 // Queries/commands backing §4 Playback endpoints. Backend is the source of
 // truth; every mutation broadcasts state so web UI and external remotes converge.
@@ -98,7 +114,13 @@ public sealed class ToggleHandler(IPlaybackStateRepository playback, ISongReadMo
             .Handle(new PlayCommand(cmd.UserId, null, null, null), ct);
 }
 
-public sealed record PauseCommand(Guid UserId) : IRequest<PlayerStateDto>;
+// Pause is idempotent. The web client retries it after network failures and
+// passes the position it paused at: the request may land minutes later, by
+// which time the server's wall-clock estimate has run past the song end. The
+// expected file keeps a delayed retry from rewinding a track that moved on.
+public sealed record PauseCommand(Guid UserId, string? ExpectedFile = null, double? PositionSec = null)
+    : IRequest<PlayerStateDto>;
+public sealed record ResumeCommand(Guid UserId) : IRequest<PlayerStateDto>;
 public sealed record NextCommand(Guid UserId, bool Auto = false, string? IdempotencyKey = null, string? ExpectedFile = null) : IRequest<PlayerStateDto>;
 public sealed record PrevCommand(Guid UserId, string? IdempotencyKey = null) : IRequest<PlayerStateDto>;
 
@@ -108,12 +130,38 @@ public sealed class PauseHandler(IPlaybackStateRepository playback, ISongReadMod
     public async Task<PlayerStateDto> Handle(PauseCommand cmd, CancellationToken ct)
     {
         var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
-        state.Pause(DateTime.UtcNow);
+        var now = DateTime.UtcNow;
+        state.Pause(now);
+        var sameFile = cmd.ExpectedFile is null ||
+            string.Equals(state.CurrentFile, cmd.ExpectedFile, StringComparison.OrdinalIgnoreCase);
+        if (sameFile && cmd.PositionSec is { } pos && double.IsFinite(pos))
+            state.Seek(pos, now);
         await PlaybackPositionClamp.ClampStoredAsync(state, songs, cmd.UserId, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
         return dto;
+    }
+}
+
+// Explicit, idempotent resume. Unlike PlayHandler's same-file toggle, calling
+// this while already playing must not reset PositionOffsetSec to the stale
+// pause position (a lost response would otherwise rewind playback on retry).
+public sealed class ResumeHandler(IPlaybackStateRepository playback, ISongReadModel songs, IPlaybackHub hub)
+    : IRequestHandler<ResumeCommand, PlayerStateDto>
+{
+    public async Task<PlayerStateDto> Handle(ResumeCommand cmd, CancellationToken ct)
+    {
+        var state = await playback.GetOrCreateAsync(cmd.UserId, ct);
+        if (!state.IsPlaying && state.CurrentFile is not null)
+        {
+            state.Resume(DateTime.UtcNow);
+            await playback.SaveChangesAsync(ct);
+            var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
+            await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
+            return dto;
+        }
+        return await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
     }
 }
 
@@ -137,7 +185,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
             await playback.SaveChangesAsync(ct);
             var converged = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
             await hub.BroadcastStateAsync(cmd.UserId, converged, ct);
-            await hub.BroadcastQueueAsync(cmd.UserId, converged.Queue, ct);
+            await hub.BroadcastQueueAsync(cmd.UserId, converged.Queue, converged.QueueVersion, ct);
             return converged;
         }
 
@@ -154,12 +202,19 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
                 state.IsPlaying = false;
                 state.PausePositionSec = 0;
                 state.PositionOffsetSec = 0;
+                // Stopping on the same file (queue exhausted): the finished
+                // stream is done with the old bytes, so a stashed edit for
+                // it finally applies — otherwise it would sit queued forever
+                // with no track change to trigger it. (Pause keeps the
+                // stash: resuming would keep streaming pre-edit offsets.)
+                await PendingEditHooks.ApplyForStoppedFileAsync(pendingEdits, cmd.UserId, oldFile, ct);
             }
             else
             {
                 // Podcast-ness resolves per file so mixed queues stay correct.
                 var resolved = await songs.GetByFileAsync(cmd.UserId, next, includeCover: false, ct);
                 state.StartPlaying(next, resolved?.IsPodcast ?? false, now);
+                QueueVersions.Bump(cmd.UserId); // advance consumed the head
                 if (!state.CurrentIsPodcast)
                     PlayerEvents.RaiseSongPlayed(cmd.UserId, next, state.CurrentPlaylistId);
             }
@@ -177,7 +232,7 @@ public sealed class NextHandler(IPlaybackStateRepository playback, ISongReadMode
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -194,12 +249,13 @@ public sealed class PrevHandler(IPlaybackStateRepository playback, ISongReadMode
         {
             var resolved = await songs.GetByFileAsync(cmd.UserId, prev, includeCover: false, ct);
             state.StartPlaying(prev, resolved?.IsPodcast ?? false, DateTime.UtcNow);
+            QueueVersions.Bump(cmd.UserId); // rewind reinserted the head
         }
         await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);
         await playback.SaveChangesAsync(ct);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, cmd.UserId, ct);
         await hub.BroadcastStateAsync(cmd.UserId, dto, ct);
-        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, ct);
+        await hub.BroadcastQueueAsync(cmd.UserId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -303,9 +359,11 @@ public sealed class PlayerPrefsHandler(
         var state = await playback.GetOrCreateAsync(userId, ct);
         apply(state);
         await playback.SaveChangesAsync(ct);
+        // broadcastQueue callers (shuffle on/off) reorder NextFiles.
+        if (broadcastQueue) QueueVersions.Bump(userId);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, userId, ct);
         await hub.BroadcastStateAsync(userId, dto, ct);
-        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
+        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -382,6 +440,16 @@ internal static class PendingEditHooks
         string.Equals(oldFile, newFile, StringComparison.OrdinalIgnoreCase)
             ? Task.CompletedTask
             : applier.ApplyForFileAsync(userId, oldFile, newFile, ct);
+
+    // Queue-exhausted stop: the finished file stays current but nothing will
+    // stream its old bytes again (the element parks at 0; any replay starts
+    // fresh ranges against the edited file), so the stash flushes with a
+    // null current file instead of waiting for a track change that never
+    // comes. Never used for pauses — resuming mid-file must keep old offsets.
+    internal static Task ApplyForStoppedFileAsync(
+        PendingMetadataApplier applier, Guid userId, string? oldFile,
+        CancellationToken ct) =>
+        applier.ApplyForFileAsync(userId, oldFile, null, ct);
 }
 
 public sealed class QueueHandler(
@@ -464,10 +532,13 @@ public sealed class QueueHandler(
     private async Task<PlayerStateDto> SaveAndBroadcast(Guid userId, PlaybackState state, CancellationToken ct, bool broadcastState = true, bool broadcastQueue = false)
     {
         await playback.SaveChangesAsync(ct);
+        // Every queue-command caller mutates NextFiles (replace, add,
+        // play-next, clear, remove, reorder, jump).
+        QueueVersions.Bump(userId);
         var dto = await PlayerHelpers.ToDtoAsync(state, songs, userId, ct);
         if (broadcastState)
             await hub.BroadcastStateAsync(userId, dto, ct);
-        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, ct);
+        if (broadcastQueue) await hub.BroadcastQueueAsync(userId, dto.Queue, dto.QueueVersion, ct);
         return dto;
     }
 }
@@ -479,7 +550,10 @@ public static class PlayerHelpers
     {
         SongDto? current = null;
         if (state.CurrentFile is not null)
-            current = await songs.GetByFileAsync(userId, state.CurrentFile, includeCover: true, ct);
+            // Cover-less: art travels via the browser-cached /cover endpoint
+            // (PlayerBar/NowPlaying fall back to it); attaching base64 here
+            // put megabytes on every state response + broadcast.
+            current = await songs.GetByFileAsync(userId, state.CurrentFile, includeCover: false, ct);
 
         // One batched resolve (single date lookup) instead of per-file
         // queries — full-library queues would otherwise cost 1000+ DB
@@ -499,7 +573,8 @@ public static class PlayerHelpers
             current, state.IsPlaying, position,
             state.Volume, state.Shuffle, state.Repeat, queue,
             state.Source is null ? null : new QueueSourceDto(state.Source.Type, state.Source.Id),
-            state.IsCustomQueue, state.FirstPlay, state.NextFiles.Count);
+            state.IsCustomQueue, state.FirstPlay, state.NextFiles.Count,
+            QueueVersions.Current(userId));
     }
 }
 

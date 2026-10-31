@@ -1,16 +1,28 @@
 import { renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePlayerHub } from './playerHub'
-import { usePlayer } from './store/player'
+import { cancelPlaybackIntent, hasPendingPlaybackIntent, usePlayer } from './store/player'
 import type { PlayerState, Song } from './api/client'
 
-const { mockBuild, mockStart, mockStop, handlers, mockLoad, mockPause, mockSetQueue } = vi.hoisted(() => ({
+const {
+  mockBuild,
+  mockStart,
+  mockStop,
+  handlers,
+  mockLoad,
+  mockPause,
+  mockPauseApi,
+  mockResume,
+  mockSetQueue,
+} = vi.hoisted(() => ({
   mockBuild: vi.fn(),
   mockStart: vi.fn(),
   mockStop: vi.fn(),
   handlers: new Map<string, (...args: never[]) => void>(),
   mockLoad: vi.fn(),
   mockPause: vi.fn(),
+  mockPauseApi: vi.fn(),
+  mockResume: vi.fn(),
   mockSetQueue: vi.fn(),
 }))
 
@@ -21,6 +33,8 @@ vi.mock('./api/client', async (importOriginal) => {
     api: {
       ...mod.api,
       setQueue: (...args: unknown[]) => mockSetQueue(...args),
+      pause: (...args: unknown[]) => mockPauseApi(...args),
+      resume: (...args: unknown[]) => mockResume(...args),
     },
   }
 })
@@ -55,8 +69,12 @@ vi.mock('./audio/engine', () => ({
     play: vi.fn(),
     pause: (...args: unknown[]) => mockPause(...args),
     setVolume: vi.fn(),
-    setNextProvider: vi.fn(),
-    onEnded: vi.fn(),
+      setNextProvider: vi.fn(),
+      setStreamUrlProvider: vi.fn(),
+      onEnded: vi.fn(),
+      onTailStuck: vi.fn(),
+      onBuffering: vi.fn(),
+      onFatal: vi.fn(),
     onReport: undefined,
     currentFile: () => null,
     fadeTarget: () => null,
@@ -77,7 +95,7 @@ function playerState(over: Partial<PlayerState>): PlayerState {
     source: null,
     isCustomQueue: false,
     firstPlay: true,
-    queueTotal: 0,
+    queueTotal: 0, queueVersion: 0,
     ...over,
   }
 }
@@ -95,6 +113,7 @@ const song: Song = {
 }
 
 beforeEach(() => {
+  cancelPlaybackIntent()
   vi.clearAllMocks()
   handlers.clear()
   // Real HubConnection.start()/stop() return promises; the hook chains
@@ -104,6 +123,10 @@ beforeEach(() => {
   localStorage.clear()
   localStorage.setItem('hathor:token', 'tok123')
   usePlayer.setState(playerState({}))
+})
+
+afterEach(() => {
+  cancelPlaybackIntent()
 })
 
 describe('usePlayerHub', () => {
@@ -140,6 +163,42 @@ describe('usePlayerHub', () => {
     expect(usePlayer.getState().currentSong?.file).toBe('new.mp3')
   })
 
+  it('keeps the held queue array when the broadcast version matches', () => {
+    const held = [{ ...song, file: 'held.mp3' }]
+    usePlayer.setState(playerState({ queue: held as Song[], queueTotal: 1, queueVersion: 7 }))
+    renderHook(() => usePlayerHub('user'))
+    const onState = handlers.get('PlaybackStateChanged')
+    // Same version, different array instance + flipped scalars: scalars
+    // apply, but the retained queue array must be untouched (no new MBs).
+    onState!(
+      playerState({
+        queue: [{ ...song, file: 'other.mp3' }] as Song[],
+        queueTotal: 1,
+        queueVersion: 7,
+        isPlaying: true,
+      }) as never,
+    )
+    expect(usePlayer.getState().isPlaying).toBe(true)
+    expect(usePlayer.getState().queue).toBe(held)
+  })
+
+  it('replaces the queue when the broadcast version moved', () => {
+    const held = [{ ...song, file: 'held.mp3' }]
+    usePlayer.setState(playerState({ queue: held as Song[], queueTotal: 1, queueVersion: 7 }))
+    renderHook(() => usePlayerHub('user'))
+    const onState = handlers.get('PlaybackStateChanged')
+    onState!(
+      playerState({
+        queue: [{ ...song, file: 'fresh.mp3' }] as Song[],
+        queueTotal: 1,
+        queueVersion: 8,
+      }) as never,
+    )
+    expect(usePlayer.getState().queue).toHaveLength(1)
+    expect(usePlayer.getState().queue[0].file).toBe('fresh.mp3')
+    expect(usePlayer.getState().queueVersion).toBe(8)
+  })
+
   it('stays disconnected when logged out', () => {
     renderHook(() => usePlayerHub(null))
     expect(mockBuild).not.toHaveBeenCalled()
@@ -168,4 +227,22 @@ describe('usePlayerHub', () => {
     resolveQueue(playerState({}))
     await flight.catch(() => {})
   })
+
+  it('ignores broadcasts while a pause intent is still retrying', async () => {
+    usePlayer.setState(playerState({ currentSong: song as PlayerState['currentSong'], isPlaying: true }))
+    renderHook(() => usePlayerHub('user'))
+
+    mockPauseApi.mockRejectedValueOnce(new Error('offline'))
+    await usePlayer.getState().toggle()
+    expect(usePlayer.getState().isPlaying).toBe(false)
+    expect(hasPendingPlaybackIntent()).toBe(true)
+
+    const onState = handlers.get('PlaybackStateChanged')
+    onState!(playerState({ currentSong: song as PlayerState['currentSong'], isPlaying: true }) as never)
+
+    // The user paused; a stale broadcast must not start audio again.
+    expect(usePlayer.getState().isPlaying).toBe(false)
+    expect(usePlayer.getState().currentSong?.file).toBe('new.mp3')
+  })
 })
+

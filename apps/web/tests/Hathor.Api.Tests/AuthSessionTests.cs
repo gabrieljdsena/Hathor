@@ -68,7 +68,7 @@ public sealed class AuthSessionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ChangePassword_RotatesCredentials()
+    public async Task ChangePassword_RejectsWrongAndShort()
     {
         var name = $"pw-{Guid.NewGuid():N}";
         var tokens = await RegisterAsync(name);
@@ -77,6 +77,13 @@ public sealed class AuthSessionTests : IAsyncLifetime
             .Should().Be(HttpStatusCode.Unauthorized);
         (await ChangePasswordAsync(tokens.AccessToken, "auth-test-123", "short"))
             .Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ChangePassword_RotatesCredentials()
+    {
+        var name = $"pw-{Guid.NewGuid():N}";
+        var tokens = await RegisterAsync(name);
 
         (await ChangePasswordAsync(tokens.AccessToken, "auth-test-123", "new-password-123"))
             .Should().Be(HttpStatusCode.NoContent);
@@ -120,6 +127,23 @@ public sealed class AuthSessionTests : IAsyncLifetime
         (plainRow.ExpiresAtUtc - plainRow.CreatedAtUtc).Should().BeCloseTo(
             TimeSpan.FromHours(24), TimeSpan.FromMinutes(5));
         plain.AccessToken.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Refresh_PreservesRememberMe_And_Lifetime()
+    {
+        var name = $"rmr-{Guid.NewGuid():N}";
+        await RegisterAsync(name);
+        var remembered = await LoginAsync(name, rememberMe: true);
+
+        using var msg = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh");
+        msg.Content = JsonContent.Create(new { refreshToken = remembered.RefreshToken });
+        var rotated = (await (await _client.SendAsync(msg)).Content.ReadFromJsonAsync<Tokens>())!;
+
+        var current = (await SessionsAsync(rotated.AccessToken)).Single(s => s.Current);
+        current.RememberMe.Should().BeTrue();
+        (current.ExpiresAtUtc - current.CreatedAtUtc).Should().BeCloseTo(
+            TimeSpan.FromDays(30), TimeSpan.FromMinutes(5));
     }
 
     [Fact]

@@ -185,7 +185,7 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
         await mediator.Send(new SaveLyricsCommand(
             CurrentUserId(), file, body.Synced, body.Plain, chapterId), ct)
             ? NoContent()
-            : BadRequest(new { message = "Empty lyrics cannot be saved." });
+            : BadRequest(new { message = "Lyrics could not be saved (empty, or the chapter no longer exists)." });
 
     // Manual removal (wrong lyrics): drops the cached row so the next read
     // re-fetches instead of serving the stale entry.
@@ -199,18 +199,21 @@ public sealed class SongLyricsController(IMediator mediator) : ControllerBase
 
     // Highlight timing correction, milliseconds (-20000..20000, clamped).
     // Zero removes the row when it holds no lyrics (sparse storage).
+    // chapterId scopes podcast offsets per chapter (falls back to file).
     [HttpGet("offset")]
     [Authorize(Policy = ScopeAuthorization.LibraryRead)]
-    public async Task<ActionResult<LyricsOffsetDto>> GetOffset(string file, CancellationToken ct) =>
+    public async Task<ActionResult<LyricsOffsetDto>> GetOffset(
+        string file, [FromQuery] long? chapterId, CancellationToken ct) =>
         Ok(new LyricsOffsetDto(await mediator.Send(
-            new GetLyricsOffsetQuery(CurrentUserId(), file), ct)));
+            new GetLyricsOffsetQuery(CurrentUserId(), file, chapterId), ct)));
 
     [HttpPut("offset")]
     [Authorize(Policy = ScopeAuthorization.LibraryWrite)]
     public async Task<ActionResult<LyricsOffsetDto>> SetOffset(
-        string file, [FromBody] SetLyricsOffsetRequest body, CancellationToken ct) =>
+        string file, [FromBody] SetLyricsOffsetRequest body,
+        [FromQuery] long? chapterId, CancellationToken ct) =>
         Ok(new LyricsOffsetDto(await mediator.Send(new SetLyricsOffsetCommand(
-            CurrentUserId(), file, body.OffsetMs ?? 0), ct)));
+            CurrentUserId(), file, body.OffsetMs ?? 0, chapterId), ct)));
 
     private Guid CurrentUserId() =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);

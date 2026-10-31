@@ -32,6 +32,7 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<PlaylistDto>> Create(
         [FromBody] CreatePlaylistRequest body, CancellationToken ct)
     {
@@ -49,6 +50,7 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpPut("{id:long}")]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<PlaylistDto>> Update(
         long id, [FromBody] UpdatePlaylistRequest body, CancellationToken ct)
     {
@@ -66,8 +68,42 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpGet("{id:long}/songs")]
     [Authorize(Policy = ScopeAuthorization.PlaylistsRead)]
-    public async Task<ActionResult<IReadOnlyList<SongDto>>> Songs(long id, CancellationToken ct) =>
-        Ok(await mediator.Send(new GetPlaylistSongsQuery(CurrentUserId(), id), ct));
+    public async Task<ActionResult<IReadOnlyList<SongDto>>> Songs(
+        long id, [FromQuery] string? search, [FromQuery] string? sort, [FromQuery] string? dir,
+        [FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(
+                new GetPlaylistSongsQuery(CurrentUserId(), id, search, sort, dir, page, pageSize), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id:long}/songs/count")]
+    [Authorize(Policy = ScopeAuthorization.PlaylistsRead)]
+    public async Task<ActionResult<int>> SongsCount(
+        long id, [FromQuery] string? search, CancellationToken ct) =>
+        Ok(await mediator.Send(new GetPlaylistSongsCountQuery(CurrentUserId(), id, search), ct));
+
+    [HttpGet("{id:long}/files")]
+    [Authorize(Policy = ScopeAuthorization.PlaylistsRead)]
+    public async Task<ActionResult<IReadOnlyList<string>>> Files(
+        long id, [FromQuery] string? search,
+        [FromQuery] string? sort, [FromQuery] string? dir, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await mediator.Send(new GetPlaylistFilesQuery(CurrentUserId(), id, search, sort, dir), ct));
+        }
+        catch (FluentValidation.ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 
     [HttpPost("{id:long}/songs")]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
@@ -86,6 +122,7 @@ public sealed class PlaylistsController(IMediator mediator) : ControllerBase
 
     [HttpPost("{id:long}/cover")]
     [Authorize(Policy = ScopeAuthorization.PlaylistsWrite)]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<PlaylistDto>> SetCover(
         long id, [FromBody] PlaylistCoverRequest body, CancellationToken ct)
     {

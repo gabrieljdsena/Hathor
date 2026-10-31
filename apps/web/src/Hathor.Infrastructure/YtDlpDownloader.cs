@@ -43,7 +43,8 @@ public class YtDlpDownloader(
             url, destMp3Path, FfmpegDir(),
             config["YtDlp:CookiesFromBrowser"],
             config["YtDlp:CookiesFile"],
-            config["YtDlp:ExtraArgs"]);
+            config["YtDlp:ExtraArgs"],
+            Maintenance.PotArgs.FromState(config));
         var tail = new List<string>();
         var progressSeen = 0;
         void OnLine(string? line)
@@ -100,6 +101,9 @@ public class YtDlpDownloader(
         };
         AddAuthArgs(args, config["YtDlp:CookiesFromBrowser"],
             config["YtDlp:CookiesFile"], config["YtDlp:ExtraArgs"]);
+        // Bot-check protection (PO-token plugin): additive after any
+        // explicit auth — the plugin no-ops when its server is down.
+        args.AddRange(Maintenance.PotArgs.FromState(config));
         args.Add(url);
         var tail = new List<string>();
         void OnLine(string? line)
@@ -254,7 +258,8 @@ public class YtDlpDownloader(
     // Pure arg builder (unit-tested without a binary or network).
     internal static IReadOnlyList<string> BuildArgumentList(
         string url, string outputPath, string? ffmpegDir,
-        string? cookiesFromBrowser, string? cookiesFile, string? extraArgs)
+        string? cookiesFromBrowser, string? cookiesFile, string? extraArgs,
+        IReadOnlyList<string>? potArgs = null)
     {
         var args = new List<string>
         {
@@ -272,6 +277,7 @@ public class YtDlpDownloader(
             args.Add(ffmpegDir);
         }
         AddAuthArgs(args, cookiesFromBrowser, cookiesFile, extraArgs);
+        if (potArgs is not null) args.AddRange(potArgs);
         args.Add(url);
         return args;
     }

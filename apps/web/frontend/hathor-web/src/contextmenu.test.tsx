@@ -145,6 +145,20 @@ describe('StripCard context menu', () => {
     fireEvent.contextMenu(card!)
     expect(screen.queryByText('Play Next')).not.toBeInTheDocument()
   })
+
+  it('routes the menu Play action through the strip context', () => {
+    const onPlay = vi.fn()
+    const client = new QueryClient()
+    render(
+      <QueryClientProvider client={client}>
+        <StripCard song={songs[0]} onPlay={onPlay} menuSourceType="recently_played" />
+      </QueryClientProvider>,
+    )
+    const card = screen.getByText('Title').closest('div.group')
+    fireEvent.contextMenu(card!, { clientX: 120, clientY: 220 })
+    fireEvent.click(screen.getByText('Play'))
+    expect(onPlay).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('menu bus (single open menu)', () => {

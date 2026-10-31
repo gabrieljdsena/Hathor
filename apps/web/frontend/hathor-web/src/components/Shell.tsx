@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, deviceId, deviceLabel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { pushResumeSpot, usePlayer } from '../store/player'
+import { pushResumeSpot, startPlayerTelemetry, usePlayer } from '../store/player'
+import { useAiDj } from '../store/aiDj'
+import { useAiDjPolling } from '../aiDjPolling'
 import { engine } from '../audio/engine'
 import { handleShortcutKey } from '../utils/shortcuts'
 import { createUnloadPause } from '../utils/unloadPause'
@@ -12,6 +14,7 @@ import PlayerBar from './PlayerBar'
 import LyricsSheet from './LyricsSheet'
 import NowPlaying from './NowPlaying'
 import QueueSheet from './QueueSheet'
+import DjVibePopover from './DjVibePopover'
 import Brand from './ui/Brand'
 import Icon, { type IconName } from './ui/icons'
 import ShortcutHelp from './ui/ShortcutHelp'
@@ -32,6 +35,7 @@ function NavItem({
   label,
   collapsed,
   onNavigate,
+  action,
 }: {
   to: string
   end?: boolean
@@ -39,8 +43,9 @@ function NavItem({
   label: string
   collapsed: boolean
   onNavigate?: () => void
+  action?: ReactNode
 }) {
-  return (
+  const link = (
     <NavLink
       to={to}
       end={end}
@@ -58,20 +63,31 @@ function NavItem({
       {!collapsed && <span className="font-medium tracking-wide truncate">{label}</span>}
     </NavLink>
   )
+  if (!action) return link
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex-1 min-w-0">{link}</div>
+      {action}
+    </div>
+  )
 }
 
 // Sidebar + bottom player bar shell. Classes cloned from Music Player/ui/index.html
-// (desktop titlebar/resize zones intentionally dropped — responsive web only).
+// (desktop titlebar/resize zones intentionally dropped â€” responsive web only).
 export default function Shell() {
   const { logout, username } = useAuth()
   // Converge this tab on every control mutation from anywhere (other tabs,
-  // phone, headless clients) — no-op until logged in.
+  // phone, headless clients) â€” no-op until logged in.
   usePlayerHub(username)
+  useAiDjPolling()
+  useEffect(() => startPlayerTelemetry(), [])
   const [queueOpen, setQueueOpen] = useState(false)
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false)
+  const [vibeOpen, setVibeOpen] = useState(false)
+  const djActive = useAiDj((s) => s.state?.status === 'active')
   const [signingOut, setSigningOut] = useState(false)
-  // Collapsible icon rail (desktop #sidebar-toggle → w-64/w-20). Phone
+  // Collapsible icon rail (desktop #sidebar-toggle â†’ w-64/w-20). Phone
   // screens (<=700px) hide the sidebar entirely behind a hamburger drawer.
   const [collapsed, setCollapsed] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 700,
@@ -83,13 +99,20 @@ export default function Shell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.settings })
+  // Playlist submenu under the sidebar item, expanded on load.
+  const [playlistsOpen, setPlaylistsOpen] = useState(true)
+  const { data: playlists } = useQuery({ queryKey: ['playlists'], queryFn: api.playlists })
   // RouteErrorBoundary reset source: navigating always clears a view crash.
   const { pathname } = useLocation()
 
   // Phone drawer: navigating (or resizing up to desktop) always closes it.
   useEffect(() => {
     setMobileOpen(false)
+    setVibeOpen(false)
   }, [pathname])
+  useEffect(() => {
+    if (djActive) setQueueOpen(false)
+  }, [djActive])
   useEffect(() => {
     if (!narrow) setMobileOpen(false)
   }, [narrow])
@@ -133,7 +156,10 @@ export default function Shell() {
             isPlaying: s.isPlaying,
             hasTrack: s.currentSong !== null,
             file: s.currentSong?.file ?? null,
-            positionSec: engine.time(),
+            // Mid-fade the active element is the outgoing track while the
+            // store already names the incoming one; let the server keep its
+            // incoming estimate instead of seeking it to the old position.
+            positionSec: engine.isFading() ? undefined : engine.time(),
             isPodcast: !!s.currentSong?.isPodcast,
             deviceId: deviceId(),
             deviceLabel: deviceLabel(),
@@ -151,7 +177,7 @@ export default function Shell() {
   )
 
   // Keyboard shortcuts (desktop Now Playing & shortcuts): Space play/pause,
-  // ←/→ seek ±10s, ↑/↓ volume, n/p chapter-aware next/prev, [ ] chapter-only
+  // â†/â†’ seek Â±10s, â†‘/â†“ volume, n/p chapter-aware next/prev, [ ] chapter-only
   // jumps, m mute, s/r shuffle/repeat, ? help. Ignored while typing or when
   // a dialog owns the keyboard. Chapter jumps read a ref: the query cache
   // fills asynchronously, long after this one-time listener is attached.
@@ -162,11 +188,6 @@ export default function Shell() {
   const helpRef = useRef(false)
   helpRef.current = showHelp
   useEffect(() => {
-    const track = (call: Promise<import('../api/client').PlayerState>) =>
-      void call.then((s) => {
-        usePlayer.setState(s)
-        usePlayer.getState().syncAudio()
-      })
     const onKey = (e: KeyboardEvent) => {
       if (helpRef.current && e.key === 'Escape') {
         setShowHelp(false)
@@ -185,12 +206,12 @@ export default function Shell() {
           const v = Math.min(1, Math.max(0, usePlayer.getState().volume + d))
           void api.volume(v).then((s) => usePlayer.setState({ volume: s.volume }))
         },
-        nextTrack: () => track(api.next()),
-        prevTrack: () => track(api.prev()),
+        nextTrack: () => void usePlayer.getState().skipNext(),
+        prevTrack: () => void usePlayer.getState().skipPrev(),
         chapterNext: () => jumpRef.current.next(),
         chapterPrev: () => jumpRef.current.prev(),
         shuffle: () => void api.shuffle().then((s) => usePlayer.setState(s)),
-        repeat: () => void api.repeat().then((s) => usePlayer.setState(s)),
+        repeat: () => void usePlayer.getState().toggleRepeat(),
         mute: () => {
           const store = usePlayer.getState()
           const v = store.volume > 0 ? 0 : 1.0
@@ -227,7 +248,11 @@ export default function Shell() {
       <div
         id="page"
         className="flex flex-row w-full flex-1"
-        style={{ minHeight: 0, marginBottom: 'var(--controller-height, 112px)' }}
+        style={{
+          minHeight: 0,
+          marginBottom: 'var(--controller-height, 112px)',
+          '--sidebar-width': narrow ? '0px' : collapsed ? '5rem' : '16rem',
+        } as CSSProperties}
       >
         {/* Phone-only drawer backdrop (desktop: never rendered). */}
         {narrow && mobileOpen && (
@@ -293,10 +318,78 @@ export default function Shell() {
             <NavItem to="/download" icon="download" label="Download" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/discover" icon="compass" label="Discover" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/podcasts" icon="mic" label="Podcasts" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
-            <NavItem to="/playlists" icon="list" label="Playlists" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
+            <NavItem
+              to="/playlists"
+              icon="list"
+              label="Playlists"
+              collapsed={!narrow && collapsed}
+              onNavigate={() => setMobileOpen(false)}
+              action={
+                !narrow && collapsed ? undefined : (
+                  <button
+                    onClick={() => setPlaylistsOpen((v) => !v)}
+                    title={playlistsOpen ? 'Collapse playlists' : 'Expand playlists'}
+                    aria-label={playlistsOpen ? 'Collapse playlists' : 'Expand playlists'}
+                    aria-expanded={playlistsOpen}
+                    aria-controls="sidebar-playlists"
+                    className="text-zinc-500 hover:text-orange-400 p-2 rounded-lg hover:bg-white/10 transition-all duration-300 flex-shrink-0 outline-none cursor-pointer"
+                  >
+                    <Icon
+                      name="chevronDown"
+                      className={`w-4 h-4 transition-transform duration-300 ${
+                        playlistsOpen ? '' : '-rotate-90'
+                      }`}
+                    />
+                  </button>
+                )
+              }
+            />
+            {narrow || !collapsed ? (
+              <div
+                id="sidebar-playlists"
+                className={`flex flex-col gap-1 ${playlistsOpen ? '' : 'hidden'}`}
+              >
+                {(playlists ?? []).map((p) => (
+                  <NavLink
+                    key={p.id}
+                    to={`/playlists/${p.id}`}
+                    title={p.title}
+                    onClick={() => setMobileOpen(false)}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'text-orange-400 bg-orange-500/10 font-medium'
+                          : 'text-zinc-500 hover:text-white hover:bg-orange-500/10'
+                      }`
+                    }
+                  >
+                    {p.thumbnail ? (
+                      <img
+                        src={p.thumbnail}
+                        alt=""
+                        loading="lazy"
+                        className="w-6 h-6 rounded object-cover flex-shrink-0 border border-white/5"
+                      />
+                    ) : (
+                      <span className="w-6 h-6 rounded bg-zinc-800 flex items-center justify-center flex-shrink-0">
+                        <Icon name="list" className="w-3.5 h-3.5 text-zinc-600" />
+                      </span>
+                    )}
+                    <span className="truncate">{p.title}</span>
+                  </NavLink>
+                ))}
+              </div>
+            ) : null}
             <NavItem to="/history" icon="clock" label="History" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/artists" icon="users" label="Artists" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/albums" icon="tag" label="Albums" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
+            <NavItem
+              to="/dj"
+              icon="sparkles"
+              label={djActive ? 'AI DJ Â· on air' : 'AI DJ'}
+              collapsed={!narrow && collapsed}
+              onNavigate={() => setMobileOpen(false)}
+            />
             <NavItem to="/api-keys" icon="key" label="API Keys" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             <NavItem to="/settings" icon="gear" label="Settings" collapsed={!narrow && collapsed} onNavigate={() => setMobileOpen(false)} />
             {/* Server logout (revokes the session) with local fallback. */}
@@ -319,7 +412,7 @@ export default function Shell() {
               )}
               {(narrow || !collapsed) && (
                 <span className="font-medium tracking-wide text-sm">
-                  {signingOut ? 'Signing out…' : 'Sign out'}
+                  {signingOut ? 'Signing outâ€¦' : 'Sign out'}
                 </span>
               )}
             </button>
@@ -364,10 +457,13 @@ export default function Shell() {
         onToggleQueue={() => setQueueOpen((v) => !v)}
         onToggleLyrics={() => setLyricsOpen((v) => !v)}
         onOpenNowPlaying={() => setNowPlayingOpen(true)}
+        onOpenDj={() => setVibeOpen((open) => !open)}
         queueActive={queueOpen}
         lyricsActive={lyricsOpen}
+        djActive={djActive}
       />
       <QueueSheet open={queueOpen} onClose={() => setQueueOpen(false)} />
+      <DjVibePopover open={vibeOpen} onClose={() => setVibeOpen(false)} />
       {nowPlayingOpen && <NowPlaying onClose={() => setNowPlayingOpen(false)} />}
       <ShortcutHelp open={showHelp} onClose={() => setShowHelp(false)} />
     </div>

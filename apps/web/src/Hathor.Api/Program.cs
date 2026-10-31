@@ -1,5 +1,6 @@
 using System.Text;
 using System.Threading.RateLimiting;
+using Hathor.Api;
 using Hathor.Api.Auth;
 using Hathor.Api.History;
 using Hathor.Api.Hubs;
@@ -22,7 +23,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Services run non-interactive with System32 as CWD — without this the
 // service would look for wwwroot/appsettings next to System32.
 builder.Services.AddWindowsService(options => options.ServiceName = "Hathor");
-if (!Environment.UserInteractive)
+if (Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService())
     builder.WebHost.UseContentRoot(AppContext.BaseDirectory);
 // No Server: Kestrel version banner on any response.
 builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
@@ -54,11 +55,14 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 builder.Services.AddOpenApi();
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
-builder.Services.AddMemoryCache();
+// RAM: bound the process-wide cache (idempotency DTOs hold full player
+// state). Entries must set Size — see PlayerController.
+builder.Services.AddMemoryCache(options => options.SizeLimit = 1024);
 
 builder.Services.AddHathorInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<IPlaybackHub, SignalRPlaybackHub>();
 builder.Services.AddScoped<TokenValidator>();
+builder.Services.AddHostedService<SessionCleanupService>();
 
 // Smart scheme: hth_ tokens go to the ApiKey handler, everything else to JWT.
 // Sockets cannot set headers, so ?access_token= routes the same way.

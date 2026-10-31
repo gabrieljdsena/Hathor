@@ -1,16 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { api, type Song } from '../api/client'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
 import { usePlayer } from '../store/player'
-import LibraryTable from '../components/LibraryTable'
+import LibraryTable, { resolveSong, type SortKey } from '../components/LibraryTable'
 import { ControlButton, PlayCircleButton } from '../components/ui/buttons'
 import ViewHeader from '../components/ui/ViewHeader'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { fuzzyMatch } from '../utils/fuzzy'
 import { EmptyState, LoadingState } from '../components/ui/states'
+import { SONGS_PAGE_SIZE } from './Songs'
 
-function shuffleList(list: Song[]): Song[] {
+function shuffleList(list: string[]): string[] {
   const out = [...list]
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
@@ -55,9 +56,61 @@ function HeroArt({ url, alt }: { url: string | null | undefined; alt: string }) 
   )
 }
 
+// RAM windowing for the plain name lists (artists/albums can number in
+// the thousands — mounting one <Link> each is cheap per row but adds up).
+function useNameWindow(resetKey: string) {
+  const PAGE = 200
+  const [limit, setLimit] = useState(PAGE)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    setLimit(PAGE)
+  }, [resetKey])
+  return { limit, PAGE, sentinelRef, setLimit }
+}
+
+function NameSentinel({
+  sentinelRef,
+  rendered,
+  total,
+  onGrow,
+}: {
+  sentinelRef: React.RefObject<HTMLDivElement | null>
+  rendered: number
+  total: number
+  onGrow: () => void
+}) {
+  useEffect(() => {
+    if (rendered >= total) return
+    const el = sentinelRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) onGrow()
+        }
+      },
+      { rootMargin: '800px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [rendered, total, onGrow, sentinelRef])
+  if (rendered >= total) return null
+  return (
+    <div ref={sentinelRef} className="py-4 text-center text-xs text-zinc-600">
+      Showing {rendered} of {total} — scroll for more…
+    </div>
+  )
+}
+
 export function Artists() {
   const { data: artists, isLoading } = useQuery({ queryKey: ['artists'], queryFn: api.artists })
   const { search, setSearch, visible, filtering } = useNameFilter(artists)
+  const win = useNameWindow(search)
+  const rendered = visible.slice(0, win.limit)
+  const grow = useCallback(
+    () => win.setLimit((n: number) => Math.min(n + win.PAGE, visible.length)),
+    [visible.length, win],
+  )
   return (
     <div className="max-w-5xl mx-auto w-full pt-8 px-6 sm:px-8 pb-24 flex flex-col gap-6">
       <ViewHeader
@@ -77,7 +130,7 @@ export function Artists() {
       ) : (
         <div className="flex flex-col p-2 sm:p-3 rounded-2xl bg-black/30 backdrop-blur-2xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] divide-y divide-white/[0.06]">
           {/* Same windows-glass backing as the song tables (LibraryTable). */}
-          {visible.map((name) => (
+          {rendered.map((name) => (
             <Link
               key={name}
               to={`/artists/${encodeURIComponent(name)}`}
@@ -86,6 +139,7 @@ export function Artists() {
               {name}
             </Link>
           ))}
+          <NameSentinel sentinelRef={win.sentinelRef} rendered={rendered.length} total={visible.length} onGrow={grow} />
         </div>
       )}
     </div>
@@ -97,17 +151,54 @@ export function ArtistDetail() {
   // useParams already decodes percent-encoding; a second
   // decodeURIComponent would corrupt names and throw on literals like '%'.
   const artist = name ?? ''
-  const playSong = usePlayer((s) => s.playSong)
-  const { data: songs, isLoading } = useQuery({
-    queryKey: ['artist-songs', artist],
-    queryFn: () => api.artistSongs(artist),
+  const playSongByFiles = usePlayer((s) => s.playSongByFiles)
+  const [search, setSearch] = useState('')
+  const debounced = useDebouncedValue(search)
+  const [sort, setSort] = useState<SortKey | null>(null)
+  const [dir, setDir] = useState<'asc' | 'desc'>('asc')
+  const { data: total } = useQuery({
+    queryKey: ['artist-songs', 'count', artist, debounced],
+    queryFn: () => api.artistSongCount(artist, debounced || undefined),
     enabled: artist.length > 0,
   })
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+    fetchNextPage,
+    fetchPreviousPage,
+  } = useInfiniteQuery({
+    queryKey: ['artist-songs', 'inf', artist, debounced, sort, dir],
+    queryFn: ({ pageParam }) =>
+      api.artistSongs(artist, {
+        search: debounced || undefined,
+        sort: sort ?? undefined,
+        dir: sort ? dir : undefined,
+        page: pageParam,
+        pageSize: SONGS_PAGE_SIZE,
+      }),
+    enabled: artist.length > 0,
+    initialPageParam: 1,
+    maxPages: 3,
+    getNextPageParam: (lastPage, _allPages, lastParam) =>
+      lastPage.length < SONGS_PAGE_SIZE ? undefined : lastParam + 1,
+    getPreviousPageParam: (_firstPage, _allPages, firstParam) =>
+      firstParam > 1 ? firstParam - 1 : undefined,
+  })
+  const pages = data?.pages
+  const getFiles = () => api.artistFiles(artist, debounced || undefined, sort ?? undefined, sort ? dir : undefined)
   const playAll = (shuffled: boolean) => {
-    const list = [...(songs ?? [])]
-    if (list.length === 0) return
-    const ordered = shuffled ? shuffleList(list) : list
-    void playSong(ordered[0], ordered, { type: 'artist', id: artist })
+    void (async () => {
+      const files = await getFiles()
+      if (files.length === 0) return
+      const ordered = shuffled ? shuffleList(files) : files
+      const first = ordered[0]
+      const song = await resolveSong(pages, first)
+      await playSongByFiles(song, ordered, { type: 'artist', id: artist }).catch(() => {})
+    })()
   }
   const { data: art } = useQuery({
     queryKey: ['artist-image', artist],
@@ -119,8 +210,8 @@ export function ArtistDetail() {
     <div className="flex flex-col w-full h-full">
       <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
         <HeroArt url={art?.url} alt={artist} />
-        <ViewHeader icon="users" compact title={artist} subtitle={`${songs?.length ?? 0} songs`} />
-        {(songs ?? []).length > 0 && (
+        <ViewHeader icon="users" compact title={artist} subtitle={`${total ?? 0} songs`} />
+        {(total ?? 0) > 0 && (
           <div className="ml-auto flex items-center gap-2 flex-shrink-0">
             <ControlButton icon="shuffle" title="Shuffle play" onClick={() => playAll(true)} />
             <PlayCircleButton title="Play all" onClick={() => playAll(false)} />
@@ -128,8 +219,24 @@ export function ArtistDetail() {
         )}
       </div>
       <LibraryTable
-        songs={songs}
+        pages={pages}
+        total={total ?? 0}
         isLoading={isLoading}
+        isFetchingNextPage={isFetchingNextPage}
+        isFetchingPreviousPage={isFetchingPreviousPage}
+        hasNextPage={hasNextPage ?? false}
+        hasPreviousPage={hasPreviousPage ?? false}
+        fetchNextPage={() => void fetchNextPage()}
+        fetchPreviousPage={() => void fetchPreviousPage()}
+        search={search}
+        onSearchChange={setSearch}
+        sort={sort}
+        dir={dir}
+        onSortChange={(s, d) => {
+          setSort(s)
+          setDir(d)
+        }}
+        getFiles={getFiles}
         loadingLabel="Loading artist…"
         emptyTitle="No songs by this artist"
         source={{ type: 'artist', id: artist }}
@@ -142,6 +249,12 @@ export function ArtistDetail() {
 export function Albums() {
   const { data: albums, isLoading } = useQuery({ queryKey: ['albums'], queryFn: api.albums })
   const { search, setSearch, visible, filtering } = useNameFilter(albums)
+  const win = useNameWindow(search)
+  const rendered = visible.slice(0, win.limit)
+  const grow = useCallback(
+    () => win.setLimit((n: number) => Math.min(n + win.PAGE, visible.length)),
+    [visible.length, win],
+  )
   return (
     <div className="max-w-5xl mx-auto w-full pt-8 px-6 sm:px-8 pb-24 flex flex-col gap-6">
       <ViewHeader
@@ -161,7 +274,7 @@ export function Albums() {
       ) : (
         <div className="flex flex-col p-2 sm:p-3 rounded-2xl bg-black/30 backdrop-blur-2xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] divide-y divide-white/[0.06]">
           {/* Same windows-glass backing as the song tables (LibraryTable). */}
-          {visible.map((title) => (
+          {rendered.map((title) => (
             <Link
               key={title}
               to={`/albums/${encodeURIComponent(title)}`}
@@ -170,6 +283,7 @@ export function Albums() {
               {title}
             </Link>
           ))}
+          <NameSentinel sentinelRef={win.sentinelRef} rendered={rendered.length} total={visible.length} onGrow={grow} />
         </div>
       )}
     </div>
@@ -180,20 +294,59 @@ export function AlbumDetail() {
   const { title } = useParams()
   // useParams already decodes percent-encoding (see ArtistDetail).
   const album = title ?? ''
-  const playSong = usePlayer((s) => s.playSong)
-  const { data: songs, isLoading } = useQuery({
-    queryKey: ['album-songs', album],
-    queryFn: () => api.albumSongs(album),
+  const playSongByFiles = usePlayer((s) => s.playSongByFiles)
+  const [search, setSearch] = useState('')
+  const debounced = useDebouncedValue(search)
+  const [sort, setSort] = useState<SortKey | null>(null)
+  const [dir, setDir] = useState<'asc' | 'desc'>('asc')
+  const { data: total } = useQuery({
+    queryKey: ['album-songs', 'count', album, debounced],
+    queryFn: () => api.albumSongCount(album, debounced || undefined),
     enabled: album.length > 0,
   })
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    isFetchingPreviousPage,
+    hasNextPage,
+    hasPreviousPage,
+    fetchNextPage,
+    fetchPreviousPage,
+  } = useInfiniteQuery({
+    queryKey: ['album-songs', 'inf', album, debounced, sort, dir],
+    queryFn: ({ pageParam }) =>
+      api.albumSongs(album, {
+        search: debounced || undefined,
+        sort: sort ?? undefined,
+        dir: sort ? dir : undefined,
+        page: pageParam,
+        pageSize: SONGS_PAGE_SIZE,
+      }),
+    enabled: album.length > 0,
+    initialPageParam: 1,
+    maxPages: 3,
+    getNextPageParam: (lastPage, _allPages, lastParam) =>
+      lastPage.length < SONGS_PAGE_SIZE ? undefined : lastParam + 1,
+    getPreviousPageParam: (_firstPage, _allPages, firstParam) =>
+      firstParam > 1 ? firstParam - 1 : undefined,
+  })
+  const pages = data?.pages
+  const getFiles = () => api.albumFiles(album, debounced || undefined, sort ?? undefined, sort ? dir : undefined)
   const playAll = (shuffled: boolean) => {
-    const list = [...(songs ?? [])]
-    if (list.length === 0) return
-    const ordered = shuffled ? shuffleList(list) : list
-    void playSong(ordered[0], ordered, { type: 'album', id: album })
+    void (async () => {
+      const files = await getFiles()
+      if (files.length === 0) return
+      const ordered = shuffled ? shuffleList(files) : files
+      const first = ordered[0]
+      const song = await resolveSong(pages, first)
+      await playSongByFiles(song, ordered, { type: 'album', id: album }).catch(() => {})
+    })()
   }
-  // Disambiguate same-name albums when every track agrees on the artist.
-  const artists = [...new Set((songs ?? []).map((s) => s.artist).filter((a) => a && a !== 'Unknown'))]
+  // Disambiguate same-name albums when every loaded track agrees on the
+  // artist (first page almost always settles it: the view is Artist+Title
+  // ordered, so one artist's tracks are contiguous).
+  const artists = [...new Set((pages ?? []).flat().map((s) => s.artist).filter((a) => a && a !== 'Unknown'))]
   const albumArtist = artists.length === 1 ? artists[0] : undefined
   const { data: art } = useQuery({
     queryKey: ['album-image', album, albumArtist ?? ''],
@@ -205,8 +358,8 @@ export function AlbumDetail() {
     <div className="flex flex-col w-full h-full">
       <div className="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 flex items-center gap-4 max-[700px]:flex-wrap max-[700px]:gap-y-3">
         <HeroArt url={art?.url} alt={album} />
-        <ViewHeader icon="musicNote" compact title={album} subtitle={`${songs?.length ?? 0} songs`} />
-        {(songs ?? []).length > 0 && (
+        <ViewHeader icon="musicNote" compact title={album} subtitle={`${total ?? 0} songs`} />
+        {(total ?? 0) > 0 && (
           <div className="ml-auto flex items-center gap-2 flex-shrink-0">
             <ControlButton icon="shuffle" title="Shuffle play" onClick={() => playAll(true)} />
             <PlayCircleButton title="Play all" onClick={() => playAll(false)} />
@@ -214,8 +367,24 @@ export function AlbumDetail() {
         )}
       </div>
       <LibraryTable
-        songs={songs}
+        pages={pages}
+        total={total ?? 0}
         isLoading={isLoading}
+        isFetchingNextPage={isFetchingNextPage}
+        isFetchingPreviousPage={isFetchingPreviousPage}
+        hasNextPage={hasNextPage ?? false}
+        hasPreviousPage={hasPreviousPage ?? false}
+        fetchNextPage={() => void fetchNextPage()}
+        fetchPreviousPage={() => void fetchPreviousPage()}
+        search={search}
+        onSearchChange={setSearch}
+        sort={sort}
+        dir={dir}
+        onSortChange={(s, d) => {
+          setSort(s)
+          setDir(d)
+        }}
+        getFiles={getFiles}
         loadingLabel="Loading album…"
         emptyTitle="No songs on this album"
         source={{ type: 'album', id: album }}
