@@ -379,6 +379,8 @@ public sealed class AiDjService(
                 CandidateTracks = candidateSet.Candidates,
                 Taste = candidateSet.Taste,
             }, ct);
+            if (!string.IsNullOrWhiteSpace(plan?.Language))
+                state.Settings.Language = NormalizeLanguage(plan.Language);
         }
         var allowed = new HashSet<string>(candidateSet.Candidates.Select(c => c.File), StringComparer.OrdinalIgnoreCase);
         var picks = new List<string>();
@@ -630,10 +632,7 @@ public sealed class AiDjService(
         var settings = ParseSettings(stored.AiDjSettingsJson);
         settings.BatchSize = Random.Shared.Next(3, 5);
         settings.CommentaryMode = "always";
-        var requestedLanguage = NormalizeLanguage(request.Language);
-        settings.Language = requestedLanguage == "auto"
-            ? (Random.Shared.Next(2) == 0 ? "pt-BR" : "en-US")
-            : requestedLanguage;
+        settings.Language = NormalizeLanguage(request.Language);
         settings.DiscoveryLevel = request.DiscoveryLevel.HasValue
             ? Math.Clamp(request.DiscoveryLevel.Value, 0, 1)
             : 0.2 + Random.Shared.NextDouble() * 0.4;

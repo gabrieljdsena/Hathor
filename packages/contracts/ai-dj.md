@@ -42,11 +42,14 @@ The client starts playback after `start` with:
 6. If TTS is not ready at the boundary, the player holds the transition and
    retries voice synthesis. It starts the outro → intro sequence and advances
    only after both clip sets exist.
-7. Each batch randomly selects 3 or 4 tracks. A new session randomly picks its
-   language, discovery level, and vibe brief unless the user supplied a brief.
+7. Each batch randomly selects 3 or 4 tracks. Discovery level and vibe brief are
+   randomized unless supplied; language follows the assistant output-language
+   setting, with `auto` resolved by the assistant.
 8. The first session of the local day asks Vohithe to greet the player once in
    the first intro. The name is optional and chosen naturally by the model.
-9. A new source or a queue edit outside DJ mode ends the session.
+9. Upcoming tracks are hidden in the web interface while the DJ is active; the
+   queue is closed and the DJ page shows only the current track and set counts.
+10. A new source or a queue edit outside DJ mode ends the session.
 
 ## Data sources
 

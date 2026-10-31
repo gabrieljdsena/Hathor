@@ -7,34 +7,27 @@ import { useStartDjSet } from '../hooks/useStartDjSet'
 import CoverArt from '../components/ui/CoverArt'
 import Icon from '../components/ui/icons'
 import { GhostButton, PrimaryButton } from '../components/ui/fields'
+import type { Song } from '../api/client'
+import vohitheIcon from '../assets/vohithe-icon.jpg'
 
-function BatchRows({ tracks }: { tracks: { file: string; title: string; artist: string; coverArt: string | null; isPodcast?: boolean }[] }) {
-  const currentFile = usePlayer((s) => s.currentSong?.file)
+function NowPlayingCard({ song }: { song: Song | null }) {
+  if (!song) return null
   return (
-    <div className="space-y-2">
-      {tracks.map((track, index) => (
-        <div
-          key={track.file}
-          className={`flex items-center gap-3 rounded-xl p-2.5 transition-colors ${
-            currentFile === track.file
-              ? 'bg-orange-500/[0.08] ring-1 ring-orange-500/30'
-              : 'bg-white/[0.03]'
-          }`}
-        >
-          <span className="w-5 text-center text-xs text-zinc-600">{index + 1}</span>
-          <CoverArt
-            src={track.coverArt}
-            file={track.file}
-            isPodcast={track.isPodcast}
-            alt={track.title}
-            className="w-11 h-11 rounded-lg flex-shrink-0"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-zinc-100">{track.title}</div>
-            <div className="truncate text-xs text-zinc-500">{track.artist}</div>
-          </div>
+    <div className="mt-4 flex items-center gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/[0.06] p-3">
+      <CoverArt
+        src={song.coverArt}
+        file={song.file}
+        isPodcast={song.isPodcast}
+        alt={song.title}
+        className="h-14 w-14 flex-shrink-0 rounded-xl"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300">
+          Now playing
         </div>
-      ))}
+        <div className="truncate text-sm font-medium text-zinc-100">{song.title}</div>
+        <div className="truncate text-xs text-zinc-400">{song.artist}</div>
+      </div>
     </div>
   )
 }
@@ -44,6 +37,7 @@ export default function AiDj() {
   const loading = useAiDj((s) => s.loading)
   const voicePlaying = useAiDj((s) => s.voicePlaying)
   const waiting = useAiDj((s) => s.waiting)
+  const currentSong = usePlayer((s) => s.currentSong)
   const [brief, setBrief] = useState('')
   const { start: startDj, error } = useStartDjSet()
   const appendVibe = useCallback((text: string) => {
@@ -69,8 +63,12 @@ export default function AiDj() {
         <div className="relative flex flex-col sm:flex-row sm:items-center gap-5">
           <div className="relative h-24 w-24 flex-shrink-0">
             <div className="absolute inset-0 rounded-full bg-gradient-to-br from-orange-300 via-orange-500 to-rose-500 blur-md opacity-70" />
-            <div className="relative flex h-24 w-24 items-center justify-center rounded-full border border-white/20 bg-zinc-950/80 shadow-2xl">
-              <span className="text-4xl font-semibold tracking-tight text-orange-200">V</span>
+            <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-white/20 bg-zinc-950/80 shadow-2xl">
+              <img
+                src={vohitheIcon}
+                alt="Vohithe"
+                className="h-full w-full object-cover"
+              />
             </div>
             <span className={`absolute right-0 bottom-1 h-4 w-4 rounded-full border-2 border-zinc-950 ${
               waiting ? 'bg-amber-400' : voicePlaying ? 'bg-emerald-400' : 'bg-orange-400'
@@ -188,9 +186,12 @@ export default function AiDj() {
                 <p className="mt-1 text-xs text-zinc-500">
                   {current.tracks.length} tracks · {current.status}
                 </p>
-                <div className="mt-4">
-                  <BatchRows tracks={current.tracks} />
-                </div>
+                <NowPlayingCard song={currentSong} />
+                {!currentSong && (
+                  <p className="mt-3 text-sm text-zinc-500">
+                    Waiting for the first track to start.
+                  </p>
+                )}
               </>
             ) : (
               <p className="mt-3 text-sm text-zinc-500">
@@ -199,28 +200,15 @@ export default function AiDj() {
             )}
           </div>
 
-          {current?.outroText && (
-            <div className="rounded-3xl border border-orange-500/20 bg-orange-500/[0.06] p-5">
-              <div className="text-xs font-semibold uppercase tracking-wider text-orange-300">Recap</div>
-              <p className="mt-2 text-sm leading-relaxed text-zinc-200 whitespace-pre-wrap">{current.outroText}</p>
-            </div>
-          )}
-
           {next && (
             <div className="rounded-3xl border border-white/10 bg-black/25 p-5 backdrop-blur-xl">
               <div className="flex items-center justify-between">
                 <div className="text-xs uppercase tracking-[0.25em] text-zinc-500">Next set</div>
                 <span className="text-xs text-zinc-500">{next.tracks.length} ready</span>
               </div>
-              <p className="mt-2 text-xs text-zinc-500">Vohithe's intro will play over the transition.</p>
-              {next.introText && (
-                <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-relaxed text-zinc-300 whitespace-pre-wrap">
-                  {next.introText}
-                </p>
-              )}
-              <div className="mt-3">
-                <BatchRows tracks={next.tracks} />
-              </div>
+              <p className="mt-2 text-sm text-zinc-400">
+                Vohithe has the next set ready. No spoilers here — her transition will introduce it when it plays.
+              </p>
             </div>
           )}
 
