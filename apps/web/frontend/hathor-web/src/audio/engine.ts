@@ -96,6 +96,14 @@ export interface AudioSourceLike {
   connect(node: unknown): void
 }
 
+export interface AnalyserNodeLike {
+  fftSize: number
+  smoothingTimeConstant: number
+  frequencyBinCount: number
+  getByteFrequencyData(array: Uint8Array): void
+  connect(node: unknown): void
+}
+
 export interface AudioContextLike {
   readonly destination: unknown
   readonly state: string
@@ -106,6 +114,7 @@ export interface AudioContextLike {
   createGain(): GainNodeLike
   createDynamicsCompressor(): DynamicsCompressorLike
   createMediaElementSource(el: AudioElementLike): AudioSourceLike
+  createAnalyser?(): AnalyserNodeLike
   resume(): Promise<void> | void
 }
 
@@ -206,6 +215,7 @@ export class AudioEngine {
   private b: Slot
   private active: Slot
   private musicBus: GainNodeLike | null = null
+  private analyser: AnalyserNodeLike | null = null
   private voice: AudioElementLike
   private voiceQueue: string[] = []
   private voiceDuckLevel = 0.18
@@ -600,6 +610,37 @@ export class AudioEngine {
     return this.normalizeEnabled
   }
 
+  private setupAnalyser(ctx: AudioContextLike, master: GainNodeLike) {
+    if (!ctx.createAnalyser) return
+    try {
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 512
+      analyser.smoothingTimeConstant = 0.82
+      const sink = ctx.createGain()
+      sink.gain.value = 0
+      analyser.connect(sink)
+      sink.connect(ctx.destination)
+      master.connect(analyser)
+      this.analyser = analyser
+    } catch {
+      this.analyser = null
+    }
+  }
+
+  getSpectrum(target: Uint8Array): boolean {
+    if (!this.analyser || target.length === 0) return false
+    try {
+      this.analyser.getByteFrequencyData(target)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  isGraphReady(): boolean {
+    return this.analyser !== null
+  }
+
   private applyNormalize() {
     if (!this.ctx || !this.master) return
     try {
@@ -607,6 +648,13 @@ export class AudioEngine {
       this.normalizer?.disconnect()
     } catch {
       /* already unwired — rewire below */
+    }
+    if (this.analyser) {
+      try {
+        this.master.connect(this.analyser)
+      } catch {
+        /* analyser tap is best-effort */
+      }
     }
     if (this.normalizeEnabled) {
       const comp = this.normalizer ?? this.createNormalizer()
@@ -833,6 +881,7 @@ export class AudioEngine {
       this.master = master
       this.musicBus = musicBus
       this.voice.volume = 1
+      this.setupAnalyser(ctx, master)
       this.applyNormalize()
       if (ctx.state === 'suspended') void ctx.resume()
       if (!this.contextReported) {
