@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Hathor.Application.Dtos;
 using Hathor.Application.Ingest;
 using Hathor.Application.Ports;
 using Hathor.Domain.Repositories;
@@ -232,6 +233,10 @@ public sealed class DownloadQueueService(
             _ = hub.BroadcastDownloadAsync(userId, DownloadJobMaps.ToDto(job));
         }
 
+        var tmpDir = Path.Combine(Path.GetTempPath(), "hathor-dl");
+        var tmpMp3 = Path.Combine(
+            tmpDir, qid + "-" + Guid.NewGuid().ToString("N") + ".mp3");
+
         try
         {
             job.Status = "downloading";
@@ -245,8 +250,6 @@ public sealed class DownloadQueueService(
                 ? job.Title : info.Title;
             var artist = job.Artist ?? info.Uploader;
 
-            var tmpDir = Path.Combine(Path.GetTempPath(), "hathor-dl");
-            var tmpMp3 = Path.Combine(tmpDir, qid + ".mp3");
             await engine.DownloadAudioAsync(target, tmpMp3, frac =>
             {
                 // Desktop scales download progress into 0..90%.
@@ -302,7 +305,8 @@ public sealed class DownloadQueueService(
                             coverDataUrl = "data:image/jpeg;base64," + Convert.ToBase64String(bytes);
                     }
                 }
-                await writer.WritePathAsync(tmpMp3, finalTitle, finalArtist,
+                lock (sync) lastPhase = "metadata";
+                await WriteTagsWithRetryAsync(writer, tmpMp3, finalTitle, finalArtist,
                     finalAlbum, finalYear, finalGenre, coverDataUrl, cts.Token);
             }
             // Podcasts skip the iTunes song-match (desktop): keep uploader title/author.
@@ -318,10 +322,9 @@ public sealed class DownloadQueueService(
                 var existing = storage.ListPodcastFiles(userId).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 name = FileNamingService.ResolveFinalName(job.TargetFile, baseName, existing.Contains);
                 finalPath = storage.PodcastPath(userId, name);
-                if (job.TargetFile is not null && File.Exists(finalPath))
-                    try { File.Delete(tmpMp3); } catch { }
-                else
-                    File.Move(tmpMp3, finalPath);
+                lock (sync) lastPhase = "move";
+                await MoveWithRetryAsync(tmpMp3, finalPath, cts.Token,
+                    overwrite: job.TargetFile is not null && File.Exists(finalPath));
                 await podcasts.EnsureAsync(userId, name, title, artist, info.PageUrl);
                 await podcasts.SaveChangesAsync();
             }
@@ -330,13 +333,15 @@ public sealed class DownloadQueueService(
                 var existing = storage.ListSongFiles(userId).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 name = FileNamingService.ResolveFinalName(job.TargetFile, baseName, existing.Contains);
                 finalPath = storage.SongPath(userId, name);
-                if (job.TargetFile is not null && File.Exists(finalPath))
-                    try { File.Delete(tmpMp3); } catch { }
-                else
-                    File.Move(tmpMp3, finalPath);
+                lock (sync) lastPhase = "move";
+                await MoveWithRetryAsync(tmpMp3, finalPath, cts.Token,
+                    overwrite: job.TargetFile is not null && File.Exists(finalPath));
                 // Materialize the finished file's tags so lists/search never
                 // open it (single read, then DB only).
-                var finished = metaReader.Read(userId, name, includeCover: false);
+                lock (sync) lastPhase = "index";
+                var finished = await ReadMetadataWithRetryAsync(
+                    metaReader, userId, name, finalTitle, finalArtist, finalAlbum,
+                    finalYear, finalGenre, cts.Token);
                 await records.UpsertDownloadedAsync(userId, name, info.PageUrl,
                     finished.Title, finished.Artist, finished.Album,
                     finished.Year, finished.Genre, finished.Duration);
@@ -359,7 +364,6 @@ public sealed class DownloadQueueService(
             job.UpdatedAtUtc = DateTime.UtcNow;
             await jobs.SaveChangesAsync();
             await hub.BroadcastDownloadAsync(userId, DownloadJobMaps.ToDto(job));
-            _ = CleanupTempAsync(tmpDir, qid);
         }
         catch (OperationCanceledException)
         {
@@ -394,6 +398,8 @@ public sealed class DownloadQueueService(
             _running.TryRemove(qid, out _);
             try { watchCts.Cancel(); } catch { }
             try { await watch; } catch { }
+            TryDelete(tmpMp3);
+            TryDelete(tmpMp3 + ".part");
             job.UpdatedAtUtc = DateTime.UtcNow;
             await jobs.SaveChangesAsync();
             await hub.BroadcastDownloadAsync(userId, DownloadJobMaps.ToDto(job));
@@ -401,15 +407,75 @@ public sealed class DownloadQueueService(
         }
     }
 
-    private static Task CleanupTempAsync(string tmpDir, string qid) => Task.Run(() =>
+    private static async Task WriteTagsWithRetryAsync(IMetadataWriter writer, string path,
+        string? title, string? artist, string? album, string? year, string? genre,
+        string? cover, CancellationToken ct)
+    {
+        const int attempts = 5;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await writer.WritePathAsync(path, title, artist, album, year, genre, cover, ct);
+                return;
+            }
+            catch (IOException) when (attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), ct);
+            }
+        }
+    }
+
+    private static async Task<SongDto> ReadMetadataWithRetryAsync(
+        Library.SongMetadataReader reader, Guid userId, string file,
+        string title, string artist, string? album, string? year, string? genre,
+        CancellationToken ct)
+    {
+        const int attempts = 5;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return reader.Read(userId, file, includeCover: false);
+            }
+            catch (Exception ex) when (ex is IOException && attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return new SongDto(file, artist, title, album ?? "Unknown",
+                    year ?? "Unknown", 0, null, null, false, genre ?? "Unknown");
+            }
+        }
+    }
+
+    private static async Task MoveWithRetryAsync(
+        string source, string destination, CancellationToken ct, bool overwrite = false)
+    {
+        const int attempts = 5;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(source, destination, overwrite);
+                return;
+            }
+            catch (IOException) when (attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), ct);
+            }
+        }
+    }
+
+    private static void TryDelete(string path)
     {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(tmpDir, qid + ".*"))
-                File.Delete(f);
+            if (File.Exists(path)) File.Delete(path);
         }
         catch { }
-    });
+    }
 
     private static bool IsDownloadableUrl(string s) =>
         s.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||

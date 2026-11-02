@@ -74,12 +74,12 @@ export default function SongRow({
                 e.stopPropagation()
                 onArtistClick(song.artist)
               }}
-              className="text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
+              className="block max-w-full min-w-0 text-left text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
             >
               {song.artist}
             </button>
           ) : (
-            <div className="text-xs text-zinc-500 truncate">{song.artist}</div>
+            <div className="block max-w-full min-w-0 text-xs text-zinc-500 truncate">{song.artist}</div>
           )}
         </div>
       </div>

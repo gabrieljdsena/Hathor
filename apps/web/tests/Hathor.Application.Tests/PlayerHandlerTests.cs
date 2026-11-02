@@ -75,6 +75,45 @@ public sealed class PlayHandlerTests
     }
 
     [Fact]
+    public async Task Play_SameFileToggle_DoesNotRecordHistoryAgain()
+    {
+        var playback = Substitute.For<IPlaybackStateRepository>();
+        var songs = Substitute.For<ISongReadModel>();
+        var hub = Substitute.For<IPlaybackHub>();
+        var userId = Guid.NewGuid();
+        var state = new PlaybackState
+        {
+            UserId = userId,
+            CurrentFile = "song.mp3",
+            FirstPlay = false,
+            IsPlaying = true,
+        };
+        playback.GetOrCreateAsync(userId, Arg.Any<CancellationToken>()).Returns(state);
+        SongsResolve(songs, "song.mp3", 200, out _);
+        PlayerEvents.Reset();
+
+        var raised = new List<(Guid, string, long?)>();
+        PlayerEvents.SongPlayed += (u, f, p) => raised.Add((u, f, p));
+
+        try
+        {
+            await new PlayHandler(playback, songs, NoOpApplier(), hub)
+                .Handle(new PlayCommand(userId, "song.mp3", false, null), CancellationToken.None);
+            state.IsPlaying.Should().BeFalse();
+
+            await new PlayHandler(playback, songs, NoOpApplier(), hub)
+                .Handle(new PlayCommand(userId, "song.mp3", false, null), CancellationToken.None);
+            state.IsPlaying.Should().BeTrue();
+
+            raised.Should().BeEmpty();
+        }
+        finally
+        {
+            PlayerEvents.Reset();
+        }
+    }
+
+    [Fact]
     public async Task Next_WithRepeatAuto_ReplaysCurrent()
     {
         var playback = Substitute.For<IPlaybackStateRepository>();

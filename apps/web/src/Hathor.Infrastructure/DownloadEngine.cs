@@ -51,14 +51,20 @@ public sealed class YoutubeExplodeEngine(
                     v.Thumbnails.TryGetWithHighestResolution()?.Url ?? ""));
                 if (hits.Count >= clamped) break;
             }
-            // Size-counted: the shared cache has a SizeLimit, and entries
-            // without Size throw on Set (that once broke all searches).
-            cache.Set(key, (IReadOnlyList<VideoHitDto>)hits,
-                new MemoryCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = SearchCacheTtl,
-                    Size = 1,
-                });
+            // Empty results are usually a transient provider hiccup, and
+            // caching them makes every retry for that query look dead for
+            // the full TTL. Cache only real hits so a retry can recover.
+            if (hits.Count > 0)
+            {
+                // Size-counted: the shared cache has a SizeLimit, and entries
+                // without Size throw on Set (that once broke all searches).
+                cache.Set(key, (IReadOnlyList<VideoHitDto>)hits,
+                    new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = SearchCacheTtl,
+                        Size = 1,
+                    });
+            }
             return hits;
         }
         catch (Exception ex)
@@ -211,23 +217,65 @@ public sealed class YoutubeExplodeEngine(
         var drain = ConsumeAsync(proc.StandardError, OnLine, timeoutCts.Token);
         try
         {
-            await proc.WaitForExitAsync(timeoutCts.Token);
+            try
+            {
+                await proc.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                string err;
+                lock (tail) err = string.Join(Environment.NewLine, tail);
+                throw new InvalidOperationException(
+                    $"FFmpeg transcode timed out after {TranscodeTimeout.TotalMinutes:0} minutes: {Tail(err)}");
+            }
+            await drain;
+            ct.ThrowIfCancellationRequested();
+            if (proc.ExitCode != 0)
+            {
+                string err;
+                lock (tail) err = string.Join(Environment.NewLine, tail);
+                throw new InvalidOperationException($"FFmpeg transcode failed (exit {proc.ExitCode}): {Tail(err)}");
+            }
+            await EnsureOutputAsync(destMp3Path, ct);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        finally
         {
-            string err;
-            lock (tail) err = string.Join(Environment.NewLine, tail);
-            throw new InvalidOperationException(
-                $"FFmpeg transcode timed out after {TranscodeTimeout.TotalMinutes:0} minutes: {Tail(err)}");
+            await StopProcessAsync(proc);
+            try { await drain; } catch { }
         }
-        await drain;
-        ct.ThrowIfCancellationRequested();
-        if (proc.ExitCode != 0)
+    }
+
+    private static async Task StopProcessAsync(Process proc)
+    {
+        try
         {
-            string err;
-            lock (tail) err = string.Join(Environment.NewLine, tail);
-            throw new InvalidOperationException($"FFmpeg transcode failed (exit {proc.ExitCode}): {Tail(err)}");
+            if (proc.HasExited) return;
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await proc.WaitForExitAsync(cts.Token); } catch { }
         }
+        catch
+        {
+            // Process was never started or disappeared while stopping.
+        }
+    }
+
+    private static async Task EnsureOutputAsync(string path, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                var file = new FileInfo(path);
+                if (file.Exists && file.Length > 0) return;
+            }
+            catch (IOException)
+            {
+                // A scanner can hold the freshly written file briefly.
+            }
+            await Task.Delay(100, ct);
+        }
+        throw new InvalidOperationException("FFmpeg finished but produced no audio file.");
     }
 
     private static async Task ConsumeAsync(StreamReader reader, Action<string?> onLine, CancellationToken ct)

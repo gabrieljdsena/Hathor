@@ -49,7 +49,8 @@ public sealed class DownloadsController(IMediator mediator) : ControllerBase
         try
         {
             var qid = await mediator.Send(new SubmitDownloadCommand(
-                CurrentUserId(), body.Url, body.Title, body.Artist, body.IsPodcast), ct);
+                CurrentUserId(), body.Url, body.Title, body.Artist, body.IsPodcast,
+                body.TargetFile), ct);
             return Accepted(new SubmitDownloadResponse(qid));
         }
         catch (FluentValidation.ValidationException ex)
@@ -100,7 +101,8 @@ public sealed class DownloadsController(IMediator mediator) : ControllerBase
         if (string.IsNullOrWhiteSpace(body.Url))
             return BadRequest(new { message = "URL is required." });
         var qid = await mediator.Send(new SubmitDownloadCommand(
-            CurrentUserId(), body.Url, body.Title, body.Artist, body.IsPodcast), ct);
+            CurrentUserId(), body.Url, body.Title, body.Artist, body.IsPodcast,
+            body.TargetFile), ct);
         return Accepted(new SubmitDownloadResponse(qid));
     }
 
@@ -121,8 +123,10 @@ public sealed class DownloadsController(IMediator mediator) : ControllerBase
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 }
 
-public sealed record SubmitDownloadRequest(string? Url, string? Title, string? Artist, bool IsPodcast);
+public sealed record SubmitDownloadRequest(
+    string? Url, string? Title, string? Artist, bool IsPodcast, string? TargetFile = null);
 public sealed record SubmitDownloadResponse(string Qid);
 public sealed record BatchDownloadResponse(int Accepted, IReadOnlyList<string> Qids);
-public sealed record RedownloadRequest(string? Url, string? Title, string? Artist, bool IsPodcast);
+public sealed record RedownloadRequest(
+    string? Url, string? Title, string? Artist, bool IsPodcast, string? TargetFile = null);
 public sealed record ClearCompletedResponse(int Deleted);

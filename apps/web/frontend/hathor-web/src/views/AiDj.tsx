@@ -135,7 +135,13 @@ export default function AiDj() {
                     Stop
                   </GhostButton>
                 )}
-                <PrimaryButton onClick={() => void startDj(brief)} loading={loading} disabled={!dj?.enabled}>
+                <PrimaryButton
+                  onClick={() => void startDj(brief)}
+                  loading={loading}
+                  disabled={!dj?.enabled}
+                  className="inline-flex items-center gap-2"
+                >
+                  <Icon name="play" className="h-4 w-4" />
                   {active ? 'New set' : 'Start'}
                 </PrimaryButton>
               </div>

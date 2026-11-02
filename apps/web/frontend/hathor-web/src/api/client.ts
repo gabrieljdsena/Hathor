@@ -804,17 +804,41 @@ export const api = {
     request<{ owned: boolean; file: string | null }>(
       `/downloads/check?title=${encodeURIComponent(title)}${artist ? `&artist=${encodeURIComponent(artist)}` : ''}`,
     ),
-  submitDownload: (url: string, title: string, artist: string | null, isPodcast: boolean) =>
+  submitDownload: (
+    url: string,
+    title: string,
+    artist: string | null,
+    isPodcast: boolean,
+    targetFile: string | null = null,
+  ) =>
     request<{ qid: string }>('/downloads', {
       method: 'POST',
-      body: JSON.stringify({ Url: url, Title: title, Artist: artist, IsPodcast: isPodcast }),
+      body: JSON.stringify({
+        Url: url,
+        Title: title,
+        Artist: artist,
+        IsPodcast: isPodcast,
+        TargetFile: targetFile,
+      }),
     }),
   downloadJobs: (limit = 8) => request<DownloadJob[]>(`/downloads?limit=${limit}`),
   retryDownload: (qid: string) => request<void>(`/downloads/${qid}/retry`, { method: 'POST' }),
-  redownload: (url: string, title: string, artist: string | null, isPodcast = false) =>
+  redownload: (
+    url: string,
+    title: string,
+    artist: string | null,
+    isPodcast = false,
+    targetFile: string | null = null,
+  ) =>
     request<{ qid: string }>('/downloads/redownload', {
       method: 'POST',
-      body: JSON.stringify({ Url: url, Title: title, Artist: artist, IsPodcast: isPodcast }),
+      body: JSON.stringify({
+        Url: url,
+        Title: title,
+        Artist: artist,
+        IsPodcast: isPodcast,
+        TargetFile: targetFile,
+      }),
     }),
   cancelDownload: (qid: string) => request<void>(`/downloads/${qid}`, { method: 'DELETE' }),
   batchDownload: (file: File, isPodcast: boolean) => {
