@@ -23,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -42,6 +43,7 @@ import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.HathorApi
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
+import com.musicplayer.android.data.remote.RemoteSync
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
 import com.musicplayer.android.ui.theme.HathorTextField
@@ -206,6 +208,18 @@ fun SettingsScreen(
                 ) { Text("Push") }
             }
             pullStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            TextButton(
+                onClick = {
+                    RemoteSync.resetCursor(context)
+                    onPull()
+                    pullStatus = "Full resync queued — retrying missing files…"
+                }
+            ) { Text("Full resync files") }
+            Text(
+                "Replays the server delta and retries any files missing on this device. Downloaded music is kept.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

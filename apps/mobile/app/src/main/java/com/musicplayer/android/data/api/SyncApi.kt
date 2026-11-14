@@ -235,7 +235,7 @@ class SyncApi(val baseUrl: String, private val token: String) {
         if (dest.exists()) return false
         dest.parentFile?.mkdirs()
         val tmp = File(dest.absolutePath + ".hathor-part")
-        val conn = open("GET", "/files/${URLEncoder.encode(file, "UTF-8")}", mapOf("library" to library))
+        val conn = open("GET", "/files/${encodePathSegment(file)}", mapOf("library" to library))
         try {
             val code = try {
                 conn.responseCode
@@ -271,7 +271,7 @@ class SyncApi(val baseUrl: String, private val token: String) {
     fun putFile(file: String, library: String, src: File) {
         if (file.isBlank() || '/' in file || '\\' in file) return
         val conn = open(
-            "PUT", "/files/${URLEncoder.encode(file, "UTF-8")}",
+            "PUT", "/files/${encodePathSegment(file)}",
             mapOf("library" to library), "audio/mpeg",
         )
         try {
@@ -293,6 +293,14 @@ class SyncApi(val baseUrl: String, private val token: String) {
 
     companion object {
         private const val TAG = "SyncApi"
+
+        /**
+         * Path-segment encoding: URLEncoder emits `+` for spaces, but ASP.NET
+         * treats `+` in a path as a literal plus, not a space (404 for every
+         * filename with spaces). Percent-encode spaces instead.
+         */
+        internal fun encodePathSegment(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
         private fun JSONObject.optText(key: String): String? =
             if (isNull(key)) null else optString(key).ifEmpty { null }

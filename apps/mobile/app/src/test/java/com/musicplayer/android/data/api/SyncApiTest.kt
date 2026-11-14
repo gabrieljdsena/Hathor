@@ -128,4 +128,11 @@ class SyncApiTest {
         assertEquals("1970-01-01T00:00:00Z", SyncApi.isoNow(0))
         assertEquals("2024-01-02T03:04:05Z", SyncApi.isoNow(1704164645000))
     }
+
+    @Test
+    fun `sync file paths encode spaces as percent-20`() {
+        val encoded = SyncApi.encodePathSegment("Say My Name.mp3")
+        assertEquals("Say%20My%20Name.mp3", encoded)
+        assertTrue("+ should not appear in a path segment", !encoded.contains("+"))
+    }
 }
