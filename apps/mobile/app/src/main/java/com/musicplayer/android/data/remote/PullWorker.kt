@@ -25,7 +25,15 @@ class PullWorker(
             val context = applicationContext
             val db = AppDatabase.get(context)
             val engine = DownloadEngine(context)
-            val report = RemoteSync.pullNow(db, engine, context)
+            val report = RemoteSync.pullNow(db, engine, context) { step, done, total ->
+                setProgress(
+                    workDataOf(
+                        "step" to step,
+                        "done" to done,
+                        "total" to total
+                    )
+                )
+            }
             Result.success(workDataOf("summary" to report.summary()))
         } catch (e: Exception) {
             val message = e.message?.takeIf { it.isNotBlank() }

@@ -42,7 +42,6 @@ import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.HathorApi
 import com.musicplayer.android.data.api.SyncConfig
-import com.musicplayer.android.data.remote.PullWorker
 import com.musicplayer.android.data.remote.RemoteSync
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
@@ -81,7 +80,7 @@ fun SettingsScreen(
     var apiMessage by remember { mutableStateOf<String?>(null) }
     var testingApi by remember { mutableStateOf(false) }
     // Background pull status (first-run dialog and this button share one worker).
-    var pullStatus by remember { mutableStateOf<String?>(null) }
+    var pullProgress by remember { mutableStateOf<SyncProgress?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val prefs = remember {
@@ -95,7 +94,7 @@ fun SettingsScreen(
         folderPath = settings.musicFolder()
         // Poll the pull worker; the dialog/screen never block on downloads.
         while (true) {
-            pullStatus = queryPullStatus(context)
+            pullProgress = querySyncProgress(context)
             kotlinx.coroutines.delay(2000)
         }
     }
@@ -207,12 +206,21 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
                 ) { Text("Push") }
             }
-            pullStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            pullProgress?.let { progress ->
+                if (progress.running) {
+                    SyncProgressBar(progress)
+                } else {
+                    Text(progress.text, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             TextButton(
                 onClick = {
                     RemoteSync.resetCursor(context)
                     onPull()
-                    pullStatus = "Full resync queued — retrying missing files…"
+                    pullProgress = SyncProgress(
+                        "Full resync queued — retrying missing files…",
+                        running = true
+                    )
                 }
             ) { Text("Full resync files") }
             Text(
@@ -404,33 +412,5 @@ private fun SectionLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, 
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(icon, contentDescription = null, tint = HathorColors.AccentBright)
         Text(text, style = MaterialTheme.typography.titleSmall)
-    }
-}
-
-/** Latest pull-worker state for the Settings section (null when never run). */
-private fun queryPullStatus(context: android.content.Context): String? {
-    return try {
-        val infos = androidx.work.WorkManager.getInstance(context)
-            .getWorkInfosForUniqueWork(PullWorker.UNIQUE_NAME).get()
-        val info = infos.firstOrNull() ?: return null
-        when (info.state) {
-            androidx.work.WorkInfo.State.ENQUEUED -> "Pull queued — starts when online."
-            androidx.work.WorkInfo.State.RUNNING -> {
-                val step = info.progress.getString("step")
-                val total = info.progress.getInt("total", 0)
-                val done = info.progress.getInt("done", 0)
-                if (total > 0) "Syncing in background… $step ($done/$total)"
-                else step?.takeIf { it.isNotBlank() }?.let { "Syncing in background… $it" }
-                    ?: "Syncing in background…"
-            }
-            androidx.work.WorkInfo.State.SUCCEEDED ->
-                info.outputData.getString("summary") ?: "Pull finished."
-            androidx.work.WorkInfo.State.FAILED ->
-                "Background pull failed: ${info.outputData.getString("error") ?: "unknown"}"
-            androidx.work.WorkInfo.State.CANCELLED -> "Background pull cancelled."
-            else -> null
-        }
-    } catch (_: Exception) {
-        null
     }
 }

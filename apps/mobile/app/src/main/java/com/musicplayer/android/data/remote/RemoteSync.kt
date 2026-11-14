@@ -49,10 +49,16 @@ object RemoteSync {
             "Downloads OK: $downloadsOk, failed: $downloadsFailed."
     }
 
-    suspend fun pullNow(db: AppDatabase, engine: DownloadEngine, context: Context): PullReport {
+    suspend fun pullNow(
+        db: AppDatabase,
+        engine: DownloadEngine,
+        context: Context,
+        onProgress: suspend (step: String, done: Int, total: Int) -> Unit = { _, _, _ -> }
+    ): PullReport {
         if (!SyncConfig.isConfigured()) {
             throw IllegalStateException(SyncConfig.NOT_CONFIGURED)
         }
+        onProgress("Reading library from server…", 0, 0)
         val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
         val prefs = context.getSharedPreferences("hathor", Context.MODE_PRIVATE)
         val cursor = prefs.getString(CURSOR_KEY, "") ?: ""
@@ -68,6 +74,8 @@ object RemoteSync {
         var addedPodcasts = 0
         var downloadsOk = 0
         var downloadsFailed = 0
+        val total = snapshot.songs.size + snapshot.podcasts.size
+        var done = 0
 
         for (row in snapshot.songs) {
             val existing = db.songDao().getByFile(row.file)
@@ -87,6 +95,10 @@ object RemoteSync {
                 true -> downloadsOk++
                 false -> downloadsFailed++
                 null -> { /* already on disk */ }
+            }
+            done++
+            if (done % 5 == 0 || done == total) {
+                onProgress("Downloading songs", done, total)
             }
         }
 
@@ -109,7 +121,11 @@ object RemoteSync {
                 false -> downloadsFailed++
                 null -> { /* already on disk */ }
             }
+            done++
+            onProgress("Downloading podcasts", done, total)
         }
+
+        onProgress("Updating playlists, lyrics and history…", total, total)
 
         for (row in snapshot.playlists) {
             val existing = db.playlistDao().getPlaylist(row.id)

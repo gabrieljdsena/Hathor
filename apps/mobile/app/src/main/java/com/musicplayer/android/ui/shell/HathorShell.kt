@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.playback.PlayerManager
+import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.SyncProgressBar
 import com.musicplayer.android.ui.theme.HathorColors
 
 /**
@@ -102,6 +104,7 @@ fun HathorShell(
     onSelect: (Dest) -> Unit,
     onBarClick: () -> Unit,
     wallpaper: android.graphics.Bitmap?,
+    syncProgress: SyncProgress? = null,
     content: @Composable () -> Unit
 ) {
     var expanded by remember { mutableStateOf(true) }
@@ -217,7 +220,14 @@ fun HathorShell(
                             )
                         )
                 )
-                Box(modifier = Modifier.fillMaxSize()) { content() }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (syncProgress?.running == true) {
+                            SyncProgressBar(syncProgress)
+                        }
+                        Box(modifier = Modifier.weight(1f)) { content() }
+                    }
+                }
             }
         }
         // ---- Bottom player bar (desktop fixed bottom bar) ----

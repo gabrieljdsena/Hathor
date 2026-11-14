@@ -58,6 +58,8 @@ import com.musicplayer.android.ui.HistoryScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
+import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.querySyncProgress
 import com.musicplayer.android.ui.shell.Dest
 import com.musicplayer.android.ui.shell.HathorShell
 import com.musicplayer.android.ui.theme.HathorColors
@@ -65,6 +67,7 @@ import com.musicplayer.android.ui.theme.HathorMotion
 import com.musicplayer.android.ui.theme.HathorTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -213,6 +216,15 @@ class MainActivity : ComponentActivity() {
                     var showFirstRun by remember { mutableStateOf(false) }
                     val syncState by syncRepo.state.collectAsState()
                     val wallpaper by settingsRepo.background.collectAsState()
+                    var syncProgress by remember { mutableStateOf<SyncProgress?>(null) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            syncProgress = withContext(Dispatchers.IO) {
+                                querySyncProgress(applicationContext)
+                            }
+                            delay(1500)
+                        }
+                    }
                     // Desktop on_start(): first run (empty library) + remote
                     // configured -> ask whether to load from it. One-shot,
                     // non-dismissable, like the SweetAlert2 prompt.
@@ -326,7 +338,8 @@ class MainActivity : ComponentActivity() {
                         selected = dest,
                         onSelect = { dest = it },
                         onBarClick = { if (currentFile != null) showNowPlaying = true },
-                        wallpaper = wallpaper
+                        wallpaper = wallpaper,
+                        syncProgress = syncProgress
                     ) {
                         // Desktop view switch (jQuery load): crossfade + slide.
                         AnimatedContent(
