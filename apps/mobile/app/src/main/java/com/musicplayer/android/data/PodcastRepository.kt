@@ -7,6 +7,7 @@ import com.musicplayer.android.data.local.PodcastChapterEntity
 import com.musicplayer.android.data.local.PodcastEntity
 import com.musicplayer.android.data.local.PodcastTagEntity
 import com.musicplayer.android.data.local.PodcastTagLinkEntity
+import com.musicplayer.android.data.local.SongEntity
 import com.musicplayer.android.data.local.SyncDeletionEntity
 import com.musicplayer.android.engine.DownloadEngine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -145,8 +146,54 @@ class PodcastRepository(
         }
     }
 
-    suspend fun createTag(name: String): Long {
-        val clean = name.trim()
+    /**
+     * Move an episode into the songs library locally (web "Move to Songs"):
+     * file move, podcast/chapter/link rows removed, a songs row inserted, and
+     * push tombstones recorded. Tags/chapters are intentionally discarded.
+     */
+    suspend fun moveToSong(file: String): Boolean {
+        return try {
+            val source = File(podsDir(), file)
+            if (!source.exists()) return false
+            val target = File(engine.outputDir(), file)
+            if (target.exists()) return false
+            if (!source.renameTo(target)) {
+                source.copyTo(target, overwrite = false)
+                source.delete()
+            }
+            val row = db.podcastDao().getByFile(file)
+            val meta = try {
+                metadata.readMeta(target)
+            } catch (_: Exception) {
+                null
+            }
+            db.songDao().insertIgnore(
+                SongEntity(
+                    file = file,
+                    downloadedLink = row?.downloadedLink,
+                    title = meta?.title?.takeIf { it.isNotBlank() }
+                        ?: row?.title?.takeIf { it.isNotBlank() }
+                        ?: metadata.fallbackTitle(file),
+                    dateDownload = row?.dateDownload ?: nowDate(),
+                    artist = meta?.artist?.takeIf { it.isNotBlank() && it != "Unknown" } ?: row?.artist
+                )
+            )
+            db.podcastTagLinkDao().deleteLinksForFile(file)
+            db.podcastDao().deleteByFile(file)
+            db.podcastChapterDao().deleteForEpisode(file)
+            db.syncDeletionDao().insert(SyncDeletionEntity(tableName = "podcasts", rowKey = file))
+            db.syncDeletionDao().insert(SyncDeletionEntity(tableName = "podcast_chapters", rowKey = file))
+            metadata.invalidateCache(file)
+            metadata.refreshLibrary()
+            refresh()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "move to songs failed: $file", e)
+            false
+        }
+    }
+
+    suspend fun createTag(name: String): Long {        val clean = name.trim()
         if (clean.isEmpty()) return -1L
         return try {
             val existing = db.podcastTagDao().getTags().firstOrNull { it.name == clean }

@@ -128,8 +128,19 @@ class LyricsRepository(context: Context) {
         }
     }
 
-    suspend fun loadOffset(fileName: String): Int {
+    /** Remove cached lyrics + offset for one file (web lyrics delete). */
+    suspend fun deleteLyrics(fileName: String): Boolean {
         return try {
+            db.playlistDao().deleteLyricsForSong(fileName)
+            _state.value = LyricsState.Failed("Lyrics removed from this device.")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "lyrics delete failed", e)
+            false
+        }
+    }
+
+    suspend fun loadOffset(fileName: String): Int {        return try {
             (db.playlistDao().lyricFor(fileName)?.offsetMs ?: 0).coerceIn(-20000, 20000)
         } catch (_: Exception) {
             0

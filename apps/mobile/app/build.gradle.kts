@@ -34,6 +34,8 @@ android {
         versionCode = 2
         versionName = "0.3.0-hathor"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -62,6 +64,12 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    testOptions {
+        unitTests {
+            // Robolectric needs the real merged resources + manifest.
+            isIncludeAndroidResources = true
+        }
     }
     // Matches android:extractNativeLibs="true" required by youtubedl-android.
     packaging {
@@ -99,4 +107,22 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.icons.core)
     implementation(libs.compose.icons.extended)
+
+    // ---- Testing ----
+    // JVM unit tests (fast, no device): Robolectric provides Android/org.json
+    // plus an in-memory Room database.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.coroutines.test)
+    testImplementation(libs.room.testing)
+
+    // Instrumented tests (AVD / phone): Compose UI + navigation smoke.
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.espresso.core)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

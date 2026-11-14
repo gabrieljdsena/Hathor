@@ -15,10 +15,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,8 +38,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.DailyMixRepository
 import com.musicplayer.android.data.MetadataRepository
+import com.musicplayer.android.data.PlaylistRepository
+import com.musicplayer.android.data.PodcastRepository
 import com.musicplayer.android.data.SongMeta
 import com.musicplayer.android.playback.PlaybackSource
 import com.musicplayer.android.ui.theme.HathorColors
@@ -55,9 +63,16 @@ import java.util.Locale
 fun HomeScreen(
     dailyMix: DailyMixRepository,
     library: MetadataRepository,
+    playlistRepo: PlaylistRepository,
+    artwork: ArtworkRepository,
+    podcasts: PodcastRepository,
     onOpenAllSongs: () -> Unit,
     onOpenDailyMix: () -> Unit,
+    onOpenArtists: () -> Unit,
+    onOpenAlbums: () -> Unit,
+    onOpenPodcasts: () -> Unit,
     onOpenHistory: () -> Unit,
+    onPlayPodcast: (SongMeta) -> Unit,
     onPlay: (SongMeta, List<SongMeta>, PlaybackSource) -> Unit,
     onPlayNext: (SongMeta) -> Unit,
     onEnqueue: (SongMeta) -> Unit,
@@ -65,6 +80,7 @@ fun HomeScreen(
     isPlaying: Boolean
 ) {
     val songs by library.library.collectAsState()
+    val podcastEpisodes by podcasts.episodes.collectAsState()
     var mixSize by remember { mutableStateOf<Int?>(null) }
     var mixDate by remember { mutableStateOf<String?>(null) }
     var recent by remember { mutableStateOf<List<SongMeta>>(emptyList()) }
@@ -72,6 +88,8 @@ fun HomeScreen(
     var loading by remember { mutableStateOf(true) }
     // Strip context menu (long-press opens the same menu as song rows).
     var menuSong by remember { mutableStateOf<Triple<SongMeta, List<SongMeta>, PlaybackSource>?>(null) }
+    var editSong by remember { mutableStateOf<SongMeta?>(null) }
+    var playlistSong by remember { mutableStateOf<SongMeta?>(null) }
 
     suspend fun reload() {
         loading = true
@@ -89,6 +107,7 @@ fun HomeScreen(
         try {
             recent = withContext(Dispatchers.IO) { dailyMix.recentlyPlayed(15) }
             downloaded = withContext(Dispatchers.IO) { dailyMix.recentlyDownloaded(15) }
+            withContext(Dispatchers.IO) { podcasts.refresh() }
         } catch (_: Exception) {
         }
         loading = false
@@ -146,6 +165,31 @@ fun HomeScreen(
             icon = { Icon(Icons.Filled.Refresh, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
             onClick = onOpenDailyMix
         )
+        HomeCard(
+            title = "Artists",
+            subtitle = "${songs.map { it.artist }.distinct().size} artists in your library",
+            hint = "Browse by artist, artwork and play-all.",
+            icon = { Icon(Icons.Filled.Person, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+            onClick = onOpenArtists
+        )
+        HomeCard(
+            title = "Albums",
+            subtitle = "${songs.map { it.album }.distinct().size} albums in your library",
+            hint = "Browse album artwork and track lists.",
+            icon = { Icon(Icons.Filled.Album, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+            onClick = onOpenAlbums
+        )
+        HomeCard(
+            title = "Podcasts",
+            subtitle = if (podcastEpisodes.isEmpty()) "No episodes yet"
+            else "${podcastEpisodes.size} episode${if (podcastEpisodes.size == 1) "" else "s"}",
+            hint = "Your podcast library, chapters and tags.",
+            icon = { Icon(Icons.Filled.Mic, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+            onClick = onOpenPodcasts,
+            onPlay = podcastEpisodes.firstOrNull()?.let { episode ->
+                { onPlayPodcast(episode) }
+            }
+        )
 
         // Recently Played strip
         StripSection(
@@ -189,7 +233,30 @@ fun HomeScreen(
             onOpenArtist = {},
             onOpenAlbum = {},
             showNav = false,
-            onDismiss = { menuSong = null }
+            onDismiss = { menuSong = null },
+            onEdit = { editSong = song },
+            onPlaylists = { playlistSong = song }
+        )
+    }
+
+    editSong?.let { song ->
+        EditSongDialog(
+            song = song,
+            repo = library,
+            playlistRepo = playlistRepo,
+            artwork = artwork,
+            onPlayNext = { onPlayNext(song); editSong = null },
+            onEnqueue = { onEnqueue(song); editSong = null },
+            onDismiss = { editSong = null; library.clearStatus() },
+            playingFile = nowPlayingFile
+        )
+    }
+
+    playlistSong?.let { song ->
+        SongPlaylistsDialog(
+            song = song,
+            repo = playlistRepo,
+            onDismiss = { playlistSong = null }
         )
     }
 }
@@ -201,7 +268,8 @@ private fun HomeCard(
     hint: String,
     badge: String? = null,
     icon: @Composable () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onPlay: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().hathorGlass().clickable(onClick = onClick).padding(20.dp),
@@ -231,6 +299,15 @@ private fun HomeCard(
             }
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
             Text(hint, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+        }
+        if (onPlay != null) {
+            IconButton(onClick = onPlay) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "Play",
+                    tint = HathorColors.AccentBright
+                )
+            }
         }
     }
 }

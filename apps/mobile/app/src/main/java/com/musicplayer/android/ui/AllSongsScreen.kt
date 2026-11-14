@@ -42,6 +42,7 @@ import com.musicplayer.android.playback.PlaybackSource
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HeaderIconTile
+import com.musicplayer.android.util.FuzzySearch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -75,6 +76,8 @@ fun AllSongsScreen(
     var openArtist by remember { mutableStateOf<String?>(null) }
     var openAlbum by remember { mutableStateOf<String?>(null) }
     var menuSong by remember { mutableStateOf<SongMeta?>(null) }
+    var editSong by remember { mutableStateOf<SongMeta?>(null) }
+    var playlistSong by remember { mutableStateOf<SongMeta?>(null) }
 
     LaunchedEffect(Unit) { repo.refreshLibrary() }
     // Deep-link entry (e.g. history artist link): open once, then consume.
@@ -92,9 +95,9 @@ fun AllSongsScreen(
     }
 
     val visible = remember(songs, debouncedQuery) {
-        val q = debouncedQuery.trim().lowercase()
+        val q = debouncedQuery.trim()
         if (q.isBlank()) songs else songs.filter {
-            it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
+            FuzzySearch.matchesFields(listOf(it.title, it.artist, it.album), q)
         }
     }
     val sorted = remember(visible, sortKey, sortAsc) {
@@ -272,7 +275,30 @@ fun AllSongsScreen(
             onEnqueue = onEnqueue,
             onOpenArtist = { openArtist = song.artist.takeIf { it.isNotBlank() && it != "Unknown" } },
             onOpenAlbum = { openAlbum = song.album.takeIf { it.isNotBlank() && it != "Unknown" } },
-            onDismiss = { menuSong = null }
+            onDismiss = { menuSong = null },
+            onEdit = { editSong = song },
+            onPlaylists = { playlistSong = song }
+        )
+    }
+
+    editSong?.let { song ->
+        EditSongDialog(
+            song = song,
+            repo = repo,
+            playlistRepo = playlistRepo,
+            artwork = artwork,
+            onPlayNext = { onPlayNext(song); editSong = null },
+            onEnqueue = { onEnqueue(song); editSong = null },
+            onDismiss = { editSong = null; repo.clearStatus() },
+            playingFile = nowPlayingFile
+        )
+    }
+
+    playlistSong?.let { song ->
+        SongPlaylistsDialog(
+            song = song,
+            repo = playlistRepo,
+            onDismiss = { playlistSong = null }
         )
     }
 }
@@ -289,7 +315,11 @@ fun SongMenuDialog(
     onOpenArtist: () -> Unit,
     onOpenAlbum: () -> Unit,
     onDismiss: () -> Unit,
-    showNav: Boolean = true
+    showNav: Boolean = true,
+    onEdit: (() -> Unit)? = null,
+    onPlaylists: (() -> Unit)? = null,
+    extraActionLabel: String? = null,
+    onExtraAction: (() -> Unit)? = null
 ) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -323,6 +353,24 @@ fun SongMenuDialog(
                     onClick = { onEnqueue(song); onDismiss() },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Add to queue") }
+                if (onEdit != null) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { onEdit(); onDismiss() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Edit info") }
+                }
+                if (onPlaylists != null) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { onPlaylists(); onDismiss() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Add to playlists") }
+                }
+                if (extraActionLabel != null && onExtraAction != null) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { onExtraAction(); onDismiss() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(extraActionLabel) }
+                }
                 if (showNav && song.artist.isNotBlank() && song.artist != "Unknown") {
                     androidx.compose.material3.TextButton(onClick = { onOpenArtist(); onDismiss() }) {
                         Text("Go to artist")

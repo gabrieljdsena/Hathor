@@ -59,6 +59,11 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     private var shuffled = false
     private var repeatOne = false
 
+    // User-facing output volume (0..1). Crossfade uses this as the base gain,
+    // so a ramp never jumps back to full volume (desktop volume parity).
+    // Volatile: the crossfade ramp reads it from an IO thread.
+    @Volatile private var userVolume: Float = 1f
+
     // --- Crossfade / gapless state (desktop _out/_ramping/_xfade_gen model) ---
     var crossfadeEnabled: Boolean = false
         private set
@@ -111,6 +116,21 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         crossfadeEnabled = enabled
         crossfadeSeconds = seconds.coerceIn(0f, 12f)
         if (!enabled) cancelCrossfade()
+    }
+
+    /**
+     * Apply the user's output volume. During a crossfade the ramp loop owns
+     * both outputs and multiplies this base gain by the equal-power curve;
+     * outside a ramp the active player is updated immediately.
+     */
+    fun setVolume(volume: Float) {
+        userVolume = volume.coerceIn(0f, 1f)
+        if (!isRamping()) {
+            try {
+                player?.setVolume(userVolume, userVolume)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     // --- Podcast chapter-skip (desktop chapter_skip + web ChapterSkip) ---
@@ -529,6 +549,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     _current.value = file
                     _durationMs.value = try { mp.duration } catch (_: Exception) { 0 }
                     _positionMs.value = 0
+                    mp.setVolume(userVolume, userVolume)
                     mp.start()
                     stampStart(0)
                     // Chapter tap-to-play lands here (consumed once, file-gated).
@@ -582,6 +603,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     _current.value = file
                     _durationMs.value = try { mp.duration } catch (_: Exception) { 0 }
                     _positionMs.value = 0
+                    mp.setVolume(userVolume, userVolume)
                     stampStart(0)
                     _playing.value = false
                     refreshChapters(file, seekFirst = false)
@@ -734,8 +756,8 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             // Equal-power crossfade (what mixers/DAWs use): cos^2 + sin^2
             // stays 1 so perceived loudness holds steady. A linear ramp
             // dips ~3 dB in the middle.
-            val outGain = cos(t * halfPi).toFloat()
-            val inGain = sin(t * halfPi).toFloat()
+            val outGain = crossfadeGain(userVolume, cos(t * halfPi).toFloat())
+            val inGain = crossfadeGain(userVolume, sin(t * halfPi).toFloat())
             try {
                 player?.setVolume(outGain, outGain)
                 synchronized(rampLock) { fadePlayer }?.setVolume(inGain, inGain)
@@ -769,6 +791,10 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                 ramping = false
             }
             // Ownership flipped: the fade output now carries the song.
+            try {
+                incoming.setVolume(userVolume, userVolume)
+            } catch (_: Exception) {
+            }
             releaseQuiet(old)
             _current.value = next
             val ni = queue.indexOfFirst { it.absolutePath == next.absolutePath }
@@ -794,7 +820,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
         releaseQuiet(incoming)
         try {
-            player?.setVolume(1f, 1f)
+            player?.setVolume(userVolume, userVolume)
         } catch (_: Exception) {
         }
     }
@@ -815,7 +841,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
         releaseQuiet(incoming)
         try {
-            player?.setVolume(1f, 1f)
+            player?.setVolume(userVolume, userVolume)
         } catch (_: Exception) {
         }
     }

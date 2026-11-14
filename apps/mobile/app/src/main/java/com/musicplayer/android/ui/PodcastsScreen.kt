@@ -61,6 +61,7 @@ import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HeaderIconTile
 import com.musicplayer.android.ui.theme.hathorGlass
+import com.musicplayer.android.util.FuzzySearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,6 +100,8 @@ fun PodcastsScreen(
     var menuEpisode by remember { mutableStateOf<SongMeta?>(null) }
     var editing by remember { mutableStateOf<SongMeta?>(null) }
     var confirmingDelete by remember { mutableStateOf<SongMeta?>(null) }
+    var confirmingMove by remember { mutableStateOf<SongMeta?>(null) }
+    var moveNotice by remember { mutableStateOf<String?>(null) }
     var metaInfo by remember { mutableStateOf<Pair<SongMeta, SongMeta>?>(null) }
     var busy by remember { mutableStateOf(false) }
     // Tag filter (null = all) + tag CRUD/manager dialog states.
@@ -122,10 +125,10 @@ fun PodcastsScreen(
     // Queue follows the filter: Play / Play-all queue from THIS list, so a
     // tag-filtered view plays exactly the filtered episodes in order.
     val visible = remember(episodes, debouncedQuery, activeTagId, tagsByFile) {
-        val q = debouncedQuery.trim().lowercase()
+        val q = debouncedQuery.trim()
         episodes.filter { ep ->
             (activeTagId == null || tagsByFile[ep.file]?.contains(activeTagId) == true) &&
-                (q.isBlank() || ep.title.lowercase().contains(q) || ep.artist.lowercase().contains(q))
+                (q.isBlank() || FuzzySearch.matchesFields(listOf(ep.title, ep.artist), q))
         }
     }
 
@@ -162,6 +165,9 @@ fun PodcastsScreen(
             IconButton(onClick = { showTagManager = true }) {
                 Icon(Icons.Filled.Label, contentDescription = "Manage tags", tint = HathorColors.TextHint)
             }
+        }
+        moveNotice?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
         }
         HathorTextField(
             value = query,
@@ -334,6 +340,10 @@ fun PodcastsScreen(
                         onClick = { chapterEpisode = ep; menuEpisode = null },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Chapters…") }
+                    OutlinedButton(
+                        onClick = { confirmingMove = ep; menuEpisode = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Move to Songs") }
                     TextButton(
                         onClick = { confirmingDelete = ep; menuEpisode = null },
                         modifier = Modifier.fillMaxWidth()
@@ -424,6 +434,43 @@ fun PodcastsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) { Text("Delete") }
+            }
+        )
+    }
+
+    confirmingMove?.let { ep ->
+        AlertDialog(
+            onDismissRequest = { confirmingMove = null },
+            title = { DialogTitleBar(title = "Move to Songs?", onClose = { confirmingMove = null }) },
+            text = {
+                Text(
+                    "\"${ep.title.ifBlank { ep.file }}\" will move to the songs library. " +
+                        "Its tags and chapters will be removed; the file itself is kept."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = ep
+                        confirmingMove = null
+                        scope.launch(Dispatchers.IO) {
+                            val moved = repo.moveToSong(target.file)
+                            withContext(Dispatchers.Main) {
+                                moveNotice = if (moved) {
+                                    "Moved to Songs: ${target.title.ifBlank { target.file }}"
+                                } else {
+                                    "Move failed — a song with that file name may already exist."
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HathorColors.Accent, contentColor = Color.White
+                    )
+                ) { Text("Move") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingMove = null }) { Text("Cancel") }
             }
         )
     }

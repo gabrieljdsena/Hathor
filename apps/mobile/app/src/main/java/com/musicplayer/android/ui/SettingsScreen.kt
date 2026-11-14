@@ -56,7 +56,8 @@ fun SettingsScreen(
     settings: SettingsRepository,
     sync: SyncRepository,
     podcasts: com.musicplayer.android.data.PodcastRepository,
-    onPull: () -> Unit
+    onPull: () -> Unit,
+    onVolumeChange: (Float) -> Unit = {}
 ) {
     val volume by settings.volume.collectAsState()
     val limit by settings.limit.collectAsState()
@@ -173,7 +174,10 @@ fun SettingsScreen(
             SectionLabel(Icons.Filled.VolumeUp, "Volume (${(volume * 100).toInt()}%)")
             ModernSlider(
                 value = volume,
-                onValueChange = { settings.setVolume(it) },
+                onValueChange = {
+                    settings.setVolume(it)
+                    onVolumeChange(it)
+                },
                 onValueChangeFinished = { scope.launch { settings.persistVolume() } },
                 modifier = Modifier.fillMaxWidth()
             )

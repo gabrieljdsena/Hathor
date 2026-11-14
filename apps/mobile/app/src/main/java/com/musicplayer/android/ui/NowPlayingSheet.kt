@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,7 +54,10 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -85,7 +89,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.LyricSuggestion
 import com.musicplayer.android.data.LyricsRepository
+import com.musicplayer.android.data.LyricsRomanizer
 import com.musicplayer.android.data.MetadataRepository
+import com.musicplayer.android.data.PodcastChapter
 import com.musicplayer.android.data.SongMeta
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.ui.theme.HathorColors
@@ -110,7 +116,9 @@ fun NowPlayingSheet(
     volume: Float,
     onVolumeChange: (Float) -> Unit,
     onVolumeDone: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    chaptersProvider: (suspend (String) -> List<PodcastChapter>)? = null,
+    isPodcastFile: (File) -> Boolean = { false }
 ) {
     val current by player.current.collectAsState()
     val playing by player.playing.collectAsState()
@@ -380,7 +388,15 @@ fun NowPlayingSheet(
         val f = current
         val m = meta
         if (f != null && m != null) {
-            LyricsSheet(lyrics = lyrics, file = f, meta = m, player = player, onDismiss = { showLyrics = false })
+            LyricsSheet(
+                lyrics = lyrics,
+                file = f,
+                meta = m,
+                player = player,
+                chaptersProvider = chaptersProvider,
+                isPodcast = isPodcastFile(f),
+                onDismiss = { showLyrics = false }
+            )
         }
     }
 }
@@ -392,10 +408,14 @@ private fun LyricsSheet(
     file: File,
     meta: SongMeta,
     player: PlayerManager,
+    chaptersProvider: (suspend (String) -> List<PodcastChapter>)?,
+    isPodcast: Boolean,
     onDismiss: () -> Unit
 ) {
     val state by lyrics.state.collectAsState()
     var mode by remember { mutableStateOf(0) } // 0 view, 1 search, 2 edit
+    var chapters by remember(file.absolutePath) { mutableStateOf<List<PodcastChapter>>(emptyList()) }
+    var selectedChapter by remember(file.absolutePath) { mutableStateOf<PodcastChapter?>(null) }
     var searchTrack by remember(file.absolutePath) { mutableStateOf(meta.title) }
     var searchArtist by remember(file.absolutePath) { mutableStateOf(meta.artist) }
     var suggestions by remember { mutableStateOf<List<LyricSuggestion>>(emptyList()) }
@@ -404,16 +424,70 @@ private fun LyricsSheet(
     var saveMsg by remember { mutableStateOf<String?>(null) }
     // Highlight-timing correction, ms ±20000 (desktop offset_ms / web parity).
     var offsetMs by remember(file.absolutePath) { mutableStateOf(0) }
+    var romajiOn by remember(file.absolutePath) { mutableStateOf(false) }
+    var romanizedSynced by remember { mutableStateOf<String?>(null) }
+    var romanizedPlain by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    val lyricsKey = selectedChapter?.let { "${file.name}::chapter:${it.id}" } ?: file.name
+    val trackTitle = selectedChapter?.name ?: meta.title
+    val trackArtist = if (selectedChapter != null) "" else meta.artist
+    val trackAlbum = if (selectedChapter != null) meta.title else meta.album
+    val trackDuration = selectedChapter?.let { chapter ->
+        val end = chapter.endSecs
+        if (end != null && end > chapter.startSecs) (end - chapter.startSecs).toInt() else meta.durationSec.toInt()
+    } ?: meta.durationSec.toInt()
+    val timelineStartMs = ((selectedChapter?.startSecs ?: 0.0) * 1000).toInt()
+
     LaunchedEffect(file.absolutePath) {
+        if (isPodcast && chaptersProvider != null) {
+            chapters = try {
+                chaptersProvider(file.name)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    LaunchedEffect(lyricsKey) {
         lyrics.reset()
         mode = 0
         suggestions = emptyList()
         editText = null
         saveMsg = null
-        lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec.toInt())
-        offsetMs = lyrics.loadOffset(file.name)
+        romanizedSynced = null
+        romanizedPlain = null
+        lyrics.loadFor(lyricsKey, trackTitle, trackArtist, trackAlbum, trackDuration)
+        offsetMs = lyrics.loadOffset(lyricsKey)
+    }
+
+    LaunchedEffect(romajiOn, state) {
+        val ready = state as? LyricsRepository.LyricsState.Ready
+        if (!romajiOn || ready == null) {
+            romanizedSynced = null
+            romanizedPlain = null
+            return@LaunchedEffect
+        }
+        romanizedSynced = ready.result.synced?.let { LyricsRomanizer.romanize(it, isLrc = true) }
+        romanizedPlain = ready.result.plain?.let { LyricsRomanizer.romanize(it, isLrc = false) }
+    }
+
+    val ready = state as? LyricsRepository.LyricsState.Ready
+    val displayState = if (romajiOn && ready != null) {
+        val synced = romanizedSynced ?: ready.result.synced
+        val plain = romanizedPlain ?: ready.result.plain
+        LyricsRepository.LyricsState.Ready(
+            ready.result.copy(synced = synced, plain = plain, displayText = plain ?: synced)
+        )
+    } else {
+        state
+    }
+
+    fun selectChapter(chapter: PodcastChapter?) {
+        selectedChapter = chapter
+        searchTrack = chapter?.name ?: meta.title
+        searchArtist = if (chapter != null) "" else meta.artist
     }
     // Icon mode switch: entering Edit prefills the editor with what's on
     // screen (or empty), same as the old text tab did.
@@ -450,7 +524,42 @@ private fun LyricsSheet(
                     Icon(Icons.Filled.Close, contentDescription = "Close lyrics", tint = HathorColors.TextHint)
                 }
             }
-            // Highlight-timing correction stepper (persists per song).
+            if (chapters.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = selectedChapter == null,
+                        onClick = { selectChapter(null) },
+                        label = { Text("Episode") }
+                    )
+                    chapters.forEach { chapter ->
+                        FilterChip(
+                            selected = selectedChapter?.id == chapter.id,
+                            onClick = { selectChapter(chapter) },
+                            label = { Text(chapter.name, maxLines = 1) }
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { romajiOn = !romajiOn }) {
+                    Text(
+                        if (romajiOn) "Romaji ON" else "Romaji",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (romajiOn) HathorColors.AccentBright else HathorColors.TextHint
+                    )
+                }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text(
+                        "Delete lyrics",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            // Highlight-timing correction stepper (persists per song/chapter).
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -467,7 +576,7 @@ private fun LyricsSheet(
                         scope.launch {
                             val next = (offsetMs + delta).coerceIn(-20000, 20000)
                             offsetMs = next
-                            offsetMs = lyrics.saveOffset(file.name, next)
+                            offsetMs = lyrics.saveOffset(lyricsKey, next)
                         }
                     }) { Text(label, style = MaterialTheme.typography.bodySmall) }
                 }
@@ -479,11 +588,12 @@ private fun LyricsSheet(
             }
             when (mode) {
                 0 -> LyricsView(
-                    state = state,
+                    state = displayState,
                     player = player,
                     offsetMs = offsetMs,
+                    timelineStartMs = timelineStartMs,
                     onRetry = {
-                        scope.launch { lyrics.loadFor(file.name, meta.title, meta.artist, meta.album, meta.durationSec.toInt()) }
+                        scope.launch { lyrics.loadFor(lyricsKey, trackTitle, trackArtist, trackAlbum, trackDuration) }
                     }
                 )
                 1 -> LyricsSearch(
@@ -499,8 +609,8 @@ private fun LyricsSheet(
                         scope.launch {
                             suggestions = lyrics.searchSuggestions(
                                 searchTrack, searchArtist,
-                                meta.album.takeIf { it != "Unknown" } ?: "",
-                                meta.durationSec.toInt()
+                                trackAlbum.takeIf { it != "Unknown" } ?: "",
+                                trackDuration
                             )
                             searching = false
                         }
@@ -508,7 +618,7 @@ private fun LyricsSheet(
                     onPick = { s ->
                         scope.launch {
                             saveMsg = null
-                            if (lyrics.saveLyrics(file.name, s.plainLyrics, s.syncedLyrics)) {
+                            if (lyrics.saveLyrics(lyricsKey, s.plainLyrics, s.syncedLyrics)) {
                                 mode = 0
                             } else {
                                 saveMsg = "Save failed."
@@ -522,7 +632,7 @@ private fun LyricsSheet(
                     saveMsg = saveMsg,
                     onSave = {
                         scope.launch {
-                            saveMsg = if (lyrics.saveLyrics(file.name, editText, null)) {
+                            saveMsg = if (lyrics.saveLyrics(lyricsKey, editText, null)) {
                                 mode = 0
                                 null
                             } else {
@@ -533,6 +643,38 @@ private fun LyricsSheet(
                 )
             }
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete lyrics?") },
+            text = {
+                Text(
+                    "Remove the cached lyrics for " +
+                        (selectedChapter?.name ?: meta.title.ifBlank { file.name }) +
+                        "? You can search for them again later."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            lyrics.deleteLyrics(lyricsKey)
+                            confirmDelete = false
+                            mode = 0
+                            romajiOn = false
+                        }
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -567,6 +709,7 @@ private fun LyricsView(
     state: LyricsRepository.LyricsState,
     player: PlayerManager,
     offsetMs: Int,
+    timelineStartMs: Int = 0,
     onRetry: () -> Unit
 ) {
     when (state) {
@@ -592,7 +735,8 @@ private fun LyricsView(
                 SyncedLyrics(
                     lines = remember(synced) { parseLrc(synced) },
                     player = player,
-                    offsetMs = offsetMs
+                    offsetMs = offsetMs,
+                    timelineStartMs = timelineStartMs
                 )
             } else {
                 Text(
@@ -634,9 +778,9 @@ data class LrcLine(val timeSec: Double, val text: String)
 
 /**
  * Desktop parseLRC(): first [mm:ss.xx] tag per line, empty text -> ♪,
- * untagged lines skipped.
+ * untagged lines skipped. Internal so the JVM tests can pin the format.
  */
-private fun parseLrc(lrc: String): List<LrcLine> {
+internal fun parseLrc(lrc: String): List<LrcLine> {
     val tag = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\]")
     val out = mutableListOf<LrcLine>()
     for (line in lrc.lines()) {
@@ -655,13 +799,18 @@ private fun parseLrc(lrc: String): List<LrcLine> {
  * (progress_slider_click equivalent), active line highlighted + followed.
  */
 @Composable
-private fun SyncedLyrics(lines: List<LrcLine>, player: PlayerManager, offsetMs: Int) {
+private fun SyncedLyrics(
+    lines: List<LrcLine>,
+    player: PlayerManager,
+    offsetMs: Int,
+    timelineStartMs: Int = 0
+) {
     val positionMs by player.positionMs.collectAsState()
     if (lines.isEmpty()) {
         Text("No synchronized lyrics found.", style = MaterialTheme.typography.bodyMedium)
         return
     }
-    val nowSec = positionMs / 1000.0 + offsetMs / 1000.0
+    val nowSec = (positionMs - timelineStartMs) / 1000.0 + offsetMs / 1000.0
     var active = -1
     for (i in lines.indices) {
         if (nowSec >= lines[i].timeSec) active = i else break
@@ -689,7 +838,7 @@ private fun SyncedLyrics(lines: List<LrcLine>, player: PlayerManager, offsetMs: 
                     MaterialTheme.typography.headlineSmall.copy(color = HathorColors.TextHint)
                 },
                 modifier = Modifier.fillMaxWidth().clickable {
-                    player.seekTo((line.timeSec * 1000 - offsetMs).toInt())
+                    player.seekTo((timelineStartMs + line.timeSec * 1000 - offsetMs).toInt())
                 }
             )
         }

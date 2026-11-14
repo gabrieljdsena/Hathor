@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,17 +42,25 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.musicplayer.android.data.JobItem
+import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.QueueRepository
+import com.musicplayer.android.data.SongMeta
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.engine.YtResult
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.hathorGlass
+import com.musicplayer.android.util.FuzzySearch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Job rows composed per page — the queue log can grow unbounded. */
 private const val JOB_PAGE = 50
@@ -68,6 +77,7 @@ fun DownloadScreen(
     queue: QueueRepository,
     engine: DownloadEngine,
     preview: PreviewPlayer,
+    metadata: MetadataRepository,
     onPreviewStarted: () -> Unit = {}
 ) {
     val jobs by queue.jobs.collectAsState()
@@ -79,11 +89,44 @@ fun DownloadScreen(
     var searching by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<YtResult>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var duplicateHit by remember { mutableStateOf<YtResult?>(null) }
     // Songs / Podcast toggle: podcast downloads skip the iTunes song-match
     // (keeps uploader title/author, no artwork fetch) and land in the
     // podcasts folder; retries preserve the flag via the stored job row.
     var podcastMode by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            try {
+                val text = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }
+                val urls = parseBatchUrls(text.orEmpty())
+                if (urls.isEmpty()) {
+                    error = "No URLs found in that file."
+                    return@launch
+                }
+                var queued = 0
+                var failed = 0
+                for (url in urls) {
+                    try {
+                        queue.submit(url, "", null, podcastMode)
+                        queued++
+                    } catch (_: Exception) {
+                        failed++
+                    }
+                }
+                notice = "Imported $queued URL(s)" + if (failed > 0) ", $failed failed." else "."
+                error = null
+            } catch (e: Exception) {
+                error = "Import failed: ${e.message}"
+            }
+        }
+    }
 
     // Load-more pagination for the queue log (same as song lists): only the
     // first pages are composed; scrolling near the end appends the next page.
@@ -99,7 +142,10 @@ fun DownloadScreen(
             }
     }
 
-    LaunchedEffect(Unit) { queue.refresh() }
+    LaunchedEffect(Unit) {
+        queue.refresh()
+        metadata.refreshLibrary()
+    }
     // Stop any preview when leaving the screen (no orphaned audio).
     DisposableEffect(Unit) { onDispose { preview.stop() } }
     // Surface preview failures in the screen error line.
@@ -109,6 +155,26 @@ fun DownloadScreen(
     }
 
     val isUrl = input.trim().startsWith("http", ignoreCase = true)
+
+    fun enqueueHit(hit: YtResult) {
+        scope.launch {
+            try {
+                queue.submit(hit.url, hit.title, hit.uploader.ifBlank { null }, podcastMode)
+                results = null
+                input = ""
+                error = null
+            } catch (e: Exception) {
+                error = e.message
+            }
+        }
+    }
+
+    fun ownedCopy(title: String): SongMeta? {
+        if (podcastMode) return null
+        return metadata.library.value.firstOrNull { song ->
+            FuzzySearch.matchesFields(listOf(song.title, song.artist), title)
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -186,6 +252,7 @@ fun DownloadScreen(
             )
         }
         error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint) }
 
         results?.let { hits ->
             Text("Results (${hits.size}) — tap to enqueue, ▶ to preview:", style = MaterialTheme.typography.titleSmall)
@@ -201,11 +268,8 @@ fun DownloadScreen(
                     Row(
                         modifier = Modifier.fillMaxWidth().hathorGlass()
                             .clickable {
-                                scope.launch {
-                                    queue.submit(hit.url, hit.title, hit.uploader.ifBlank { null }, podcastMode)
-                                    results = null
-                                    input = ""
-                                }
+                                val owned = ownedCopy(hit.title)
+                                if (owned != null) duplicateHit = hit else enqueueHit(hit)
                             }
                             .padding(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -245,6 +309,9 @@ fun DownloadScreen(
                 }
             }
         ) { Text("Clear completed") }
+        TextButton(onClick = { importLauncher.launch(arrayOf("text/plain")) }) {
+            Text("Import .txt")
+        }
         LazyColumn(
             state = jobListState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -274,7 +341,47 @@ fun DownloadScreen(
             }
         }
     }
+
+    duplicateHit?.let { hit ->
+        AlertDialog(
+            onDismissRequest = { duplicateHit = null },
+            title = { Text("Already in your library?") },
+            text = {
+                Text(
+                    "\"${hit.title}\" looks like a song you already have. " +
+                        "Download it again anyway?"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = hit
+                        duplicateHit = null
+                        enqueueHit(target)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HathorColors.Accent,
+                        contentColor = Color.White
+                    )
+                ) { Text("Download anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { duplicateHit = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
+
+/** One URL per line; blank lines and # comments are ignored. */
+internal fun parseBatchUrls(text: String): List<String> =
+    text.lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .mapNotNull { line ->
+            line.split(Regex("\\s+")).firstOrNull { it.startsWith("http", ignoreCase = true) }
+        }
+        .distinct()
+        .toList()
 
 /**
  * Stream-preview toggle for a search result: play while resolving, stop

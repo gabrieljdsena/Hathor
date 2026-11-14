@@ -20,6 +20,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
@@ -66,6 +68,8 @@ enum class Dest(val label: String, val icon: ImageVector, val inRail: Boolean = 
     Library("Home", Icons.Filled.Home),
     AllSongs("All Songs", Icons.Filled.MusicNote, inRail = false),
     DailyMix("Daily Mix", Icons.Filled.Refresh, inRail = false),
+    Artists("Artists", Icons.Filled.Person, inRail = false),
+    Albums("Albums", Icons.Filled.Album, inRail = false),
     Download("Download", Icons.Filled.Download),
     Podcasts("Podcasts", Icons.Filled.Mic),
     Playlists("Playlists", Icons.Filled.List),
@@ -74,7 +78,7 @@ enum class Dest(val label: String, val icon: ImageVector, val inRail: Boolean = 
 
     /** Rail highlight mapping (desktop: all_songs/daily_mix -> home). */
     fun railActive(): Dest = when (this) {
-        AllSongs, DailyMix -> Library
+        AllSongs, DailyMix, Artists, Albums -> Library
         else -> this
     }
 }

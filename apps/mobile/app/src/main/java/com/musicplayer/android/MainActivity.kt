@@ -44,6 +44,7 @@ import com.musicplayer.android.data.HistoryRepository
 import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.LyricsRepository
 import com.musicplayer.android.data.MetadataRepository
+import com.musicplayer.android.data.PendingMetadataEdits
 import com.musicplayer.android.data.PlaylistRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SettingsRepository
@@ -53,7 +54,6 @@ import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.DownloadScreen
 import com.musicplayer.android.ui.HistoryScreen
-import com.musicplayer.android.ui.LibraryScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
                 settingsRepo.load()
                 withContext(Dispatchers.Main) {
                     player.setChapterSkip(settingsRepo.chapterSkip.value)
+                    player.setVolume(settingsRepo.volume.value)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("MainActivity", "settings load failed: ${e.message}")
@@ -222,6 +223,31 @@ class MainActivity : ComponentActivity() {
                     }
                     val currentFile by player.current.collectAsState()
                     val isPlaying by player.playing.collectAsState()
+                    // Metadata edited on the currently playing file is applied
+                    // once the player moves on (tag rewrite safety).
+                    val pendingEdit by PendingMetadataEdits.edit.collectAsState()
+                    LaunchedEffect(pendingEdit, currentFile) {
+                        val edit = pendingEdit ?: return@LaunchedEffect
+                        if (currentFile?.name == edit.file) return@LaunchedEffect
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val saved = metadataRepo.updateMeta(
+                                    fileName = edit.file,
+                                    title = edit.title,
+                                    artist = edit.artist,
+                                    album = edit.album,
+                                    year = edit.year,
+                                    removeCover = edit.removeCover
+                                )
+                                if (saved && edit.cover != null) {
+                                    metadataRepo.setCoverBytes(edit.file, edit.cover, "image/jpeg")
+                                }
+                            } catch (_: Exception) {
+                            } finally {
+                                PendingMetadataEdits.clearFor(edit.file)
+                            }
+                        }
+                    }
                     var nowTitle by remember { mutableStateOf<String?>(null) }
                     var nowArtist by remember { mutableStateOf<String?>(null) }
                     var nowCover by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -295,9 +321,23 @@ class MainActivity : ComponentActivity() {
                             Dest.Library -> com.musicplayer.android.ui.HomeScreen(
                                 dailyMix = dailyMixRepo,
                                 library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
+                                podcasts = podcastRepo,
                                 onOpenAllSongs = { dest = Dest.AllSongs },
                                 onOpenDailyMix = { dest = Dest.DailyMix },
+                                onOpenArtists = { dest = Dest.Artists },
+                                onOpenAlbums = { dest = Dest.Albums },
+                                onOpenPodcasts = { dest = Dest.Podcasts },
                                 onOpenHistory = { dest = Dest.History },
+                                onPlayPodcast = { ep ->
+                                    playWithContext(
+                                        ep.file,
+                                        podcastRepo.episodes.value,
+                                        null,
+                                        com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
+                                    )
+                                },
                                 onPlay = { song, visible, source ->
                                     playWithContext(song.file, visible, null, source)
                                 },
@@ -329,6 +369,8 @@ class MainActivity : ComponentActivity() {
                             Dest.DailyMix -> com.musicplayer.android.ui.DailyMixScreen(
                                 dailyMix = dailyMixRepo,
                                 library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
                                 onBack = { dest = Dest.Library },
                                 onPlay = { song, visible, date ->
                                     playWithContext(
@@ -344,10 +386,37 @@ class MainActivity : ComponentActivity() {
                                 nowPlayingFile = currentFile?.name,
                                 isPlaying = isPlaying
                             )
+                            Dest.Artists -> com.musicplayer.android.ui.ArtistsScreen(
+                                library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
+                                onBack = { dest = Dest.Library },
+                                onPlay = { song, visible, source ->
+                                    playWithContext(song.file, visible, null, source)
+                                },
+                                onPlayNext = { song -> queueFile(song.file, next = true) },
+                                onEnqueue = { song -> queueFile(song.file, next = false) },
+                                nowPlayingFile = currentFile?.name,
+                                isPlaying = isPlaying
+                            )
+                            Dest.Albums -> com.musicplayer.android.ui.AlbumsScreen(
+                                library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
+                                onBack = { dest = Dest.Library },
+                                onPlay = { song, visible, source ->
+                                    playWithContext(song.file, visible, null, source)
+                                },
+                                onPlayNext = { song -> queueFile(song.file, next = true) },
+                                onEnqueue = { song -> queueFile(song.file, next = false) },
+                                nowPlayingFile = currentFile?.name,
+                                isPlaying = isPlaying
+                            )
                             Dest.Download -> DownloadScreen(
                                 queueRepo,
                                 engine,
                                 previewPlayer,
+                                metadataRepo,
                                 // A preview must never play over the library.
                                 onPreviewStarted = { player.pause() }
                             )
@@ -395,7 +464,10 @@ class MainActivity : ComponentActivity() {
                             )
                             Dest.Playlists -> PlaylistsScreen(
                                 repo = playlistRepo,
+                                metadata = metadataRepo,
+                                artwork = artworkRepo,
                                 musicDir = engine.outputDir(),
+                                nowPlayingFile = currentFile?.name,
                                 onPlayFiles = { files, playlistId ->
                                     previewPlayer.stop()
                                     player.playFiles(files, 0)
@@ -425,14 +497,29 @@ class MainActivity : ComponentActivity() {
                             Dest.History -> HistoryScreen(
                                 repo = historyRepo,
                                 queue = queueRepo,
+                                metadata = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
                                 musicDir = engine.outputDir(),
-                                onPlayFile = { file -> playSong(file.name) },
+                                nowPlayingFile = currentFile?.name,
+                                isPlaying = isPlaying,
+                                onPlaySong = { song, visible, source ->
+                                    playWithContext(song.file, visible, null, source)
+                                },
+                                onPlayNext = { song -> queueFile(song.file, next = true) },
+                                onEnqueue = { song -> queueFile(song.file, next = false) },
                                 onOpenArtist = { name ->
                                     artistTarget = name
                                     dest = Dest.AllSongs
                                 }
                             )
-                            Dest.Settings -> SettingsScreen(settingsRepo, syncRepo, podcastRepo, onPull = { enqueuePull() })
+                            Dest.Settings -> SettingsScreen(
+                                settingsRepo,
+                                syncRepo,
+                                podcastRepo,
+                                onPull = { enqueuePull() },
+                                onVolumeChange = { player.setVolume(it) }
+                            )
                         }
                         }
                     }
@@ -445,9 +532,20 @@ class MainActivity : ComponentActivity() {
                             metadata = metadataRepo,
                             lyrics = lyricsRepo,
                             volume = volume,
-                            onVolumeChange = { settingsRepo.setVolume(it) },
+                            onVolumeChange = {
+                                settingsRepo.setVolume(it)
+                                player.setVolume(it)
+                            },
                             onVolumeDone = { sheetScope.launch { settingsRepo.persistVolume() } },
-                            onDismiss = { showNowPlaying = false }
+                            onDismiss = { showNowPlaying = false },
+                            chaptersProvider = { name -> podcastRepo.chaptersFor(name) },
+                            isPodcastFile = { file ->
+                                try {
+                                    file.canonicalPath.startsWith(PlayerApp.instance.podcastsDir.canonicalPath)
+                                } catch (_: Exception) {
+                                    false
+                                }
+                            }
                         )
                     }
 
