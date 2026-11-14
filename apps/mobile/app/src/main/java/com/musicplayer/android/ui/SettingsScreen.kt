@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -54,18 +53,15 @@ import kotlinx.coroutines.launch
 /**
  * Settings destination: everything in one place (desktop settings view +
  * the remote/local sync actions, which live here on desktop too — no
- * separate sync screen). Volume also lives on the NowPlaying sheet as the
- * mobile adaptation; both drive the same stream.
+ * separate sync screen). Playback volume lives on the Now Playing sheet.
  */
 @Composable
 fun SettingsScreen(
     settings: SettingsRepository,
     sync: SyncRepository,
     podcasts: com.musicplayer.android.data.PodcastRepository,
-    onPull: () -> Unit,
-    onVolumeChange: (Float) -> Unit = {}
+    onPull: () -> Unit
 ) {
-    val volume by settings.volume.collectAsState()
     val limit by settings.limit.collectAsState()
     val syncState by sync.state.collectAsState()
     var rescanResult by remember { mutableStateOf<String?>(null) }
@@ -254,20 +250,6 @@ fun SettingsScreen(
                 is SyncRepository.SyncState.Error -> Text("FAILED: ${s.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 else -> {}
             }
-        }
-
-        // ---- Volume ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SectionLabel(Icons.Filled.VolumeUp, "Volume (${(volume * 100).toInt()}%)")
-            ModernSlider(
-                value = volume,
-                onValueChange = {
-                    settings.setVolume(it)
-                    onVolumeChange(it)
-                },
-                onValueChangeFinished = { scope.launch { settings.persistVolume() } },
-                modifier = Modifier.fillMaxWidth()
-            )
         }
 
         // ---- Crossfade (desktop Settings toggle + 1-12s, default off / 5s) ----

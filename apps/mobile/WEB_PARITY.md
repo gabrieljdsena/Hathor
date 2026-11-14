@@ -53,7 +53,7 @@ Mobile's key needs `library:read` + `library:write` for sync/Discover, and
 | S8 | Download | `.txt` batch import, iTunes trending chips, YouTube video preview, already-owned confirmation, bot-check hint | URL/search, audio-only preview, job list | `ui/DownloadScreen.kt`, `engine/DownloadEngine.kt`, `data/QueueRepository.kt` | M–L |
 | S9 | Lyrics | Full-screen lyrics-first view, synced auto-follow, tap-to-seek, offset, romaji, search/replace, chapter lyrics | Full-screen view with large centered lines, active-line follow + seek, ±20 s offset, romaji, edit/delete, chapter lyrics; search uses the Web API | `ui/LyricsScreen.kt`, `data/LyricsRepository.kt`, `data/db/*` | Done |
 | S10 | Search | Typo-tolerant/fuzzy matching (server) | Plain `contains` over title/artist/album | `ui/AllSongsScreen.kt`, shared util | S |
-| S11 | Volume | Works and is server-synced | Slider persists a number but is **never applied** to playback | `ui/SettingsScreen.kt`, `ui/NowPlayingSheet.kt`, `playback/PlayerManager.kt` | S (bug) |
+| S11 | Volume | Works and is server-synced | Applied live; slider lives on Now Playing | `ui/NowPlayingSheet.kt`, `playback/PlayerManager.kt` | Done |
 | S12 | Runtime server setup | Login/API keys supply URL + token at runtime | Settings → Web API: runtime URL + API key, Test connection (no login) | `ui/SettingsScreen.kt`, `data/api/SyncApi.kt` | Done |
 | S13 | Playlist sidebar submenu | Expandable playlist list in the sidebar | Flat Playlists destination (acceptable mobile adaptation) | — | XS |
 | S14 | Volume normalization | Browser-only compressor + measured loudness | Missing | `playback/PlayerManager.kt` | S (optional) |
@@ -87,13 +87,13 @@ API surface and runtime auth.
     crossfade.
   - Crossfade must treat the user volume as the base gain: `out = user * fadeOut`
     and `in = user * fadeIn` (currently fades hard-code `0..1`).
-  - `MainActivity` restores the persisted volume at startup; Settings and Now
+  - `MainActivity` restores the persisted volume at startup; the Now Playing
     Playing call `player.setVolume(...)` in addition to persisting it.
   - Acceptance: moving either slider changes output immediately; kill/relaunch
     keeps the level; crossfade never jumps to full volume.
   - Tests: `PlayerManager` volume math unit test if extracted; manual on AVD.
   - **Done:** `PlayerManager.setVolume()` + persisted restore in `MainActivity`;
-    crossfade gains now scale by user volume; Settings/Now Playing apply live.
+    crossfade gains now scale by user volume; the Now Playing slider applies live.
     `CrossfadeGainTest` covers the math.
 
 - [x] **P0.2 — Salvage the dead library editor**
@@ -455,7 +455,7 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 
 | Date | Item | Notes |
 |---|---|---|
-| 2026-11-14 | **P0.1 — volume** | `PlayerManager.setVolume()` applies/persists the user level, survives track changes and scales crossfade gains; Settings + Now Playing wired. `CrossfadeGainTest` added. |
+| 2026-11-14 | **P0.1 — volume** | `PlayerManager.setVolume()` applies/persists the user level, survives track changes and scales crossfade gains; the Now Playing slider is the single volume control. `CrossfadeGainTest` added. |
 | 2026-11-14 | **P1.1 — metadata editor** | “Edit info” wired into All Songs, Daily Mix, Home strips and playlist detail; the dialog provides tags, cover, iTunes lookup, delete and playlist checkboxes. Edits to the playing file are queued and applied on the next track change. `PendingMetadataEditsTest` added. |
 | 2026-11-14 | **P0.2 — dead code** | Removed `LibraryScreen`/artist-album grids/detail views; kept `SortHeader` + `EditSongDialog` in `ui/SongComponents.kt`. |
 | 2026-11-14 | **P0.3 — decisions** | Navigation, runtime config, AI DJ scope, cross-device MVP, accounts, video preview, Move to Songs and pending-edit decisions recorded in §4. |

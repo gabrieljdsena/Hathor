@@ -624,8 +624,7 @@ class MainActivity : ComponentActivity() {
                                 settingsRepo,
                                 syncRepo,
                                 podcastRepo,
-                                onPull = { enqueuePull() },
-                                onVolumeChange = { player.setVolume(it) }
+                                onPull = { enqueuePull() }
                             )
                             Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
                                 controller = aiDjController,
