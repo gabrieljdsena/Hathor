@@ -84,6 +84,9 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     /** Fired when the file ORDER changes (persist the queue). */
     var onQueueChanged: ((List<File>) -> Unit)? = null
 
+    /** Fired when playback is paused; MainActivity pushes a cross-device spot. */
+    var onPauseSpot: ((File, Int, Boolean) -> Unit)? = null
+
     /** Fired when the current track changes (persist current_song). */
     var onTrackChanged: ((String) -> Unit)? = null
 
@@ -165,6 +168,14 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     fun playFileAtPosition(file: File, positionMs: Int) {
         pendingStartSeek = file.absolutePath to positionMs.coerceAtLeast(0)
         playFile(file)
+    }
+
+    /** Restore a queue + position (cross-device resume spot). */
+    fun playFilesAtPosition(files: List<File>, startIndex: Int, positionMs: Int) {
+        if (files.isEmpty()) return
+        val index = startIndex.coerceIn(0, files.lastIndex)
+        pendingStartSeek = files[index].absolutePath to positionMs.coerceAtLeast(0)
+        playFiles(files, index)
     }
 
     private fun refreshChapters(file: File, seekFirst: Boolean) {
@@ -383,9 +394,17 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             } catch (e: Exception) {
                 Log.w(TAG, "pause failed: ${e.message}")
             }
-            stampStart(safePosition(p))
+            val pos = safePosition(p)
+            stampStart(pos)
             _playing.value = false
             stopTicker()
+            val file = _current.value ?: queue.getOrNull(index)
+            if (file != null) {
+                try {
+                    onPauseSpot?.invoke(file, pos, isPodcastFile?.invoke(file) == true)
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 

@@ -51,7 +51,7 @@ class MainActivityTest {
 
     @Test(timeout = 180_000)
     fun shellRendersEveryRailDestination() {
-        listOf("Home", "Download", "Podcasts", "Playlists", "History", "Settings").forEach { label ->
+        listOf("Home", "Discover", "Download", "Podcasts", "Playlists", "History", "AI DJ", "Settings").forEach { label ->
             compose.onNodeWithContentDescription(label).assertExists()
         }
     }

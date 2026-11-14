@@ -1,5 +1,7 @@
 package com.musicplayer.android.data.api
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.musicplayer.android.BuildConfig
 import java.io.File
@@ -101,19 +103,46 @@ data class RemoteSnapshot(
 class SyncApiException(message: String) : Exception(message)
 
 object SyncConfig {
-    fun baseUrl(): String =
-        try { BuildConfig.API_BASE_URL } catch (_: Exception) { "" }.trim().trimEnd('/')
+    private const val PREFS = "hathor_api"
+    private const val KEY_BASE_URL = "base_url"
+    private const val KEY_TOKEN = "token"
+    private var prefs: SharedPreferences? = null
 
-    fun token(): String =
-        try { BuildConfig.API_TOKEN } catch (_: Exception) { "" }.trim()
+    /** Called once from PlayerApp.onCreate; runtime values override BuildConfig. */
+    fun init(context: Context) {
+        prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    }
+
+    fun baseUrl(): String {
+        val raw = prefs?.getString(KEY_BASE_URL, null)
+            ?: try { BuildConfig.API_BASE_URL } catch (_: Exception) { "" }
+        return raw.trim().trimEnd('/')
+    }
+
+    fun token(): String {
+        val raw = prefs?.getString(KEY_TOKEN, null)
+            ?: try { BuildConfig.API_TOKEN } catch (_: Exception) { "" }
+        return raw.trim()
+    }
+
+    fun save(baseUrl: String, token: String) {
+        prefs?.edit()
+            ?.putString(KEY_BASE_URL, baseUrl.trim().trimEnd('/'))
+            ?.putString(KEY_TOKEN, token.trim())
+            ?.apply()
+    }
+
+    fun clearRuntime() {
+        prefs?.edit()?.remove(KEY_BASE_URL)?.remove(KEY_TOKEN)?.apply()
+    }
 
     fun isConfigured(): Boolean = baseUrl().isNotBlank() && token().isNotBlank()
 
     fun describe(): String =
-        if (baseUrl().isNotBlank()) "Server: ${baseUrl()}" else "Sync off."
+        if (baseUrl().isNotBlank()) "Web API: ${baseUrl()}" else "Web API off."
 
     const val NOT_CONFIGURED =
-        "No sync server configured. Set API_BASE_URL and API_TOKEN in local.properties."
+        "No Web API configured. Set the server URL and an API key in Settings."
 }
 
 class SyncApi(val baseUrl: String, private val token: String) {

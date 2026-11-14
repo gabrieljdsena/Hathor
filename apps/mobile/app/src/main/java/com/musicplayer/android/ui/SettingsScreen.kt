@@ -21,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,12 +35,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
+import com.musicplayer.android.data.api.HathorApi
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
+import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HeaderIconTile
 import com.musicplayer.android.ui.theme.ModernSlider
 import com.musicplayer.android.ui.theme.hathorGlass
@@ -69,6 +74,10 @@ fun SettingsScreen(
     var podFolderResult by remember { mutableStateOf<String?>(null) }
     var podFolderPath by remember { mutableStateOf(settings.podcastsFolder()) }
     var busy by remember { mutableStateOf(false) }
+    var apiUrl by remember { mutableStateOf(SyncConfig.baseUrl()) }
+    var apiToken by remember { mutableStateOf(SyncConfig.token()) }
+    var apiMessage by remember { mutableStateOf<String?>(null) }
+    var testingApi by remember { mutableStateOf(false) }
     // Background pull status (first-run dialog and this button share one worker).
     var pullStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -121,6 +130,62 @@ fun SettingsScreen(
                 Text("Settings", style = MaterialTheme.typography.titleLarge)
                 Text("Manage your preferences", style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
             }
+        }
+
+        // ---- Web API connection (runtime; no account/login on mobile) ----
+        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel(Icons.Filled.Sync, "Web API")
+            Text(
+                "The mobile app talks to your self-hosted Hathor Web API. No login is needed — use a scoped hth_ API key.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
+            HathorTextField(
+                value = apiUrl,
+                onValueChange = { apiUrl = it },
+                label = "Server URL (http://host:5051)",
+                modifier = Modifier.fillMaxWidth()
+            )
+            HathorTextField(
+                value = apiToken,
+                onValueChange = { apiToken = it },
+                label = "API key (hth_…)",
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        SyncConfig.save(apiUrl, apiToken)
+                        apiUrl = SyncConfig.baseUrl()
+                        apiToken = SyncConfig.token()
+                        apiMessage = "Saved. Pull/push and Discover/AI DJ use this server."
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HathorColors.Accent,
+                        contentColor = Color.White
+                    )
+                ) { Text("Save") }
+                OutlinedButton(
+                    onClick = {
+                        testingApi = true
+                        apiMessage = null
+                        scope.launch {
+                            apiMessage = HathorApi.testConnection(apiUrl, apiToken)
+                            testingApi = false
+                        }
+                    },
+                    enabled = !testingApi,
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (testingApi) "Testing…" else "Test") }
+            }
+            apiMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint) }
+            Text(
+                "Scopes: library:read + library:write for sync/Discover; add player:read + player:control for AI DJ.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
         }
 
         // ---- Sync server (desktop settings view owns these actions) ----

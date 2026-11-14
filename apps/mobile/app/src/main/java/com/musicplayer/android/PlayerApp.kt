@@ -6,6 +6,7 @@ import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SyncRepository
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
@@ -76,6 +77,7 @@ class PlayerApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        SyncConfig.init(this)
         musicDir = java.io.File(
             getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC),
             "AndroidPlayer"

@@ -22,6 +22,10 @@ background, glass surfaces, orange accent.
 - **Lyrics** — lrclib synced/plain fetch with offline Room cache plus a
   per-song highlight-timing correction (±20 s stepper, persisted)
 - **Playlists & history** — playlist CRUD, played/download history tabs
+- **Web API-backed features** — Discover recommendations and the AI DJ
+  (Vohithe) run on the Hathor Web API; the phone renders the feed/sets and
+  plays returned files. No login is required — configure a scoped `hth_` key
+  in Settings.
 - **Server sync** — pulls the library from the Hathor server over the LAN
   (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast
@@ -50,10 +54,11 @@ background, glass surfaces, orange accent.
    API_TOKEN=hth_<per-device key with library:read + library:write>
    ```
 
-   The base URL is your Hathor server on the LAN; the token is a per-device
-   key (create one in the web UI under API keys). Leaving either empty
-   disables sync — the app runs fully offline with local downloads and
-   playback.
+   These are **build-time defaults**. You can also set the server URL and API
+   key at runtime under **Settings → Web API** (no rebuild, no login). Keys for
+   Discover/sync need `library:read` + `library:write`; add `player:read` +
+   `player:control` for AI DJ. Leaving both empty disables server features —
+   the app still runs offline with local downloads and playback.
 3. **Run ▶** on a phone or emulator.
 
 ## Develop & test
@@ -167,9 +172,9 @@ The app talks to the Hathor Web API over the LAN (`data/api/SyncApi.kt`,
 stdlib `HttpURLConnection` + `org.json` — no extra dependencies), using the
 same table semantics as the desktop `database.sql` (see
 `data/db/Entities.kt`), and keeps a local Room copy (`hathor.db`) for
-offline use. Server URL + API token are baked in from `local.properties` at
-build time via `BuildConfig` fields — they never appear in source. Empty
-values disable sync, exactly like desktop.
+offline use. Server URL + API token come from **Settings → Web API**, with
+`local.properties` / `BuildConfig` as build-time defaults; they never appear in
+source. Empty values disable server features.
 
 - **Pull** (`data/remote/PullWorker.kt`, shared by the first-run prompt and
   the Settings Pull button): `GET /api/v1/sync/delta?cursor=` (incremental —
@@ -188,11 +193,12 @@ values disable sync, exactly like desktop.
 
 ## Current status
 
-Sync is complete: Room database, remote reader/writer, `SyncRepository` and
-`PullWorker` are in the repo, wired to the exact APIs the UI already calls.
-Still missing (separate features, untouched by sync): `QueueRepository`,
-`MetadataRepository`, `ArtworkRepository`, `SettingsRepository`,
-`PodcastRepository`, the remaining read repositories the screens import, and
-`DownloadService` — so the project does not compile on a fresh checkout yet.
-`PLAN.md` and `FEATURE_PLAN.md` in this folder are the original build plans
-kept for reference; this README describes the app itself.
+The app builds and both test suites pass (JVM/Robolectric + Compose). Sync,
+local playback/downloads, metadata, playlists, podcasts, Artists/Albums,
+Discover and AI DJ are wired. AI DJ v1 uses the text brief and server-selected
+batches; server voice clips/transcription are not played yet. Cross-device
+resume is still pending.
+
+`WEB_PARITY.md` tracks the web→mobile gap backlog and what remains
+(runtime Web API, Discover, AI DJ and cross-device resume are implemented;
+AI DJ voice clips/auto-advance and optional polish remain).

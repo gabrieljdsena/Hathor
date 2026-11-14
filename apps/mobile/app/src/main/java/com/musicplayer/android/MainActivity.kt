@@ -13,6 +13,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.musicplayer.android.data.api.PlaybackApi
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import androidx.compose.animation.AnimatedContent
@@ -67,6 +68,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
@@ -78,6 +80,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var historyRepo: HistoryRepository
     private lateinit var lyricsRepo: LyricsRepository
     private lateinit var artworkRepo: ArtworkRepository
+    private lateinit var deviceId: String
     private lateinit var settingsRepo: SettingsRepository
     private lateinit var dailyMixRepo: com.musicplayer.android.data.DailyMixRepository
     private lateinit var podcastRepo: com.musicplayer.android.data.PodcastRepository
@@ -90,6 +93,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        deviceId = getSharedPreferences("hathor", MODE_PRIVATE).let { prefs ->
+            prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
+                prefs.edit().putString("device_id", it).apply()
+            }
+        }
         // Shared process-lifetime instances (also used by workers/service).
         engine = PlayerApp.instance.downloadEngine
         player = PlayerApp.instance.player
@@ -116,6 +124,26 @@ class MainActivity : ComponentActivity() {
                 f.canonicalPath.startsWith(PlayerApp.instance.podcastsDir.canonicalPath)
             } catch (_: Exception) {
                 false
+            }
+        }
+        player.onPauseSpot = { file, posMs, isPodcast ->
+            if (SyncConfig.isConfigured()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val source = settingsRepo.loadQueueSource()
+                        PlaybackApi.push(
+                            deviceId = deviceId,
+                            deviceLabel = "Android",
+                            file = file.name,
+                            positionSec = posMs / 1000.0,
+                            isPodcast = isPodcast,
+                            queueFiles = player.queueFlow.value.take(50).map { it.name },
+                            sourceType = source?.type,
+                            sourceId = source?.id
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
             }
         }
         settingsRepo.onChapterSkipChanged = { player.setChapterSkip(it) }
@@ -324,6 +352,7 @@ class MainActivity : ComponentActivity() {
                                 playlistRepo = playlistRepo,
                                 artwork = artworkRepo,
                                 podcasts = podcastRepo,
+                                deviceId = deviceId,
                                 onOpenAllSongs = { dest = Dest.AllSongs },
                                 onOpenDailyMix = { dest = Dest.DailyMix },
                                 onOpenArtists = { dest = Dest.Artists },
@@ -337,6 +366,34 @@ class MainActivity : ComponentActivity() {
                                         null,
                                         com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
                                     )
+                                },
+                                onResumeSpot = { spot ->
+                                    val files = (spot.queueFiles.ifEmpty { listOf(spot.file) })
+                                        .mapNotNull { name ->
+                                            resolveFileByName(name).takeIf { it.exists() }
+                                        }
+                                        .distinct()
+                                    val index = files.indexOfFirst { it.name == spot.file }
+                                        .coerceAtLeast(0)
+                                    if (files.isNotEmpty()) {
+                                        previewPlayer.stop()
+                                        player.playFilesAtPosition(
+                                            files,
+                                            index,
+                                            (spot.positionSec * 1000).toInt()
+                                        )
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            try {
+                                                settingsRepo.saveQueueSource(
+                                                    com.musicplayer.android.playback.PlaybackSource(
+                                                        spot.queueSourceType ?: "recently_played",
+                                                        spot.queueSourceId
+                                                    )
+                                                )
+                                            } catch (_: Exception) {
+                                            }
+                                        }
+                                    }
                                 },
                                 onPlay = { song, visible, source ->
                                     playWithContext(song.file, visible, null, source)
@@ -411,6 +468,13 @@ class MainActivity : ComponentActivity() {
                                 onEnqueue = { song -> queueFile(song.file, next = false) },
                                 nowPlayingFile = currentFile?.name,
                                 isPlaying = isPlaying
+                            )
+                            Dest.Discover -> com.musicplayer.android.ui.DiscoverScreen(
+                                metadata = metadataRepo,
+                                queue = queueRepo,
+                                engine = engine,
+                                preview = previewPlayer,
+                                onPreviewStarted = { player.pause() }
                             )
                             Dest.Download -> DownloadScreen(
                                 queueRepo,
@@ -520,6 +584,28 @@ class MainActivity : ComponentActivity() {
                                 onPull = { enqueuePull() },
                                 onVolumeChange = { player.setVolume(it) }
                             )
+                            Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen { tracks, sessionId ->
+                                val files = tracks.mapNotNull { track ->
+                                    resolveFileByName(track.file).takeIf { it.exists() }
+                                }
+                                if (files.isEmpty()) {
+                                    false
+                                } else {
+                                    previewPlayer.stop()
+                                    player.playFiles(files, 0)
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        try {
+                                            settingsRepo.saveQueueSource(
+                                                com.musicplayer.android.playback.PlaybackSource(
+                                                    "ai_dj", sessionId
+                                                )
+                                            )
+                                        } catch (_: Exception) {
+                                        }
+                                    }
+                                    true
+                                }
+                            }
                         }
                         }
                     }

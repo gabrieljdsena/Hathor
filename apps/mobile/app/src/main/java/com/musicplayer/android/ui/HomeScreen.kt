@@ -44,6 +44,8 @@ import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.PlaylistRepository
 import com.musicplayer.android.data.PodcastRepository
 import com.musicplayer.android.data.SongMeta
+import com.musicplayer.android.data.api.PlaybackApi
+import com.musicplayer.android.data.api.PlaybackSpot
 import com.musicplayer.android.playback.PlaybackSource
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HeaderIconTile
@@ -66,6 +68,7 @@ fun HomeScreen(
     playlistRepo: PlaylistRepository,
     artwork: ArtworkRepository,
     podcasts: PodcastRepository,
+    deviceId: String,
     onOpenAllSongs: () -> Unit,
     onOpenDailyMix: () -> Unit,
     onOpenArtists: () -> Unit,
@@ -73,6 +76,7 @@ fun HomeScreen(
     onOpenPodcasts: () -> Unit,
     onOpenHistory: () -> Unit,
     onPlayPodcast: (SongMeta) -> Unit,
+    onResumeSpot: (PlaybackSpot) -> Unit,
     onPlay: (SongMeta, List<SongMeta>, PlaybackSource) -> Unit,
     onPlayNext: (SongMeta) -> Unit,
     onEnqueue: (SongMeta) -> Unit,
@@ -85,6 +89,8 @@ fun HomeScreen(
     var mixDate by remember { mutableStateOf<String?>(null) }
     var recent by remember { mutableStateOf<List<SongMeta>>(emptyList()) }
     var downloaded by remember { mutableStateOf<List<SongMeta>>(emptyList()) }
+    var resumeSpot by remember { mutableStateOf<PlaybackSpot?>(null) }
+    var resumeTitle by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     // Strip context menu (long-press opens the same menu as song rows).
     var menuSong by remember { mutableStateOf<Triple<SongMeta, List<SongMeta>, PlaybackSource>?>(null) }
@@ -109,6 +115,17 @@ fun HomeScreen(
             downloaded = withContext(Dispatchers.IO) { dailyMix.recentlyDownloaded(15) }
             withContext(Dispatchers.IO) { podcasts.refresh() }
         } catch (_: Exception) {
+        }
+        try {
+            val spot = withContext(Dispatchers.IO) { PlaybackApi.latest(deviceId) }
+            val local = spot?.let { s ->
+                library.library.value.firstOrNull { it.file == s.file }
+            }
+            resumeSpot = if (local != null) spot else null
+            resumeTitle = local?.title
+        } catch (_: Exception) {
+            resumeSpot = null
+            resumeTitle = null
         }
         loading = false
     }
@@ -190,6 +207,17 @@ fun HomeScreen(
                 { onPlayPodcast(episode) }
             }
         )
+        resumeSpot?.let { spot ->
+            val pos = "%d:%02d".format(spot.positionSec.toInt() / 60, spot.positionSec.toInt() % 60)
+            HomeCard(
+                title = "Continue on ${spot.device ?: "another device"}",
+                subtitle = "${resumeTitle ?: spot.file} · $pos",
+                hint = "Resume where you left off.",
+                icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+                onClick = { onResumeSpot(spot) },
+                onPlay = { onResumeSpot(spot) }
+            )
+        }
 
         // Recently Played strip
         StripSection(

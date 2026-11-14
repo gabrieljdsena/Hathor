@@ -21,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
@@ -70,10 +72,12 @@ enum class Dest(val label: String, val icon: ImageVector, val inRail: Boolean = 
     DailyMix("Daily Mix", Icons.Filled.Refresh, inRail = false),
     Artists("Artists", Icons.Filled.Person, inRail = false),
     Albums("Albums", Icons.Filled.Album, inRail = false),
+    Discover("Discover", Icons.Filled.Explore),
     Download("Download", Icons.Filled.Download),
     Podcasts("Podcasts", Icons.Filled.Mic),
     Playlists("Playlists", Icons.Filled.List),
     History("History", Icons.Filled.History),
+    AiDj("AI DJ", Icons.Filled.AutoAwesome),
     Settings("Settings", Icons.Filled.Settings);
 
     /** Rail highlight mapping (desktop: all_songs/daily_mix -> home). */

@@ -17,12 +17,11 @@ files, acceptance criteria and a suggested phase. Check items off as they land.
 | `Web-only` | Deliberately not worth porting (server/admin/desktop UX) |
 
 **Architecture note:** web playback, downloads, Discover and AI DJ are
-**server-owned**; mobile playback and downloads are **on-device**. Some web
-features can be consumed by mobile through the REST API (Discover, AI DJ,
-resume spot), but they need a runtime server/token configuration — mobile
-currently bakes `API_BASE_URL` / `API_TOKEN` in at build time. Mobile's token
-needs `library:read` + `library:write` for Discover, and `player:read` +
-`player:control` for AI DJ / cross-device playback.
+**server-owned**; mobile playback and downloads are **on-device**. Discover and
+AI DJ are consumed through the Hathor Web API with a runtime server URL + API
+key configured in Settings (no mobile login, no server logic on-device).
+Mobile's key needs `library:read` + `library:write` for sync/Discover, and
+`player:read` + `player:control` for AI DJ / cross-device playback.
 
 ---
 
@@ -35,8 +34,8 @@ needs `library:read` + `library:write` for Discover, and `player:read` +
 | W1 | **Discover** — out-of-library recommendations, source filters, preview queue, dismiss/feedback learning, insights + weight tuning, download suggestions | `views/Discover.tsx`, `components/DiscoverInsightsCard.tsx`, `hooks/useDiscoverPreviewQueue.ts` | Missing | L |
 | W2 | **AI DJ (Vohithe)** — server-run sets, vibe brief + voice recording, start/stop/new set, more/less feedback, voice ducking, live visualizer, Home card and player popover | `views/AiDj.tsx`, `store/aiDj.ts`, `hooks/useStartDjSet.ts`, `hooks/useDjVibeRecorder.ts` | Missing | L |
 | W3 | **Artists & Albums browse** — list all artists/albums, artwork heroes, search, play all/shuffle, per-group paging | `views/Library.tsx` (`Artists`, `ArtistDetail`, `Albums`, `AlbumDetail`) | Partial — only hidden subviews from a song's menu, no artwork/search/sort/play-all | M |
-| W4 | **Login / register / account** — JWT login, registration gate, remember me, change password, active sessions, logout-all | `views/Login.tsx`, `auth/AuthContext.tsx`, `views/Settings.tsx` | Web-only currently; mobile uses a build-time token | M |
-| W5 | **API-key management** — mint/revoke scoped `hth_` tokens | `views/ApiKeys.tsx` | Missing; mobile only consumes one | S |
+| W4 | **Login / register / account** — JWT login, registration gate, remember me, change password, active sessions, logout-all | `views/Login.tsx`, `auth/AuthContext.tsx`, `views/Settings.tsx` | Dropped — mobile uses a runtime `hth_` API key, no login | — |
+| W5 | **API-key management** — mint/revoke scoped `hth_` tokens | `views/ApiKeys.tsx` | Web-only; mobile only consumes a key | — |
 | W6 | **Cross-device playback & resume** — SignalR player hub, queue/state broadcasts, “resume where you left off” from another device | `playerHub.ts`, `components/ui/ResumeSpot.tsx`, `ResumeBento.tsx`, `store/player.ts` | Missing; mobile queue restore is local-only | L |
 | W7 | **Server/system administration** — FFmpeg/yt-dlp install/update, YouTube bot-check protection, loudness backfill, system status | `views/Settings.tsx` | Web-only by design | — |
 
@@ -55,7 +54,7 @@ needs `library:read` + `library:write` for Discover, and `player:read` +
 | S9 | Lyrics | Romaji toggle, delete lyrics, per-chapter podcast lyrics + per-chapter offsets | Synced/plain, search, edit, ±20 s offset for songs only | `ui/NowPlayingSheet.kt`, `data/LyricsRepository.kt`, `data/db/*` | M |
 | S10 | Search | Typo-tolerant/fuzzy matching (server) | Plain `contains` over title/artist/album | `ui/AllSongsScreen.kt`, shared util | S |
 | S11 | Volume | Works and is server-synced | Slider persists a number but is **never applied** to playback | `ui/SettingsScreen.kt`, `ui/NowPlayingSheet.kt`, `playback/PlayerManager.kt` | S (bug) |
-| S12 | Runtime server setup | Login/API keys supply URL + token at runtime | `local.properties` only; no in-app URL/token entry or connection test | `ui/SettingsScreen.kt`, `data/SettingsRepository.kt` | M |
+| S12 | Runtime server setup | Login/API keys supply URL + token at runtime | Settings → Web API: runtime URL + API key, Test connection (no login) | `ui/SettingsScreen.kt`, `data/api/SyncApi.kt` | Done |
 | S13 | Playlist sidebar submenu | Expandable playlist list in the sidebar | Flat Playlists destination (acceptable mobile adaptation) | — | XS |
 | S14 | Volume normalization | Browser-only compressor + measured loudness | Missing | `playback/PlayerManager.kt` | S (optional) |
 | S15 | Queue reorder UX | Drag-and-drop + arrow buttons | Arrow buttons only (acceptable) | `ui/NowPlayingSheet.kt` | XS |
@@ -312,7 +311,7 @@ API surface and runtime auth.
 Prerequisite: **P4.1 runtime server/token configuration** (S12). Without it,
 every feature below requires rebuilding the APK.
 
-- [ ] **P4.1 — Runtime server setup (S12)**
+- [x] **P4.1 — Runtime server setup (S12)**
   - Settings screen fields for server URL + `hth_` token, “Test connection” and
     scope display; persist in `SettingsRepository`/DataStore with the existing
     `BuildConfig` values as defaults.
@@ -322,8 +321,13 @@ every feature below requires rebuilding the APK.
     a clear error; existing build-time config still works.
   - Tests: settings persistence; connection-test unit test with a fake HTTP
     server.
+  - **Done:** `SyncConfig` now stores runtime URL/token in SharedPreferences
+    (BuildConfig remains the fallback). Settings → Web API has URL + masked key
+    fields, Save and Test. No login flow; the screen tells users which scopes
+    sync/Discover/AI DJ need. `ApiContractTest` covers persistence.
+    A fake-HTTP connection test is still not automated.
 
-- [ ] **P4.2 — Discover (W1)**
+- [x] **P4.2 — Discover (W1)**
   - Add a mobile API client for `/discover`, `/discover/refresh`,
     `/discover/feedback`, `/discover/insights`, `/discover/tune` (library
     scopes).
@@ -337,8 +341,14 @@ every feature below requires rebuilding the APK.
     downloads land in the library, owned tracks are guarded.
   - Tests: API JSON contract tests (Robolectric/org.json), Compose filter/card
     tests.
+  - **Done:** `DiscoverApi` + `DiscoverScreen` load `/discover`, refresh, filter
+    by source/search, show iTunes art/reasons, dismiss with feedback, preview
+    via the on-device YouTube resolver, and download through
+    `QueueRepository.submit` (on-device engine, no server ingest). Owned tracks
+    prompt before re-download. Insights/tuning cards and multi-item preview
+    queues are not ported yet. JSON contract covered by `ApiContractTest`.
 
-- [ ] **P4.3 — AI DJ / Vohithe (W2)**
+- [x] **P4.3 — AI DJ / Vohithe (W2)**
   - Needs a token with `player:read` + `player:control`.
   - Add API client for state/start/stop/feedback/transcribe/settings/clip.
   - UI: Vohithe screen with status, vibe text, start/stop/new set, feedback,
@@ -350,8 +360,14 @@ every feature below requires rebuilding the APK.
   - Acceptance: start plays the first batch and intro voice; stop halts cleanly;
     feedback works; feature-disabled state is clear.
   - Tests: API contract tests; state-machine unit tests; manual on AVD.
+  - **Done (v1):** `AiDjApi` + `AiDjScreen` query state every 5s, start/stop
+    sessions, send like/dislike feedback, show enabled/configured/error states,
+    display current/next batches, commentary text and track lists, and play
+    server-selected files locally. Voice clip playback/ducking, transcription
+    and automatic next-batch transitions remain deferred. Contract covered by
+    `ApiContractTest`.
 
-- [ ] **P4.4 — Cross-device playback and resume (W6)**
+- [x] **P4.4 — Cross-device playback and resume (W6)**
   - MVP: push/pull resume spots (`/player/spot`, `/player/spot/latest`) and show
     a “Continue on this device” card (web `ResumeBento`) that restores the
     queue and seeks.
@@ -359,12 +375,16 @@ every feature below requires rebuilding the APK.
   - Acceptance: pausing on web and opening mobile offers the same track/position;
     resuming restores the queue context; no auto-play.
   - Tests: spot JSON contract tests; queue restore unit tests.
+  - **Done (MVP):** `PlaybackApi` pushes a spot on pause
+    (`/sync/playback`, device id/label, position, queue files, source) and reads
+    the latest foreign spot on Home. The “Continue on …” card restores the
+    local queue and seeks to the saved position; it only appears when the
+    current file exists locally. Full remote control/SignalR mirroring is not
+    implemented. Contract covered by `ApiContractTest`.
 
-- [ ] **P4.5 — Accounts and API keys (W4/W5) — optional**
-  - Only if mobile should support multiple users or manage tokens.
-  - Login/register + refresh-token storage, or a simpler “paste API key” flow
-    already covered by P4.1.
-  - API-key management likely stays web-only; document if so.
+- [x] **P4.5 — Accounts and API keys (W4/W5) — dropped**
+  - **Decision:** no mobile login. The app uses a runtime `hth_` API key entered
+    in Settings; account/API-key management stays in the web UI.
 
 ---
 
@@ -442,4 +462,9 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **P3.1 — fuzzy search** | `FuzzySearch` ported with diacritics/token/Damerau matching; wired into all search boxes; tests added. |
 | 2026-11-14 | **P3.2 — lyrics extras** | Delete, local kana Romaji fallback, chapter selector + chapter-keyed lyrics/offsets with rebased highlighting. |
 | 2026-11-14 | **P3.3 — download extras** | `.txt` batch import, owned-copy confirmation, audio-only preview kept; parser tests added. |
+| 2026-11-14 | **P4.1 — runtime Web API** | URL/API-key fields persisted in `SyncConfig`, Settings Save/Test, BuildConfig fallback; no login. |
+| 2026-11-14 | **P4.2 — Discover** | Web API feed/filters/preview/dismiss/feedback + on-device download and owned guard. |
+| 2026-11-14 | **P4.3 — AI DJ** | Web API state/start/stop/feedback + local batch playback and commentary display (voice/auto-advance deferred). |
+| 2026-11-14 | **P4.4 — cross-device resume** | Pause pushes a spot to `/sync/playback`; Home shows a “Continue on …” card that restores queue + position. |
+| 2026-11-14 | **P4.5 — accounts** | Dropped by product decision: API-key entry only, no mobile login. |
 | 2026-11-14 | **Test runner** | `scripts/test.ps1` now tolerates Gradle/adb stderr warnings, so it no longer aborts on the SDK XML warning. |
