@@ -29,6 +29,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The SDK now ships cmdline-tools 16, where the legacy `tools`
+          # package no longer exists. Install only what Gradle needs.
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
 
       - name: Run unit tests
         working-directory: apps/mobile
