@@ -360,12 +360,18 @@ every feature below requires rebuilding the APK.
   - Acceptance: start plays the first batch and intro voice; stop halts cleanly;
     feedback works; feature-disabled state is clear.
   - Tests: API contract tests; state-machine unit tests; manual on AVD.
-  - **Done (v1):** `AiDjApi` + `AiDjScreen` query state every 5s, start/stop
-    sessions, send like/dislike feedback, show enabled/configured/error states,
-    display current/next batches, commentary text and track lists, and play
-    server-selected files locally. Voice clip playback/ducking, transcription
-    and automatic next-batch transitions remain deferred. Contract covered by
-    `ApiContractTest`.
+  - **Done:** `AiDjApi` + app-scoped `AiDjController` keep the Web API as the
+    source of truth: start/new set/stop, like/dislike feedback, server queue
+    sync (`player/queue`, `play`, `next`), automatic batch rotation and
+    prefetch. Vohithe's commentary clips are cached and played over ducked
+    music (intro, outro + next intro at the boundary), with waiting/fallback
+    states. Start also fetches a missing first-batch track on demand from the
+    same sync file endpoint, so a partial library does not kill the session.
+    The screen now mirrors the web hierarchy (hero, portrait +
+    radial visualizer, status, vibe composer, now playing, next set, voice)
+    instead of dumping batch JSON/text. Spoken vibe input records 16 kHz WAV
+    and uses `/ai-dj/transcribe`. Contract covered by `ApiContractTest` and
+    `DjBoundaryTest`; Compose states covered by `AiDjScreenTest`.
 
 - [x] **P4.4 — Cross-device playback and resume (W6)**
   - MVP: push/pull resume spots (`/player/spot`, `/player/spot/latest`) and show

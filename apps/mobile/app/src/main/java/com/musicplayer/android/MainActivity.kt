@@ -51,6 +51,7 @@ import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.engine.DownloadEngine
+import com.musicplayer.android.playback.AiDjController
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.DownloadScreen
@@ -89,6 +90,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var podcastRepo: com.musicplayer.android.data.PodcastRepository
     private lateinit var player: PlayerManager
     private lateinit var previewPlayer: PreviewPlayer
+    private lateinit var aiDjController: AiDjController
 
     companion object {
         const val DEFAULT_TEST_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -105,6 +107,7 @@ class MainActivity : ComponentActivity() {
         engine = PlayerApp.instance.downloadEngine
         player = PlayerApp.instance.player
         previewPlayer = PlayerApp.instance.previewPlayer
+        aiDjController = PlayerApp.instance.aiDjController
         queueRepo = PlayerApp.instance.queueRepo
         syncRepo = PlayerApp.instance.syncRepo
         metadataRepo = MetadataRepository(this, engine)
@@ -115,6 +118,16 @@ class MainActivity : ComponentActivity() {
         settingsRepo = SettingsRepository(this, engine, metadataRepo)
         dailyMixRepo = com.musicplayer.android.data.DailyMixRepository(this, engine, metadataRepo)
         podcastRepo = com.musicplayer.android.data.PodcastRepository(this, engine, metadataRepo)
+        aiDjController.onSessionChanged = { session ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    settingsRepo.saveQueueSource(
+                        session?.let { com.musicplayer.android.playback.PlaybackSource("ai_dj", it) }
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
         settingsRepo.onCrossfadeChanged = { enabled, seconds ->
             player.setCrossfade(enabled, seconds)
         }
@@ -170,6 +183,7 @@ class MainActivity : ComponentActivity() {
         // Desktop _persist_queue + current_song: persist order + track.
         // Flags resolved per file so mixed queues restore intact.
         player.onQueueChanged = { files ->
+            aiDjController.onQueueChanged(files)
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val podRoot = try {
@@ -597,28 +611,11 @@ class MainActivity : ComponentActivity() {
                                 onPull = { enqueuePull() },
                                 onVolumeChange = { player.setVolume(it) }
                             )
-                            Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen { tracks, sessionId ->
-                                val files = tracks.mapNotNull { track ->
-                                    resolveFileByName(track.file).takeIf { it.exists() }
-                                }
-                                if (files.isEmpty()) {
-                                    false
-                                } else {
-                                    previewPlayer.stop()
-                                    player.playFiles(files, 0)
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                        try {
-                                            settingsRepo.saveQueueSource(
-                                                com.musicplayer.android.playback.PlaybackSource(
-                                                    "ai_dj", sessionId
-                                                )
-                                            )
-                                        } catch (_: Exception) {
-                                        }
-                                    }
-                                    true
-                                }
-                            }
+                            Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
+                                controller = aiDjController,
+                                player = player,
+                                metadata = metadataRepo
+                            )
                         }
                         }
                     }

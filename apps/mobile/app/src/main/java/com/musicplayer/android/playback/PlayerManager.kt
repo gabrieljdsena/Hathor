@@ -64,6 +64,10 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     // Volatile: the crossfade ramp reads it from an IO thread.
     @Volatile private var userVolume: Float = 1f
 
+    // AI DJ voice ducking. Kept separate from userVolume so restoring after a
+    // Vohithe clip never overwrites the user's chosen output level.
+    @Volatile private var duckMultiplier: Float = 1f
+
     // --- Crossfade / gapless state (desktop _out/_ramping/_xfade_gen model) ---
     var crossfadeEnabled: Boolean = false
         private set
@@ -89,6 +93,9 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
 
     /** Fired when the current track changes (persist current_song). */
     var onTrackChanged: ((String) -> Unit)? = null
+
+    /** Fired when an advance runs off the end of the queue. */
+    var onQueueExhausted: (() -> Unit)? = null
 
     private val _queueFlow = MutableStateFlow<List<File>>(emptyList())
     val queueFlow: StateFlow<List<File>> = _queueFlow.asStateFlow()
@@ -130,11 +137,27 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         userVolume = volume.coerceIn(0f, 1f)
         if (!isRamping()) {
             try {
-                player?.setVolume(userVolume, userVolume)
+                val v = effectiveVolume()
+                player?.setVolume(v, v)
             } catch (_: Exception) {
             }
         }
     }
+
+    /** Lower the music while Vohithe speaks; pass false to restore. */
+    fun setDucked(ducked: Boolean, level: Float = 0.18f) {
+        duckMultiplier = if (ducked) level.coerceIn(0.02f, 0.8f) else 1f
+        if (!isRamping()) {
+            try {
+                val v = effectiveVolume()
+                player?.setVolume(v, v)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun effectiveVolume(): Float =
+        (userVolume * duckMultiplier).coerceIn(0f, 1f)
 
     // --- Podcast chapter-skip (desktop chapter_skip + web ChapterSkip) ---
     /** Master switch (desktop chapter_skip); live-applied, no restart needed. */
@@ -522,6 +545,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             _playing.value = false
             _positionMs.value = 0
             stopTicker()
+            onQueueExhausted?.invoke()
             return
         }
         playAt(ni)
@@ -568,7 +592,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     _current.value = file
                     _durationMs.value = try { mp.duration } catch (_: Exception) { 0 }
                     _positionMs.value = 0
-                    mp.setVolume(userVolume, userVolume)
+                    mp.setVolume(effectiveVolume(), effectiveVolume())
                     mp.start()
                     stampStart(0)
                     // Chapter tap-to-play lands here (consumed once, file-gated).
@@ -622,7 +646,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     _current.value = file
                     _durationMs.value = try { mp.duration } catch (_: Exception) { 0 }
                     _positionMs.value = 0
-                    mp.setVolume(userVolume, userVolume)
+                    mp.setVolume(effectiveVolume(), effectiveVolume())
                     stampStart(0)
                     _playing.value = false
                     refreshChapters(file, seekFirst = false)
@@ -775,8 +799,8 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             // Equal-power crossfade (what mixers/DAWs use): cos^2 + sin^2
             // stays 1 so perceived loudness holds steady. A linear ramp
             // dips ~3 dB in the middle.
-            val outGain = crossfadeGain(userVolume, cos(t * halfPi).toFloat())
-            val inGain = crossfadeGain(userVolume, sin(t * halfPi).toFloat())
+            val outGain = crossfadeGain(effectiveVolume(), cos(t * halfPi).toFloat())
+            val inGain = crossfadeGain(effectiveVolume(), sin(t * halfPi).toFloat())
             try {
                 player?.setVolume(outGain, outGain)
                 synchronized(rampLock) { fadePlayer }?.setVolume(inGain, inGain)
@@ -811,7 +835,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             }
             // Ownership flipped: the fade output now carries the song.
             try {
-                incoming.setVolume(userVolume, userVolume)
+                incoming.setVolume(effectiveVolume(), effectiveVolume())
             } catch (_: Exception) {
             }
             releaseQuiet(old)
@@ -839,7 +863,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
         releaseQuiet(incoming)
         try {
-            player?.setVolume(userVolume, userVolume)
+            player?.setVolume(effectiveVolume(), effectiveVolume())
         } catch (_: Exception) {
         }
     }
@@ -860,7 +884,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
         releaseQuiet(incoming)
         try {
-            player?.setVolume(userVolume, userVolume)
+            player?.setVolume(effectiveVolume(), effectiveVolume())
         } catch (_: Exception) {
         }
     }

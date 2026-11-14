@@ -162,6 +162,9 @@ fun HathorTextField(
     modifier: Modifier = Modifier,
     label: String? = null,
     singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+    placeholder: String? = null,
     leadingIcon: @Composable (() -> Unit)? = null,
     trailingIcon: @Composable (() -> Unit)? = null,
     visualTransformation: VisualTransformation = VisualTransformation.None
@@ -173,6 +176,9 @@ fun HathorTextField(
         leadingIcon = leadingIcon,
         trailingIcon = trailingIcon,
         singleLine = singleLine,
+        minLines = minLines,
+        maxLines = maxLines,
+        placeholder = placeholder?.let { { Text(it, color = HathorColors.TextHint) } },
         visualTransformation = visualTransformation,
         shape = RoundedCornerShape(16.dp),
         colors = androidx.compose.material3.TextFieldDefaults.colors(

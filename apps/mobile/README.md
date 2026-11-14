@@ -24,8 +24,9 @@ background, glass surfaces, orange accent.
 - **Playlists & history** — playlist CRUD, played/download history tabs
 - **Web API-backed features** — Discover recommendations and the AI DJ
   (Vohithe) run on the Hathor Web API; the phone renders the feed/sets and
-  plays returned files. No login is required — configure a scoped `hth_` key
-  in Settings.
+  plays returned files. Vohithe's commentary clips are played over ducked
+  music, and the vibe can be typed or spoken (server transcription). No login
+  is required — configure a scoped `hth_` key in Settings.
 - **Server sync** — pulls the library from the Hathor server over the LAN
   (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast

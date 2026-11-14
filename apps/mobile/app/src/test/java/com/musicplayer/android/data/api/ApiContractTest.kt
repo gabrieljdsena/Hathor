@@ -76,7 +76,9 @@ class ApiContractTest {
                   "status": "active",
                   "settings": {
                     "batchSize": 3, "commentaryMode": "auto", "language": "en-US",
-                    "discoveryLevel": 0.4, "duckLevel": 0.2
+                    "discoveryLevel": 0.4, "brief": "warm indie",
+                    "preferredGenres": "", "avoidArtists": "",
+                    "duckLevel": 0.2, "voiceLeadSeconds": 12
                   },
                   "currentBatch": {
                     "id": "batch-1", "number": 1, "status": "ready",
@@ -85,7 +87,9 @@ class ApiContractTest {
                       "album": "Album", "duration": 123
                     }],
                     "introText": "Welcome", "introClipIds": ["clip-1"],
+                    "introDurationSec": 5.5,
                     "outroText": null, "outroClipIds": [],
+                    "outroDurationSec": 0,
                     "shouldComment": true, "mood": "warm", "reason": "energy"
                   },
                   "nextBatch": null,
@@ -100,7 +104,31 @@ class ApiContractTest {
         assertEquals(3, state.settings?.batchSize)
         assertEquals("a.mp3", state.currentBatch?.tracks?.first()?.file)
         assertEquals(listOf("clip-1"), state.currentBatch?.introClipIds)
+        assertEquals(5.5, state.currentBatch?.introDurationSec ?: 0.0, 0.001)
+        assertEquals(12, state.settings?.voiceLeadSeconds)
+        assertEquals("warm indie", state.settings?.brief)
         assertTrue(state.currentBatch?.shouldComment == true)
+        assertNull(state.error)
+    }
+
+    @Test
+    fun `treats JSON nulls as absent instead of the string null`() {
+        val state = AiDjApi.parse(
+            JSONObject(
+                """
+                {
+                  "enabled": true, "configured": true, "sessionId": null,
+                  "status": "stopped", "settings": null,
+                  "currentBatch": null, "nextBatch": null, "error": null
+                }
+                """.trimIndent()
+            )
+        )
+        assertNull(state.sessionId)
+        assertNull(state.settings)
+        assertNull(state.currentBatch)
+        assertNull(state.nextBatch)
+        assertNull(state.error)
     }
 
     @Test

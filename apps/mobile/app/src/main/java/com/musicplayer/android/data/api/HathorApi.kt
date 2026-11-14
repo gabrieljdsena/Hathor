@@ -40,6 +40,11 @@ class HathorApi(
         request("POST", path, body = body)
     }
 
+    suspend fun putJson(path: String, body: JSONObject? = null): JSONObject? {
+        val text = request("PUT", path, body = body)
+        return text.takeIf { it.isNotBlank() }?.let { JSONObject(it) }
+    }
+
     fun clipUrl(clipId: String): String {
         val encodedToken = URLEncoder.encode(token, "UTF-8")
         return "${baseUrl.trimEnd('/')}/api/v1/ai-dj/clips/${URLEncoder.encode(clipId, "UTF-8")}/audio?token=$encodedToken"

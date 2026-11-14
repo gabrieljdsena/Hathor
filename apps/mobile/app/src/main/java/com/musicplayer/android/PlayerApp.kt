@@ -8,6 +8,7 @@ import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.engine.DownloadEngine
+import com.musicplayer.android.playback.AiDjController
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.yausername.ffmpeg.FFmpeg
@@ -38,6 +39,9 @@ class PlayerApp : Application() {
     lateinit var downloadEngine: DownloadEngine
         private set
     lateinit var player: PlayerManager
+        private set
+    // App-scoped so Vohithe keeps talking across navigation/screen rotation.
+    lateinit var aiDjController: AiDjController
         private set
     // Stream previews for download search results (independent of the queue).
     lateinit var previewPlayer: PreviewPlayer
@@ -91,6 +95,9 @@ class PlayerApp : Application() {
         downloadEngine = DownloadEngine(this)
         player = PlayerManager(this) { downloadEngine.outputDir() }
         previewPlayer = PreviewPlayer(this)
+        aiDjController = AiDjController(this, player) { name ->
+            java.io.File(downloadEngine.outputDir(), name)
+        }
         // ID3 writes default to ISO-8859-1, which mangles anything outside
         // Latin-1 (é, –, CJK…). v2.4 UTF-8 is readable everywhere (Android,
         // desktop mutagen) and ASCII-identical, so force it for new frames.
