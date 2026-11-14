@@ -168,15 +168,19 @@ class DownloadEngine(private val context: Context) {
      * Null (unknown/unreadable) allows the file — never nuke on a guess.
      */
     private fun isSuspiciouslyLong(file: File, maxMinutes: Int): Boolean? {
+        val retriever = android.media.MediaMetadataRetriever()
         return try {
-            android.media.MediaMetadataRetriever().use { r ->
-                r.setDataSource(file.absolutePath)
-                val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-                    ?.toLongOrNull() ?: return null
-                ms > maxMinutes * 60_000L
-            }
+            retriever.setDataSource(file.absolutePath)
+            val ms = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: return null
+            ms > maxMinutes * 60_000L
         } catch (_: Exception) {
             null
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
         }
     }
 
