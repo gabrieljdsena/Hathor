@@ -51,7 +51,7 @@ Mobile's key needs `library:read` + `library:write` for sync/Discover, and
 | S6 | Daily Mix | Regenerate button (server-backed) | Generated once per day, no refresh | `ui/DailyMixScreen.kt`, mix persistence | XS |
 | S7 | History | Covers, play button, per-row menu (play next/add/queue), full-tab queue context | Plain rows; no menus; row tap falls back to the general library queue | `ui/HistoryScreen.kt`, `MainActivity.kt` | M |
 | S8 | Download | `.txt` batch import, iTunes trending chips, YouTube video preview, already-owned confirmation, bot-check hint | URL/search, audio-only preview, job list | `ui/DownloadScreen.kt`, `engine/DownloadEngine.kt`, `data/QueueRepository.kt` | M–L |
-| S9 | Lyrics | Romaji toggle, delete lyrics, per-chapter podcast lyrics + per-chapter offsets | Synced/plain, search, edit, ±20 s offset for songs only | `ui/NowPlayingSheet.kt`, `data/LyricsRepository.kt`, `data/db/*` | M |
+| S9 | Lyrics | Full-screen lyrics-first view, synced auto-follow, tap-to-seek, offset, romaji, search/replace, chapter lyrics | Full-screen view with large centered lines, active-line follow + seek, ±20 s offset, romaji, edit/delete, chapter lyrics; search uses the Web API | `ui/LyricsScreen.kt`, `data/LyricsRepository.kt`, `data/db/*` | Done |
 | S10 | Search | Typo-tolerant/fuzzy matching (server) | Plain `contains` over title/artist/album | `ui/AllSongsScreen.kt`, shared util | S |
 | S11 | Volume | Works and is server-synced | Slider persists a number but is **never applied** to playback | `ui/SettingsScreen.kt`, `ui/NowPlayingSheet.kt`, `playback/PlayerManager.kt` | S (bug) |
 | S12 | Runtime server setup | Login/API keys supply URL + token at runtime | Settings → Web API: runtime URL + API key, Test connection (no login) | `ui/SettingsScreen.kt`, `data/api/SyncApi.kt` | Done |
@@ -467,6 +467,7 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **P2.4 — Move to Songs** | `PodcastRepository.moveToSong()` + confirmation dialog; local file/room move with podcast/chapter tombstones. |
 | 2026-11-14 | **P3.1 — fuzzy search** | `FuzzySearch` ported with diacritics/token/Damerau matching; wired into all search boxes; tests added. |
 | 2026-11-14 | **P3.2 — lyrics extras** | Delete, local kana Romaji fallback, chapter selector + chapter-keyed lyrics/offsets with rebased highlighting. |
+| 2026-11-14 | **Lyrics full-screen** | Replaced the nested lyrics drawer with a dedicated full-screen view (web parity): large centered lines, active-line auto-follow, tap-to-seek, timing offset, romaji, search/replace, edit and a compact transport. Search now uses the Web API `/lyrics/search` (same cleaning/lrclib filters as web) with a filtered lrclib fallback and explicit loading state. New lyrics entry point on the player bar. |
 | 2026-11-14 | **P3.3 — download extras** | `.txt` batch import, owned-copy confirmation, audio-only preview kept; parser tests added. |
 | 2026-11-14 | **P4.1 — runtime Web API** | URL/API-key fields persisted in `SyncConfig`, Settings Save/Test, BuildConfig fallback; no login. |
 | 2026-11-14 | **P4.2 — Discover** | Web API feed/filters/preview/dismiss/feedback + on-device download and owned guard. |

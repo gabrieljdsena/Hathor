@@ -36,6 +36,10 @@ class HathorApi(
         return text.takeIf { it.isNotBlank() }?.let { JSONObject(it) }
     }
 
+    suspend fun postArray(path: String, body: JSONObject? = null): JSONArray {
+        return JSONArray(request("POST", path, body = body))
+    }
+
     suspend fun postNoContent(path: String, body: JSONObject? = null) {
         request("POST", path, body = body)
     }

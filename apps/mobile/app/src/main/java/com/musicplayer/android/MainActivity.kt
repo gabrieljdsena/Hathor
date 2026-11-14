@@ -56,6 +56,7 @@ import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.DownloadScreen
 import com.musicplayer.android.ui.HistoryScreen
+import com.musicplayer.android.ui.LyricsScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
@@ -227,6 +228,8 @@ class MainActivity : ComponentActivity() {
                     // link); consumed once by the All Songs view.
                     var artistTarget by remember { mutableStateOf<String?>(null) }
                     var showNowPlaying by remember { mutableStateOf(false) }
+                    var showLyrics by remember { mutableStateOf(false) }
+                    var lyricsReturnToNowPlaying by remember { mutableStateOf(false) }
                     var showFirstRun by remember { mutableStateOf(false) }
                     val syncState by syncRepo.state.collectAsState()
                     val wallpaper by settingsRepo.background.collectAsState()
@@ -277,6 +280,12 @@ class MainActivity : ComponentActivity() {
                     }
                     val currentFile by player.current.collectAsState()
                     val isPlaying by player.playing.collectAsState()
+                    LaunchedEffect(currentFile) {
+                        if (currentFile == null) {
+                            showLyrics = false
+                            showNowPlaying = false
+                        }
+                    }
                     // Metadata edited on the currently playing file is applied
                     // once the player moves on (tag rewrite safety).
                     val pendingEdit by PendingMetadataEdits.edit.collectAsState()
@@ -352,6 +361,13 @@ class MainActivity : ComponentActivity() {
                         selected = dest,
                         onSelect = { dest = it },
                         onBarClick = { if (currentFile != null) showNowPlaying = true },
+                        onOpenLyrics = {
+                            if (currentFile != null) {
+                                lyricsReturnToNowPlaying = false
+                                showNowPlaying = false
+                                showLyrics = true
+                            }
+                        },
                         wallpaper = wallpaper,
                         syncProgress = syncProgress
                     ) {
@@ -626,7 +642,6 @@ class MainActivity : ComponentActivity() {
                         NowPlayingSheet(
                             player = player,
                             metadata = metadataRepo,
-                            lyrics = lyricsRepo,
                             volume = volume,
                             onVolumeChange = {
                                 settingsRepo.setVolume(it)
@@ -634,13 +649,36 @@ class MainActivity : ComponentActivity() {
                             },
                             onVolumeDone = { sheetScope.launch { settingsRepo.persistVolume() } },
                             onDismiss = { showNowPlaying = false },
-                            chaptersProvider = { name -> podcastRepo.chaptersFor(name) },
-                            isPodcastFile = { file ->
-                                try {
-                                    file.canonicalPath.startsWith(PlayerApp.instance.podcastsDir.canonicalPath)
-                                } catch (_: Exception) {
-                                    false
+                            onOpenLyrics = {
+                                if (currentFile != null) {
+                                    lyricsReturnToNowPlaying = true
+                                    showNowPlaying = false
+                                    showLyrics = true
                                 }
+                            }
+                        )
+                    }
+
+                    if (showLyrics && currentFile != null) {
+                        LyricsScreen(
+                            file = currentFile!!,
+                            metadata = metadataRepo,
+                            lyrics = lyricsRepo,
+                            player = player,
+                            chaptersProvider = { name -> podcastRepo.chaptersFor(name) },
+                            isPodcast = try {
+                                currentFile!!.canonicalPath.startsWith(
+                                    PlayerApp.instance.podcastsDir.canonicalPath
+                                )
+                            } catch (_: Exception) {
+                                false
+                            },
+                            onDismiss = {
+                                showLyrics = false
+                                if (lyricsReturnToNowPlaying) {
+                                    showNowPlaying = true
+                                }
+                                lyricsReturnToNowPlaying = false
                             }
                         )
                     }

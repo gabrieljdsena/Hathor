@@ -19,8 +19,9 @@ background, glass surfaces, orange accent.
 - **Podcasts** — separate podcast library with its own storage folder,
   per-episode chapter marks (seek chips, edit, delete) with optional
   chapter auto-skip (Settings), and podcast tags
-- **Lyrics** — lrclib synced/plain fetch with offline Room cache plus a
-  per-song highlight-timing correction (±20 s stepper, persisted)
+- **Lyrics** — full-screen synced/plain lyrics with active-line follow and
+  tap-to-seek, ±20 s timing correction, romaji, search/replace/edit, and
+  per-chapter podcast lyrics; no drawer.
 - **Playlists & history** — playlist CRUD, played/download history tabs
 - **Web API-backed features** — Discover recommendations and the AI DJ
   (Vohithe) run on the Hathor Web API; the phone renders the feed/sets and

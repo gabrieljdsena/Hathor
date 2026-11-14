@@ -2,11 +2,16 @@ package com.musicplayer.android.data
 
 import android.content.Context
 import android.util.Log
+import com.musicplayer.android.data.api.HathorApi
+import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.local.LyricEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -25,6 +30,71 @@ data class LyricSuggestion(
     val plainLyrics: String?,
     val syncedLyrics: String?,
 )
+
+private val BracketQualifier = Regex(
+    """\s*[\(\[].*?(remaster|mix|version|edit|live|feat\.|ft\.).*?[\)\]]""",
+    RegexOption.IGNORE_CASE
+)
+
+/** Web LyricsCleaning.CleanTrackArtist (bracket qualifiers, Artist - Title split). */
+internal fun cleanLyricsQuery(trackName: String, artistName: String): Pair<String, String> {
+    var track = trackName.replace('\uFF1F', '?').replace('\uFF01', '!')
+    track = BracketQualifier.replace(track, "").trim()
+    var artist = artistName
+    val unknown = artist.isBlank() ||
+        artist.trim().lowercase() in setOf("unknown", "unknown artist")
+    if (unknown && track.contains(" - ")) {
+        val parts = track.split(" - ", limit = 2)
+        if (parts.size == 2) {
+            artist = parts[0].trim()
+            track = parts[1].trim()
+        }
+    }
+    return track to artist
+}
+
+/** Web SplitChapterName: chapters are "Title - Artist" (opposite of filenames). */
+internal fun splitLyricsChapter(name: String): Pair<String, String> {
+    val title = BracketQualifier.replace(name, "").trim()
+    val dash = title.indexOf(" - ")
+    if (dash < 0) return title to ""
+    return title.substring(0, dash).trim() to title.substring(dash + 3).trim()
+}
+
+private fun JSONObject.textOrNull(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    val value = optString(name).trim()
+    return value.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+}
+
+/** Mirrors the web server's lrclib result filtering. */
+internal fun parseLyricsSearchHits(arr: JSONArray): List<LyricSuggestion> {
+    val hits = mutableListOf<LyricSuggestion>()
+    val seen = HashSet<String>()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        if (o.optBoolean("instrumental", false)) continue
+        val synced = o.textOrNull("syncedLyrics")
+        val plain = o.textOrNull("plainLyrics")
+        if (synced == null && plain == null) continue
+        val trackName = o.textOrNull("trackName").orEmpty()
+        val artistName = o.textOrNull("artistName").orEmpty()
+        if (!seen.add("$trackName\n$artistName")) continue
+        hits.add(
+            LyricSuggestion(
+                id = o.optLong("id", 0),
+                trackName = trackName,
+                artistName = artistName,
+                albumName = o.textOrNull("albumName").orEmpty(),
+                durationSec = o.optDouble("duration", 0.0).toInt(),
+                plainLyrics = plain,
+                syncedLyrics = synced,
+            )
+        )
+        if (hits.size >= 10) break
+    }
+    return hits
+}
 
 class LyricsRepository(context: Context) {
     private val appCtx = context.applicationContext
@@ -65,8 +135,10 @@ class LyricsRepository(context: Context) {
                 _state.value = LyricsState.Ready(toResult(true, cached))
                 return
             }
-            val fetched = fetchExact(title, artist, durationSec)
-                ?: fetchTrackOnly(title, durationSec)
+            val fetched = withContext(Dispatchers.IO) {
+                fetchExact(title, artist, durationSec)
+                    ?: fetchTrackOnly(title, durationSec)
+            }
             if (fetched != null) {
                 saveRow(fileName, fetched.first, fetched.second)
                 _state.value = LyricsState.Ready(toResult(false, cachedJson(fetched.first, fetched.second)))
@@ -85,29 +157,39 @@ class LyricsRepository(context: Context) {
         album: String,
         durationSec: Int,
     ): List<LyricSuggestion> {
+        // Same source as the web UI: POST /lyrics/search. The server applies
+        // LyricsCleaning + lrclib's instrumental/empty/dedupe filters. Only
+        // fall back to lrclib directly when the Web API is unavailable.
+        if (SyncConfig.isConfigured()) {
+            try {
+                val body = JSONObject()
+                    .put("Track", track)
+                    .put("Artist", artist)
+                val hits = parseLyricsSearchHits(HathorApi().postArray("/lyrics/search", body))
+                Log.i(TAG, "lyrics search via Web API: ${hits.size} hit(s)")
+                return hits
+            } catch (e: Exception) {
+                Log.w(TAG, "server lyrics search failed, falling back to lrclib", e)
+            }
+        }
+        val (cleanTrack, cleanArtist) = cleanLyricsQuery(track, artist)
+        Log.i(TAG, "lyrics search via lrclib fallback")
+        return withContext(Dispatchers.IO) {
+            directLrclibSearch(cleanTrack, cleanArtist, album)
+        }
+    }
+
+    /** Mirrors the web server's lrclib result filtering. */
+    private fun directLrclibSearch(
+        track: String,
+        artist: String,
+        album: String,
+    ): List<LyricSuggestion> {
         return try {
             val q = "track_name=" + URLEncoder.encode(track, "UTF-8") +
                 "&artist_name=" + URLEncoder.encode(artist, "UTF-8") +
                 "&album_name=" + URLEncoder.encode(album, "UTF-8")
-            val arr = org.json.JSONArray(get("https://lrclib.net/api/search?$q"))
-            buildList {
-                for (i in 0 until minOf(arr.length(), 30)) {
-                    val o = arr.getJSONObject(i)
-                    if (o.optBoolean("instrumental", false)) continue
-                    add(
-                        LyricSuggestion(
-                            id = o.optLong("id", 0),
-                            trackName = o.optString("trackName", ""),
-                            artistName = o.optString("artistName", ""),
-                            albumName = o.optString("albumName", ""),
-                            durationSec = o.optDouble("duration", 0.0).toInt(),
-                            plainLyrics = o.optString("plainLyrics").takeIf { it.isNotBlank() },
-                            syncedLyrics = o.optString("syncedLyrics").takeIf { it.isNotBlank() },
-                        ),
-                    )
-                    if (size >= 10) break
-                }
-            }
+            parseLyricsSearchHits(JSONArray(get("https://lrclib.net/api/search?$q")))
         } catch (e: Exception) {
             Log.w(TAG, "lyrics search failed", e)
             emptyList()
@@ -188,17 +270,11 @@ class LyricsRepository(context: Context) {
     private fun cachedJson(synced: String?, plain: String?): String =
         JSONObject().put("synced", synced).put("plain", plain).toString()
 
-    private fun cleanTrackArtist(track: String, artist: String): Pair<String, String> {
-        var t = track.split(" - ").firstOrNull()?.trim().orEmpty()
-        t = t.replace(Regex("(?i)\\s*[\\(\\[].*?(remaster|mix|live|feat|edit|version).*?[\\]\\)]"), "").trim()
-        return t to artist.trim()
-    }
-
     private fun artistUsable(artist: String): Boolean =
         artist.isNotBlank() && !artist.equals("Unknown", ignoreCase = true) && artist != "?"
 
     private suspend fun fetchExact(title: String, artist: String, durationSec: Int): Pair<String?, String?>? {
-        val (track, cleanArtist) = cleanTrackArtist(title, artist)
+        val (track, cleanArtist) = cleanLyricsQuery(title, artist)
         if (track.isBlank() || !artistUsable(cleanArtist)) return null
         return try {
             val q = "track_name=" + URLEncoder.encode(track, "UTF-8") +
@@ -214,7 +290,7 @@ class LyricsRepository(context: Context) {
     }
 
     private suspend fun fetchTrackOnly(title: String, durationSec: Int): Pair<String?, String?>? {
-        val (track, _) = cleanTrackArtist(title, "")
+        val (track, _) = cleanLyricsQuery(title, "")
         if (track.isBlank()) return null
         return try {
             val hits = searchSuggestions(track, "", "", durationSec)

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -103,6 +104,7 @@ fun HathorShell(
     selected: Dest,
     onSelect: (Dest) -> Unit,
     onBarClick: () -> Unit,
+    onOpenLyrics: () -> Unit,
     wallpaper: android.graphics.Bitmap?,
     syncProgress: SyncProgress? = null,
     content: @Composable () -> Unit
@@ -236,13 +238,21 @@ fun HathorShell(
             title = nowPlayingTitle,
             artist = nowPlayingArtist,
             cover = nowPlayingCover,
-            onClick = onBarClick
+            onClick = onBarClick,
+            onOpenLyrics = onOpenLyrics
         )
     }
 }
 
 @Composable
-private fun PlayerBar(player: PlayerManager, title: String?, artist: String?, cover: android.graphics.Bitmap?, onClick: () -> Unit) {
+private fun PlayerBar(
+    player: PlayerManager,
+    title: String?,
+    artist: String?,
+    cover: android.graphics.Bitmap?,
+    onClick: () -> Unit,
+    onOpenLyrics: () -> Unit
+) {
     val playing by player.playing.collectAsState()
     val position by player.positionMs.collectAsState()
     val duration by player.durationMs.collectAsState()
@@ -315,6 +325,9 @@ private fun PlayerBar(player: PlayerManager, title: String?, artist: String?, co
             }
             IconButton(onClick = { player.next() }, enabled = current != null) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", tint = HathorColors.TextPrimary)
+            }
+            IconButton(onClick = onOpenLyrics, enabled = current != null) {
+                Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = HathorColors.TextPrimary)
             }
         }
     }
