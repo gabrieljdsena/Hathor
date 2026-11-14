@@ -34,6 +34,10 @@ jobs:
           # package no longer exists. Install only what Gradle needs.
           packages: "platform-tools platforms;android-34 build-tools;34.0.0"
 
+      - name: Make Gradle wrapper executable
+        working-directory: apps/mobile
+        run: chmod +x ./gradlew
+
       - name: Run unit tests
         working-directory: apps/mobile
         run: ./gradlew testDebugUnitTest --console=plain
