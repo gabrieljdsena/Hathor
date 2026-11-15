@@ -36,7 +36,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -99,7 +98,7 @@ fun DiscoverScreen(
     var query by remember { mutableStateOf("") }
     var sourceFilter by remember { mutableStateOf("all") }
     var busyKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var previewKey by remember { mutableStateOf<String?>(null) }
+    var previewKey by remember { mutableStateOf(preview.info.value?.id) }
     var previewResolvingKey by remember { mutableStateOf<String?>(null) }
     var previewError by remember { mutableStateOf<String?>(null) }
     var confirmItem by remember { mutableStateOf<DiscoverItem?>(null) }
@@ -107,10 +106,6 @@ fun DiscoverScreen(
     val scope = rememberCoroutineScope()
 
     fun key(item: DiscoverItem) = "${item.title}|${item.artist}"
-
-    DisposableEffect(Unit) {
-        onDispose { preview.stop() }
-    }
 
     LaunchedEffect(previewState, previewKey) {
         when (val s = previewState) {
@@ -190,6 +185,12 @@ fun DiscoverScreen(
         previewError = null
         previewKey = k
         previewResolvingKey = k
+        val info = PreviewPlayer.PreviewInfo(
+            id = k,
+            title = item.title,
+            artist = item.artist,
+            artworkUrl = item.artworkUrl
+        )
         scope.launch {
             val query = "${item.title} ${item.artist}".trim()
             var started = false
@@ -206,7 +207,7 @@ fun DiscoverScreen(
                         }
                         if (previewKey != k) return@launch
                         val audioUrl = resolved.audioUrl ?: continue
-                        preview.playResolved(k, audioUrl)
+                        preview.playResolved(k, audioUrl, info)
                         previewResolvingKey = null
                         started = true
                         break
@@ -232,7 +233,8 @@ fun DiscoverScreen(
                         id = hit.id,
                         pageUrl = hit.url,
                         engine = engine,
-                        stateId = k
+                        stateId = k,
+                        info = info
                     )
                     previewResolvingKey = null
                 }

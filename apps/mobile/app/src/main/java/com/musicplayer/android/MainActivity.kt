@@ -212,6 +212,13 @@ class MainActivity : ComponentActivity() {
                 settingsRepo.saveCurrentSong(name)
             }
         }
+        // Starting the main queue always takes over from a Discover preview.
+        player.onPlaybackStarting = {
+            try {
+                previewPlayer.stop()
+            } catch (_: Exception) {
+            }
+        }
         // Desktop idle callback: a drained queue refreshes the visible lists.
         queueRepo.onIdle = {
             CoroutineScope(Dispatchers.IO).launch {
@@ -355,6 +362,7 @@ class MainActivity : ComponentActivity() {
 
                     HathorShell(
                         player = player,
+                        preview = previewPlayer,
                         nowPlayingTitle = nowTitle,
                         nowPlayingArtist = nowArtist,
                         nowPlayingCover = nowCover,

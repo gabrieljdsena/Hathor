@@ -45,11 +45,22 @@ class PreviewPlayer(appContext: Context) {
         data class Failed(val id: String, val message: String) : State
     }
 
+    /** Metadata shown by the cross-tab preview dock. */
+    data class PreviewInfo(
+        val id: String,
+        val title: String,
+        val artist: String,
+        val artworkUrl: String
+    )
+
     private val appCtx = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
+
+    private val _info = MutableStateFlow<PreviewInfo?>(null)
+    val info: StateFlow<PreviewInfo?> = _info.asStateFlow()
 
     private val _positionMs = MutableStateFlow(0L)
     val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
@@ -74,7 +85,8 @@ class PreviewPlayer(appContext: Context) {
         pageUrl: String,
         engine: DownloadEngine,
         onStarted: () -> Unit = {},
-        stateId: String = id
+        stateId: String = id,
+        info: PreviewInfo? = null
     ) {
         when (val cur = _state.value) {
             is State.Playing -> if (cur.id == stateId) {
@@ -88,6 +100,7 @@ class PreviewPlayer(appContext: Context) {
             else -> {}
         }
         stopInternal()
+        _info.value = info
         resolveEngine = engine
         _state.value = State.Loading(stateId)
         task = scope.launch {
@@ -130,7 +143,7 @@ class PreviewPlayer(appContext: Context) {
      * Play a stream URL resolved elsewhere (the Web API preview endpoint).
      * [stateId] is the caller's row/card key; it need not be the video id.
      */
-    fun playResolved(stateId: String, audioUrl: String) {
+    fun playResolved(stateId: String, audioUrl: String, info: PreviewInfo? = null) {
         when (val cur = _state.value) {
             is State.Playing -> if (cur.id == stateId) {
                 stop()
@@ -143,6 +156,7 @@ class PreviewPlayer(appContext: Context) {
             else -> {}
         }
         stopInternal()
+        _info.value = info
         _state.value = State.Loading(stateId)
         startStream(stateId, audioUrl)
     }
@@ -172,6 +186,7 @@ class PreviewPlayer(appContext: Context) {
         task = null
         stopInternal()
         _state.value = State.Idle
+        _info.value = null
     }
 
     fun release() {

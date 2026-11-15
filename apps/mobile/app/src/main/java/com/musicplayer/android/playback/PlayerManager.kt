@@ -97,6 +97,9 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     /** Fired when an advance runs off the end of the queue. */
     var onQueueExhausted: (() -> Unit)? = null
 
+    /** Fired before any main-queue track starts; used to stop previews. */
+    var onPlaybackStarting: (() -> Unit)? = null
+
     private val _queueFlow = MutableStateFlow<List<File>>(emptyList())
     val queueFlow: StateFlow<List<File>> = _queueFlow.asStateFlow()
 
@@ -444,6 +447,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             pause()
         } else {
             settleRampSync()
+            onPlaybackStarting?.invoke()
             try {
                 p.start()
             } catch (e: Exception) {
@@ -565,6 +569,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
 
     private fun playAt(i: Int) {
         val file = queue.getOrNull(i) ?: return
+        onPlaybackStarting?.invoke()
         cancelCrossfade()
         setIndex(i)
         ensureService()
