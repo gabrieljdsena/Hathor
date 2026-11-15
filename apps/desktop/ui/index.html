@@ -646,15 +646,16 @@
             <div class="relative flex items-center">
                 <button type="button" id="resume_spot_dock" style="display: none;"
                     onclick="event.stopPropagation(); if (typeof window.toggleResumeSpot === 'function') window.toggleResumeSpot();"
-                    class="flex-shrink-0 items-center justify-center p-1.5 lg:p-2 rounded-full bg-orange-500/10 text-orange-400/90 hover:text-orange-300 hover:bg-orange-500/20 transition-colors cursor-pointer"
+                    class="relative flex-shrink-0 items-center justify-center p-1.5 lg:p-2 rounded-full bg-orange-500/10 text-orange-400/90 hover:text-orange-300 hover:bg-orange-500/20 transition-colors cursor-pointer"
                     aria-label="Resume from another device" aria-expanded="false"
                     title="Resume from another device">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
                         class="w-5 h-5 flex-shrink-0" aria-hidden="true">
-                        <path fill-rule="evenodd"
-                            d="M4.5 5.653c0-1.427 1.529-2.38 2.831-1.643L20.5 12 7.331 20.007c-1.302.737-2.831-.216-2.831-1.643V5.653Z"
-                            clip-rule="evenodd" />
+                        <circle cx="5" cy="12" r="1.6" />
+                        <circle cx="12" cy="12" r="1.6" />
+                        <circle cx="19" cy="12" r="1.6" />
                     </svg>
+                    <span aria-hidden="true" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400"></span>
                 </button>
                 <div id="resume_spot_bar" style="display: none;"
                     class="absolute bottom-full right-0 mb-3 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-200 text-sm hover:bg-orange-500/20 transition-colors cursor-pointer max-w-[90vw]">
@@ -716,6 +717,7 @@
     <!-- Global audio/preview/AI DJ helpers; survive view changes. -->
     <script src="./js/fuzzy.js"></script>
     <script src="./js/download-batch.js"></script>
+    <script src="./js/chunked-list.js"></script>
     <script src="./js/discover-preview.js"></script>
     <script src="./js/ai-dj-voice.js"></script>
     <script src="./js/ai-dj-recorder.js"></script>
@@ -1393,6 +1395,19 @@
         // Initialize Notyf globally
         const notyf = new Notyf();
 
+        window.showPlayerHubNotice = function (message) {
+            try {
+                notyf.open({
+                    message: String(message || 'Not on this device'),
+                    background: '#f97316',
+                    duration: 5000,
+                    dismissible: true
+                });
+            } catch (e) {
+                console.warn(message);
+            }
+        };
+
         window.addEventListener('resize', function () {
             if (window.innerWidth <= 700) {
                 hideSideBar();
@@ -1497,9 +1512,30 @@
                         window.eval(scripts[i].innerText);
                     }
                 } catch (err) {
-                    main.innerHTML = `<div class='p-4 text-red-500'>Error loading ${page}.html: ${err.message}</div>`;
+                    console.error(`View ${page} failed:`, err);
+                    const message = (err && err.message) ? err.message : String(err);
+                    const safeMessage = String(message).replace(/[&<>"']/g, (ch) => ({
+                        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                    }[ch]));
+                    main.innerHTML = `
+                        <div data-view-error class="max-w-xl mx-auto mt-16 rounded-2xl border border-red-400/20 bg-red-500/[0.06] p-6 text-center">
+                            <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15 text-red-300">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-6 w-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+                            </div>
+                            <h2 class="text-xl font-semibold text-zinc-100">This view could not load</h2>
+                            <p class="mt-2 text-sm text-zinc-400">${safeMessage}</p>
+                            <div class="mt-5 flex items-center justify-center gap-2">
+                                <button id="view-error-retry" type="button" class="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-400 transition-colors cursor-pointer">Retry</button>
+                                <button id="view-error-home" type="button" class="rounded-lg bg-white/5 px-4 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors cursor-pointer">Home</button>
+                            </div>
+                        </div>`;
+                    const retry = document.getElementById('view-error-retry');
+                    const home = document.getElementById('view-error-home');
+                    if (retry) retry.addEventListener('click', () => window.navigateTo(page));
+                    if (home) home.addEventListener('click', () => window.navigateTo('home'));
+                } finally {
+                    main.style.opacity = '1';
                 }
-                main.style.opacity = '1';
 
                 // Home is now a dashboard (cards); list views fetch their own data.
                 // Keep legacy send_song_list for any stale home.html still expecting it.
@@ -1891,11 +1927,28 @@
             window._resumeSpotOpen = false;
             const bar = document.getElementById('resume_spot_bar');
             if (bar) bar.style.display = 'none';
+            const banner = document.getElementById('np_resume_spot_banner');
+            if (banner) {
+                banner.style.display = 'none';
+                banner.classList.add('hidden');
+                banner.classList.remove('flex');
+            }
             const dock = document.getElementById('resume_spot_dock');
             if (dock) {
                 dock.style.display = 'none';
                 dock.setAttribute('aria-expanded', 'false');
             }
+        };
+        window.resumeTimeAgo = function (utc) {
+            if (!utc) return '';
+            const date = new Date(utc);
+            if (isNaN(date.getTime())) return '';
+            const mins = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins}m ago`;
+            const hours = Math.round(mins / 60);
+            if (hours < 24) return `${hours}h ago`;
+            return `${Math.round(hours / 24)}d ago`;
         };
         // Compact in-dock button (web PlayerBar parity), icon-only so the
         // resume text stays hidden until the user opens it. playing_view
@@ -1904,6 +1957,7 @@
         window.paintResumeSpotDock = function (songFile) {
             const dock = document.getElementById('resume_spot_dock');
             const bar = document.getElementById('resume_spot_bar');
+            const banner = document.getElementById('np_resume_spot_banner');
             if (!dock) return;
             const spot = window._resumeSpotCurrent;
             const cur = songFile || (window.current_playing_song
@@ -1915,10 +1969,17 @@
                 (spot.file + spot.updated_utc) === window.resumeSpotDismissed) {
                 window._resumeSpotOpen = false;
                 if (bar) bar.style.display = 'none';
+                if (banner) {
+                    banner.style.display = 'none';
+                    banner.classList.add('hidden');
+                    banner.classList.remove('flex');
+                }
                 dock.style.display = 'none';
                 dock.setAttribute('aria-expanded', 'false');
                 return;
             }
+            const device = spot.device || 'another device';
+            const ago = window.resumeTimeAgo(spot.updated_utc);
             dock.title = (window._resumeSpotLabel || 'Resume from another device') +
                 (spot.updated_utc ? ` (saved ${spot.updated_utc})` : '');
             dock.setAttribute('aria-label', window._resumeSpotLabel || 'Resume from another device');
@@ -1930,6 +1991,31 @@
                     const text = document.getElementById('resume_spot_text');
                     if (text) text.textContent = window._resumeSpotLabel || '';
                 }
+            }
+            if (banner) {
+                const name = spot.title
+                    ? spot.title + ((spot.artist && spot.artist !== 'Unknown')
+                        ? ` - ${spot.artist}` : '')
+                    : spot.file;
+                const deviceEl = document.getElementById('np_resume_spot_device');
+                const detailEl = document.getElementById('np_resume_spot_detail');
+                const resumeBtn = document.getElementById('np_resume_spot_btn');
+                if (deviceEl) {
+                    deviceEl.textContent = `Paused on ${device}${ago ? ' \u00b7 ' + ago : ''}`;
+                }
+                if (detailEl) {
+                    detailEl.textContent = `${name} \u00b7 ${window.fmtResumeTime(spot.position_secs)}`;
+                }
+                if (resumeBtn) {
+                    resumeBtn.textContent = `Resume at ${window.fmtResumeTime(spot.position_secs)}`;
+                    resumeBtn.onclick = (event) => {
+                        event.stopPropagation();
+                        window.resumeSpotPlay();
+                    };
+                }
+                banner.style.display = 'flex';
+                banner.classList.remove('hidden');
+                banner.classList.add('flex');
             }
         };
         window.toggleResumeSpot = function () {
@@ -1958,7 +2044,15 @@
             try {
                 const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
                 if (api && typeof api.resume_spot_play === 'function') {
-                    await api.resume_spot_play(spot.file, spot.position_secs, !!spot.is_podcast);
+                    const ok = await api.resume_spot_play(spot);
+                    if (ok === false) {
+                        window.resumeSpotDismissed = null;
+                        window._resumeSpotCurrent = spot;
+                        if (typeof window.showPlayerHubNotice === 'function') {
+                            window.showPlayerHubNotice('Not on this device: ' + spot.file);
+                        }
+                        window.checkResumeSpot();
+                    }
                 }
             } catch (e) { /* resume must never break the player */ }
         };
@@ -1991,9 +2085,11 @@
                     window._resumeSpotKey = spotKey;
                 }
                 window._resumeSpotCurrent = spot;
+                const device = spot.device || 'another device';
+                const ago = window.resumeTimeAgo(spot.updated_utc);
                 window._resumeSpotLabel =
-                    `Resume ${spotName} at ${window.fmtResumeTime(spot.position_secs)}` +
-                    (spot.device ? ` from ${spot.device}` : '');
+                    `From ${device}` + (ago ? ` \u00b7 ${ago}` : '') +
+                    ` \u2014 ${spotName} at ${window.fmtResumeTime(spot.position_secs)}`;
                 document.getElementById('resume_spot_text').textContent =
                     window._resumeSpotLabel;
                 bar.onclick = window.resumeSpotPlay;
@@ -4420,7 +4516,29 @@
                     </div>
                     <h1 id="np-title" class="mt-3 text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white leading-tight tracking-tight line-clamp-2">Nothing playing</h1>
                     <div id="np-artist" class="mt-2 text-base sm:text-lg text-zinc-400 font-medium truncate max-w-full cursor-pointer hover:text-orange-400 transition-colors">—</div>
-                    <div id="np-album" class="mt-1 text-sm text-zinc-500 truncate max-w-full">—</div>
+                    <div id="np-album" class="mt-1 text-sm text-zinc-500 truncate max-w-full">-</div>
+
+                    <!-- Resume from another device (explicit tap only) -->
+                    <div id="np_resume_spot_banner"
+                        class="hidden w-full mt-5 items-center gap-3 rounded-xl border border-orange-500/25 bg-zinc-900/80 px-3 py-2 text-left">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                            class="w-4 h-4 flex-shrink-0 text-orange-400" aria-hidden="true">
+                            <circle cx="5" cy="12" r="1.6" />
+                            <circle cx="12" cy="12" r="1.6" />
+                            <circle cx="19" cy="12" r="1.6" />
+                        </svg>
+                        <div class="min-w-0 flex-1">
+                            <div id="np_resume_spot_device"
+                                class="text-[11px] font-semibold uppercase tracking-[0.15em] text-orange-300 truncate">
+                                Paused on another device
+                            </div>
+                            <div id="np_resume_spot_detail" class="text-xs text-zinc-400 truncate"></div>
+                        </div>
+                        <button type="button" id="np_resume_spot_btn"
+                            class="flex-shrink-0 rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-orange-400 cursor-pointer">
+                            Resume
+                        </button>
+                    </div>
 
                     <!-- Progress -->
                     <div class="w-full mt-8 flex items-center gap-3">

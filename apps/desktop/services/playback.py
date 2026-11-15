@@ -62,6 +62,7 @@ class PlaybackController:
         self.on_queue_changed = None
         self._track_changed_listeners = []
         self._queue_exhausted_listeners = []
+        self._queue_changed_listeners = []
 
         # --- Podcast chapter-skip state (web parity) ---
         # Cached on every track change so the 0.2s monitor tick never hits
@@ -122,6 +123,10 @@ class PlaybackController:
         if callback and callback not in self._queue_exhausted_listeners:
             self._queue_exhausted_listeners.append(callback)
 
+    def add_queue_changed_listener(self, callback):
+        if callback and callback not in self._queue_changed_listeners:
+            self._queue_changed_listeners.append(callback)
+
     def _notify_queue_changed(self, source):
         callback = getattr(self, 'on_queue_changed', None)
         if callback:
@@ -129,6 +134,11 @@ class PlaybackController:
                 callback(source)
             except Exception as e:
                 print(f" [Python] Queue-change callback error: {e}")
+        for listener in list(getattr(self, '_queue_changed_listeners', [])):
+            try:
+                listener(source)
+            except Exception as e:
+                print(f" [Python] Queue-change listener error: {e}")
 
     def _base_for(self, song):
         """Songs folder vs podcasts folder for a song dict (or current song)."""

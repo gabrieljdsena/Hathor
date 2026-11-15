@@ -15,6 +15,7 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn("./js/discover-preview.js", index)
         self.assertIn("./js/fuzzy.js", index)
         self.assertIn("./js/download-batch.js", index)
+        self.assertIn("./js/chunked-list.js", index)
         self.assertIn("./js/ai-dj-voice.js", index)
         self.assertIn("./js/ai-dj-recorder.js", index)
         self.assertIn("./js/ai-dj-state.js", index)
@@ -24,7 +25,9 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn('id="np-lyrics-search-btn"', index)
         self.assertIn('id="np-romaji-btn"', index)
         self.assertIn('id="np-lyrics-search-panel"', index)
-        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js"):
+        self.assertIn('id="np_resume_spot_banner"', index)
+        self.assertIn("data-view-error", index)
+        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js"):
             self.assertTrue((self.root / "ui" / "js" / name).exists(), name)
         for view in ("discover.html", "ai_dj.html"):
             self.assertTrue((self.root / "ui" / "views" / view).exists(), view)
@@ -47,6 +50,11 @@ class ShellScaffoldingTests(unittest.TestCase):
         playlist_home = (self.root / "ui" / "views" / "playlist_home.html").read_text(encoding="utf-8")
         self.assertIn("clearPlaylistCover", playlist_home)
         self.assertIn('id="av-shuffle-btn"', (self.root / "ui" / "views" / "artist.html").read_text(encoding="utf-8"))
+        for view in ("artists.html", "albums.html"):
+            self.assertIn(
+                "renderChunkedList",
+                (self.root / "ui" / "views" / view).read_text(encoding="utf-8"),
+            )
 
     def test_settings_exposes_web_api_controls(self):
         settings = (self.root / "ui" / "views" / "settings.html").read_text(encoding="utf-8")

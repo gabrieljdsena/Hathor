@@ -87,8 +87,8 @@
                 ? `${visible.length} of ${total} artist${total === 1 ? '' : 's'}`
                 : `${total} artist${total === 1 ? '' : 's'}`;
         }
-        list.innerHTML = '';
         if (visible.length === 0) {
+            list.innerHTML = '';
             const empty = document.createElement('div');
             empty.className = 'py-16 flex flex-col items-center justify-center text-center opacity-70';
             empty.innerHTML = allNames.length === 0
@@ -97,7 +97,7 @@
             list.appendChild(empty);
             return;
         }
-        visible.forEach(name => {
+        window.renderChunkedList(list, visible, (name) => {
             const row = document.createElement('button');
             row.type = 'button';
             row.className = 'group flex items-center gap-4 w-full px-2 py-2.5 rounded-xl text-left hover:bg-white/5 transition-colors duration-200 focus:outline-none cursor-pointer';
@@ -111,8 +111,8 @@
             row.addEventListener('click', () => {
                 if (typeof window.openArtistPage === 'function') window.openArtistPage(name);
             });
-            list.appendChild(row);
-        });
+            return row;
+        }, { chunkSize: 200 });
     };
 
     const search = document.getElementById('artists_txt_search');

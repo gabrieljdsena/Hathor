@@ -361,15 +361,21 @@ class ApiSyncClient:
         return self._request("GET", "/delta", query={"cursor": cursor} if cursor else {})
 
     # -- cross-device resume --------------------------------------------
-    def push_playback(self, device_id, device_label, file, position_secs, is_podcast):
+    def push_playback(self, device_id, device_label, file, position_secs, is_podcast,
+                      queue_files=None, queue_source=None):
         """Upsert this device's paused spot (server keeps one row per device)."""
-        return self._request("POST", "/playback", payload={
+        payload = {
             "deviceId": device_id,
             "deviceLabel": device_label,
             "file": file,
             "positionSec": max(0.0, float(position_secs or 0)),
             "isPodcast": bool(is_podcast),
-        })
+        }
+        if queue_files is not None:
+            payload["queueFiles"] = list(queue_files)[:200]
+        if queue_source is not None:
+            payload["queueSource"] = queue_source
+        return self._request("POST", "/playback", payload=payload)
 
     def get_latest_playback(self, device_id):
         """Newest paused spot from another device (server excludes ours)."""

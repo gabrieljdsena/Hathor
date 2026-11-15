@@ -6,6 +6,7 @@ import json
 import logging
 import platform
 import pygame
+import threading
 import uuid
 import Download
 import settings
@@ -28,6 +29,7 @@ from services.discover import DiscoverService
 from services.ai_dj import AiDjController
 from services.images import normalize_image_data_uri
 from services.telemetry import PlaybackTelemetry
+from services.player_hub import PlayerHub
 
 # ==========================================================================
 # Native Windows window chrome
@@ -180,6 +182,8 @@ class Api:
         self.discover = DiscoverService(self)
         self.ai_dj = AiDjController(self)
         self.telemetry = PlaybackTelemetry(self)
+        self.player_hub = PlayerHub(self)
+        self._volume_publish_timer = None
         self._suppress_preview_stop = False
 
     def _ensure_schema(self):
@@ -362,7 +366,18 @@ class Api:
         return self.playback.chapter_seek(-1)
 
     def play_button(self, current_song=None, opening=False):
-        return self.playback.play_button(current_song, opening)
+        result = self.playback.play_button(current_song, opening)
+        # Track changes publish through the playback listener; an empty
+        # play_button call is the play/pause toggle and needs transport sync.
+        if current_song is None:
+            try:
+                if getattr(self, 'player_hub', None):
+                    threading.Thread(
+                        target=self.player_hub.publish_transport, daemon=True
+                    ).start()
+            except Exception:
+                pass
+        return result
 
     # ==========================
     # Cross-device resume (server playback spots)
@@ -386,10 +401,26 @@ class Api:
                     (getattr(self, 'last_song', None) or {}).get('IsPodcast'))
             from services.api_sync import ApiSyncClient
             client = ApiSyncClient(self.db_path, timeout=8)
+            queue_files = [filename]
+            try:
+                for song in getattr(self.playback, 'next_songs', []) or []:
+                    name = (song or {}).get('File')
+                    if name:
+                        queue_files.append(str(name))
+                    if len(queue_files) >= 200:
+                        break
+            except Exception:
+                pass
+            try:
+                source = self.playback._read_source()
+            except Exception:
+                source = None
             client.push_playback(
                 getattr(self, '_device_id', None),
                 getattr(self, '_device_label', None),
-                filename, position_secs, is_podcast)
+                filename, position_secs, is_podcast,
+                queue_files=queue_files,
+                queue_source=source)
             return True
         except Exception as e:
             print(f" [Python] Resume push skipped: {e}")
@@ -423,6 +454,18 @@ class Api:
                         'is_podcast': is_podcast,
                         'device': raw.get('device') or '',
                         'updated_utc': raw.get('updatedUtc') or '',
+                        'queue_files': [
+                            str(item) for item in (
+                                raw.get('queueFiles')
+                                or raw.get('QueueFiles')
+                                or []
+                            ) if item
+                        ],
+                        'queue_source': (
+                            raw.get('queueSource')
+                            or raw.get('QueueSource')
+                            or None
+                        ),
                     }
                     # Friendly pill text: resolve the local title when we
                     # already have the file (the web does the same lookup).
@@ -449,20 +492,74 @@ class Api:
         self._resume_spot_next_at = time.time() + (10 if spot else 20)
         return spot
 
-    def resume_spot_play(self, file, position_secs, is_podcast=False):
-
-        """Play a synced resume spot at its position. Returns True on success."""
+    def resume_spot_play(self, file_or_spot, position_secs=None, is_podcast=False,
+                         queue_files=None, queue_source=None):
+        """Play a synced resume spot and restore its Up Next snapshot."""
+        if isinstance(file_or_spot, dict):
+            spot = file_or_spot
+            file = spot.get('file')
+            position_secs = spot.get('position_secs')
+            is_podcast = bool(spot.get('is_podcast'))
+            queue_files = spot.get('queue_files')
+            queue_source = spot.get('queue_source')
+        else:
+            file = file_or_spot
         try:
-            table = 'Podcasts' if is_podcast else 'Songs'
-            with sqlite3.connect(self.db_path) as conn:
-                row = conn.execute(
-                    f"SELECT file, title, artist FROM {table} WHERE file = ?", (file,)
-                ).fetchone()
-            if not row:
+            file = os.path.basename(str(file or ''))
+            if not file:
+                return False
+            ordered = []
+            seen = set()
+            for name in [file] + list(queue_files or []):
+                name = os.path.basename(str(name or ''))
+                if not name or name.lower() in seen:
+                    continue
+                seen.add(name.lower())
+                ordered.append((name, name == file))
+                if len(ordered) >= 50:
+                    break
+
+            songs = []
+            current = None
+            for name, is_current in ordered:
+                bases = (
+                    [settings.podcasts_path, settings.path]
+                    if is_podcast else [settings.path, settings.podcasts_path]
+                )
+                resolved = None
+                for base in bases:
+                    path = os.path.join(base, name)
+                    if not os.path.isfile(path):
+                        continue
+                    try:
+                        resolved = self.metadata.get_song_metadata(
+                            path, name, include_cover=is_current)
+                    except Exception:
+                        resolved = {'File': name, 'Title': name, 'Artist': '', 'Duration': 0}
+                    resolved['File'] = name
+                    resolved['IsPodcast'] = (base == settings.podcasts_path)
+                    break
+                if not resolved:
+                    continue
+                if is_current:
+                    current = resolved
+                songs.append(resolved)
+            if current is None:
                 return False  # Not downloaded here: nothing to resume.
-            song = {'File': row[0], 'Title': row[1], 'Artist': row[2],
-                    'IsPodcast': bool(is_podcast)}
-            self.playback.play_button(song)
+
+            source = queue_source if isinstance(queue_source, dict) else None
+            if source:
+                source = {
+                    'type': source.get('type') or source.get('Type'),
+                    'id': source.get('id') if 'id' in source else source.get('Id'),
+                }
+            if not source or not source.get('type'):
+                source = {
+                    'type': 'podcast' if is_podcast else 'all_songs',
+                    'id': None,
+                }
+            self.playback.populate_queue_from_list(current, songs, None, source)
+            self.playback.play_button(current)
             try:
                 position = max(0.0, float(position_secs or 0))
             except (TypeError, ValueError):
@@ -487,7 +584,7 @@ class Api:
     def play_prev(self):
         return self.playback.play_prev()
 
-    def progress_slider_click(self, sec):
+    def progress_slider_click(self, sec, publish=True):
         try:
             self.playback._cancel_crossfade()
         except Exception:
@@ -512,6 +609,15 @@ class Api:
                 self.playback._push_resume_spot()
             except Exception:
                 pass
+        try:
+            if publish and getattr(self, 'player_hub', None):
+                threading.Thread(
+                    target=self.player_hub.publish_seek,
+                    args=(float(sec),),
+                    daemon=True,
+                ).start()
+        except Exception:
+            pass
 
     # ==========================
     # Metadata & Files Wrappers
@@ -1019,7 +1125,7 @@ class Api:
     # ==========================
     # Native Application Logic
     # ==========================
-    def volume_slider(self, volume):
+    def volume_slider(self, volume, publish=True):
         pygame.mixer.music.set_volume(float(volume))
         settings.volume = float(volume)
         try:
@@ -1042,6 +1148,22 @@ class Api:
                 )
             except Exception:
                 pass
+        try:
+            if publish and getattr(self, 'player_hub', None):
+                previous = getattr(self, '_volume_publish_timer', None)
+                if previous is not None:
+                    try:
+                        previous.cancel()
+                    except Exception:
+                        pass
+                timer = threading.Timer(
+                    0.35, self.player_hub.publish_volume, args=(float(volume),)
+                )
+                timer.daemon = True
+                self._volume_publish_timer = timer
+                timer.start()
+        except Exception:
+            pass
 
     def get_current_volume(self):
         try:

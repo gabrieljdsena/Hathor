@@ -1,8 +1,8 @@
-"""Server-side player controls used by the AI DJ session.
+"""Server-side player controls shared by AI DJ and the live player hub.
 
-Desktop owns local playback, but the server queue/source still drives DJ
-batch prefetch and keeps web/other clients coherent. These calls are tiny and
-best-effort; the controller never lets a failed sync stop local music.
+Desktop owns local playback, but the server queue/state still drives DJ
+prefetch, cross-device convergence and web/other clients. These calls are
+tiny and best-effort; callers never let a failed sync stop local music.
 """
 
 from __future__ import annotations
@@ -28,25 +28,58 @@ class PlayerSync:
             raise PlayerSyncError("Web API is not configured.")
         return HathorApi(url, key, timeout=self.timeout)
 
-    def replace_queue(self, current_file, files, session_id):
+    def replace_queue(self, current_file, files, session_id=None, source=None):
         files = [f for f in (files or []) if f]
         if not current_file or not files:
-            raise PlayerSyncError("The DJ queue is empty.")
-        return self._client().put(
-            "/api/v1/player/queue",
+            raise PlayerSyncError("The queue is empty.")
+        if source is None and session_id:
+            source = {"type": "ai_dj", "id": session_id}
+        payload = {
+            "CurrentFile": current_file,
+            "Files": files,
+            "Source": None if source is None else {
+                "Type": source.get("type") or source.get("Type"),
+                "Id": source.get("id") if "id" in source else source.get("Id"),
+            },
+        }
+        return self._client().put("/api/v1/player/queue", payload=payload)
+
+    def play(self, file, is_podcast=False):
+        if not file:
+            raise PlayerSyncError("No track to play.")
+        return self._client().post(
+            "/api/v1/player/play",
             payload={
-                "CurrentFile": current_file,
-                "Files": files,
-                "Source": {"Type": "ai_dj", "Id": session_id},
+                "File": file,
+                "IsPodcast": bool(is_podcast),
+                "InstanceId": uuid.uuid4().hex,
             },
         )
 
-    def play(self, file):
-        if not file:
-            raise PlayerSyncError("No DJ track to play.")
+    def pause(self, file=None, position=None):
+        payload = {}
+        if file:
+            payload["File"] = file
+        if position is not None:
+            payload["PositionSec"] = max(0.0, float(position))
+        return self._client().post("/api/v1/player/pause", payload=payload)
+
+    def resume(self):
+        return self._client().post("/api/v1/player/resume", payload={})
+
+    def prev(self):
+        return self._client().post("/api/v1/player/prev", payload={})
+
+    def seek(self, seconds):
         return self._client().post(
-            "/api/v1/player/play",
-            payload={"File": file, "InstanceId": uuid.uuid4().hex},
+            "/api/v1/player/seek",
+            payload={"Seconds": max(0.0, float(seconds or 0))},
+        )
+
+    def volume(self, volume):
+        return self._client().post(
+            "/api/v1/player/volume",
+            payload={"Volume": max(0.0, min(1.0, float(volume or 0)))},
         )
 
     def next(self, auto=True, expected_file=None):

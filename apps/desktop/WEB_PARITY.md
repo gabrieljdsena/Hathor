@@ -90,7 +90,7 @@ These are working and should be preserved:
 | D17 | **Lyrics search/replace/delete** — explicit Search/Replace panel, chapter save target, delete cached lyrics | `components/LyricsSheet.tsx` | Done | 4 |
 | D18 | **Romaji toggle** | `components/LyricsSheet.tsx` | Done | 4 |
 | D19 | **Playback telemetry** — completion/skip segments for Discover quality | `audio/telemetry.ts`, `POST /player/playback-events` | Done | 4 |
-| D20 | **Live cross-device player hub** — real-time play/pause/next/seek convergence and remote control | `playerHub.ts` | Partial — resume spot only | 5 |
+| D20 | **Live cross-device player hub** — real-time play/pause/next/seek convergence and remote control | `playerHub.ts` | Done | 5 |
 
 ### 2.2 Smaller actions inside existing screens
 
@@ -104,8 +104,8 @@ These are working and should be preserved:
 | D26 | Home Podcasts card | Episode count + play first episode | Done | `ui/views/home.html` | 3 |
 | D27 | Download batch errors | Per-line queued/failed summary | Done | `ui/views/download_songs.html` | 3 |
 | D28 | Metadata "Get Metadata" | Multiple iTunes candidates, pick one | Exists (`search_itunes_metadata_multi`) but verify the picker is reachable everywhere | `ui/modals/edit_song.html` | 3 |
-| D29 | View crash recovery | Route error boundary keeps the shell/player alive | A failing view script can leave an empty `#main` | `ui/index.html` | 5 |
-| D30 | Large-library rendering | Server pages 200 songs / windows 200 names | All songs/artists/albums are rendered at once | `ui/views/*.html`, `ui/index.html` | 5 |
+| D29 | View crash recovery | Route error boundary keeps the shell/player alive | Done | `ui/index.html` | 5 |
+| D30 | Large-library rendering | Server pages 200 songs / windows 200 names | Done — lazy song rows + 200-name chunks | `ui/views/*.html`, `ui/index.html` | 5 |
 
 ### 2.3 Web-only by design
 
@@ -198,7 +198,7 @@ independent of each other.
   - **Done:** `pytest.ini`, `requirements-dev.txt`, `apps/desktop/tests/` and
     `.github/workflows/desktop-tests.yml` (Python 3.12 + `pytest`, Node 20 +
     `npm ci` + Tailwind build). The suite is stdlib-compatible for local runs
-    without pygame/pywebview; 70 Python tests + Discover/voice/fuzzy/batch JS smoke tests pass.
+    without pygame/pywebview; 78 Python tests + Discover/voice/fuzzy/batch/chunk JS smoke tests pass.
 
 ### Phase 1 — Discover
 
@@ -576,7 +576,7 @@ independent of each other.
 
 ### Phase 5 — Cross-device and quality
 
-- [ ] **P5.1 — Live player hub (D20)**
+- [x] **P5.1 — Live player hub (D20)**
   - MVP polling: `GET /player/state` every 2–5 s while the window is open and
     on AI DJ events; compare `queueVersion`/current file/position. Apply remote
     pause/resume/next/seek/volume to local playback only when the referenced
@@ -592,27 +592,43 @@ independent of each other.
     when files exist; desktop controls update the web; no double playback;
     offline/401 never crashes the player.
   - Tests: reconciliation state machine; fake-server polling.
+  - **Done:** `services/player_hub.py` polls 3 s, publishes local queue/play/
+    pause/seek/volume with own-echo suppression, and applies remote transport
+    only when files exist locally. Missing current tracks show a notice.
+    AI DJ remains authoritative and is skipped by the hub.
 
-- [ ] **P5.2 — Resume dock polish**
+- [x] **P5.2 — Resume dock polish**
   - Keep the existing spot push/pull. Align the dock's hide rules, device
     label, position formatting and "explicit tap only" behavior with web
     `ResumeBento`; also show it inside Now Playing.
   - Acceptance: own spot never echoes; resume restores queue/position; dismiss
     stays dismissed for that spot; no auto-play.
+  - **Done:** player-bar dots + device/time-ago menu and a Now Playing banner;
+    spots push `queueFiles`/`queueSource` and resume rebuilds the same local
+    queue at the saved position. Server still excludes this device's own spot;
+    nothing auto-plays.
 
-- [ ] **P5.3 — View crash recovery (D29)**
+- [x] **P5.3 — View crash recovery (D29)**
   - Wrap dynamic view loads/scripts in a try/catch that shows an inline error
     card with Retry/Home instead of leaving `#main` blank; keep the player bar
     and sidebar alive.
   - Acceptance: a thrown view script cannot break playback or navigation.
+  - **Done:** `navigateTo` catches fetch/eval failures, always restores the
+    main opacity, and renders a Retry/Home card in `#main`; the sidebar and
+    player bar stay alive.
 
-- [ ] **P5.4 — Large-library performance (D30)**
+- [x] **P5.4 — Large-library performance (D30)**
   - Render All Songs/playlists/artists/albums incrementally (chunks of ~200
     rows on scroll) or add a virtual window; avoid mounting thousands of rows
     and base64 covers at once. Keep total counts/search semantics unchanged.
   - Acceptance: 5k-song library opens quickly, scrolling is smooth, memory
     stays flat; search/sort still cover the whole library.
   - Tests: manual 5k fixture; JS row-count smoke.
+  - **Done:** song rows/playlists keep the virtual placeholder + lazy row
+    observer (covers mount only near the viewport); artist and album
+    directories use `ui/js/chunked-list.js` (200-name chunks on scroll) while
+    counts/search still cover the full list. JS row-count smoke covers the
+    chunker.
 
 - [ ] **P5.5 — Documentation and packaging**
   - Update `README.md`, `docs/CONFIGURATION.md` (runtime API config + scopes),
@@ -621,6 +637,10 @@ independent of each other.
     `ui/assets/` and new views.
   - Acceptance: fresh checkout + `python main.py` works; frozen build has no
     missing assets; docs match the UI.
+  - **Progress:** README/USAGE/ARCHITECTURE/DEVELOPMENT are current, and
+    `music_player.spec` collects the whole `ui/` tree (including assets and new
+    views). A frozen-build smoke test still needs a pygame/pywebview-capable
+    Windows environment.
 
 ---
 
@@ -725,3 +745,7 @@ Suggested test matrix:
 | 2026-11-15 | **P4.1 — lyrics panel** | Search/Replace panel, Web API candidates + lrclib fallback, preview/save/remove and chapter-aware delete. |
 | 2026-11-15 | **P4.2 — romaji/chapter target** | Raw lyrics by default, on-demand server/local romanization, active-chapter picker and jump banner. |
 | 2026-11-15 | **P4.3 — playback telemetry** | Segment observer, completed/skipped classification, podcast exclusion, close flush and fake-server contract. |
+| 2026-11-15 | **P5.1 — live player hub** | 3 s reconciliation, local publish, remote pause/resume/next/seek/volume, own-echo suppression and missing-file notice. |
+| 2026-11-15 | **P5.2 — resume dock** | Player-bar dots/menu/time-ago, Now Playing banner, queue/source snapshots and full queue restore. |
+| 2026-11-15 | **P5.3 — view recovery** | Dynamic view fetch/eval failures render Retry/Home inline without touching the player shell. |
+| 2026-11-15 | **P5.4 — large libraries** | Lazy song rows stay virtualized; artists/albums render 200-name chunks with full-list search and counts. |

@@ -85,7 +85,9 @@ A separate library for podcasts and other spoken audio, kept fully apart from mu
 
 - Click the mini-player to open the **fullscreen Now Playing** view (large art, full controls, volume).
 - **Keyboard** – `Space` play/pause, `←`/`→` seek ±10 s, `↑`/`↓` volume, media keys work via the OS integration below.
-- **Restart resume** – Hathor remembers the current song *and where it was playing from* (playlist, daily mix, artist, album, recents, podcast). On launch the queue is rebuilt from that context; a customized queue is restored verbatim. Stale contexts fall back gracefully (e.g. yesterday's daily mix → today's mix if the song is still in it, otherwise the general library).
+- **Restart resume** — Hathor remembers the current song *and where it was playing from* (playlist, daily mix, artist, album, recents, podcast). On launch the queue is rebuilt from that context; a customized queue is restored verbatim. Stale contexts fall back gracefully (e.g. yesterday's daily mix → today's mix if the song is still in it, otherwise the general library).
+- **Live cross-device playback** — with the Web API configured, desktop polls every 3 s and converges pause/resume/next/seek/volume with web/other clients. Tracks missing locally are skipped with a “Not on this device” notice. Local AI DJ sessions remain authoritative.
+- **Resume from another device** — the player-bar dots open the foreign paused spot with its device, age, song and saved position; a matching banner appears inside Now Playing. Resuming restores the sender's Up Next queue and position. Nothing auto-plays, and a resumed spot stays dismissed for that device snapshot.
 
 ## Playlists
 

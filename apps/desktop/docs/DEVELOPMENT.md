@@ -22,7 +22,8 @@ services/
   downloads.py        DownloadManager — bounded download pool, job log, retries
   discover.py         DiscoverService — feed, preview resolution, owned guard, local downloads
   ai_dj.py            AiDjController — Vohithe session, batches, voice, boundary handoff
-  player_sync.py      Server player queue/play/next bridge used by AI DJ
+  player_sync.py      Server player queue/play/pause/seek/volume bridge
+  player_hub.py       Cross-device polling reconciliation and local publish
   telemetry.py        Playback segment observer → /player/playback-events
   api_config.py       Runtime Web API URL/key (SQLite + .env fallback)
   hathor_api.py       Shared authenticated HTTP client
@@ -34,6 +35,7 @@ ui/
   views/*.html        View fragments (home dashboard, all_songs, daily_mix, discover, ai_dj, podcasts, artist, album, playlists, download, history, settings)
   js/discover-preview.js  Global Discover preview queue/dock
   js/fuzzy.js         Shared typo-tolerant search matcher
+  js/chunked-list.js  200-row incremental list renderer for large directories
   js/ai-dj-*.js       Global Vohithe voice bus, vibe recorder, shell state
   assets/             Vohithe portrait and bundled UI images
   modals/*.html       Modal fragments (add/edit playlist, edit song)
