@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -33,7 +32,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,6 +60,7 @@ import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HeaderIconTile
+import com.musicplayer.android.ui.theme.ModernSlider
 import com.musicplayer.android.ui.theme.hathorGlass
 import com.musicplayer.android.util.FuzzySearch
 import kotlinx.coroutines.Dispatchers
@@ -424,11 +423,10 @@ private fun DiscoverPreviewBar(
             }
         }
         if (playing && durationMs > 0) {
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(3.dp),
-                color = HathorColors.Accent,
-                trackColor = Color.White.copy(alpha = 0.08f)
+            ModernSlider(
+                value = fraction,
+                onValueChange = { preview.seekToFraction(it) },
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
             )
         }
     }

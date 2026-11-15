@@ -147,6 +147,24 @@ class PreviewPlayer(appContext: Context) {
         startStream(stateId, audioUrl)
     }
 
+    /** Seek the active preview to a fraction of its duration (0..1). */
+    fun seekToFraction(fraction: Float) {
+        val exo = player ?: return
+        val dur = try {
+            exo.duration
+        } catch (_: Exception) {
+            0L
+        }
+        if (dur <= 0) return
+        val target = (fraction.coerceIn(0f, 1f) * dur).toLong()
+        try {
+            exo.seekTo(target)
+            _positionMs.value = target
+            Log.i(TAG, "preview seek ${target}ms / ${dur}ms")
+        } catch (_: Exception) {
+        }
+    }
+
     fun stop() {
         readyWatchdog?.cancel()
         readyWatchdog = null
