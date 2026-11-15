@@ -406,6 +406,14 @@ class LyricsService:
                         "INSERT INTO Lyrics (song_file, lyrics, offset_ms) VALUES (?, ?, 0)",
                         (cache_key, lyrics_json)
                     )
+                try:
+                    conn.execute(
+                        "DELETE FROM Sync_Deletions "
+                        "WHERE lower(table_name) = 'lyrics' AND row_key = ?",
+                        (cache_key,),
+                    )
+                except sqlite3.Error:
+                    pass
                 conn.commit()
             finally:
                 conn.close()
@@ -442,6 +450,14 @@ class LyricsService:
             conn = sqlite3.connect(self.api.db_path)
             try:
                 cur = conn.execute("DELETE FROM Lyrics WHERE song_file = ?", (cache_key,))
+                if cur.rowcount > 0:
+                    try:
+                        conn.execute(
+                            "INSERT INTO Sync_Deletions (table_name, row_key) VALUES ('lyrics', ?)",
+                            (cache_key,),
+                        )
+                    except sqlite3.Error:
+                        pass
                 conn.commit()
                 return cur.rowcount > 0
             finally:

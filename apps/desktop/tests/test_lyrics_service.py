@@ -106,6 +106,10 @@ class LyricsServiceTests(unittest.TestCase):
                 "CREATE TABLE Lyrics (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "song_file TEXT, lyrics TEXT, offset_ms INTEGER DEFAULT 0)"
             )
+            conn.execute(
+                "CREATE TABLE Sync_Deletions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "table_name TEXT, row_key TEXT)"
+            )
             conn.commit()
         conn.close()
         self.assertTrue(
@@ -120,6 +124,17 @@ class LyricsServiceTests(unittest.TestCase):
         self.assertTrue(self.service.delete_lyrics_for_current(2))
         with sqlite3.connect(self.api.db_path) as conn:
             self.assertIsNone(conn.execute("SELECT 1 FROM Lyrics").fetchone())
+            tombstone = conn.execute(
+                "SELECT table_name, row_key FROM Sync_Deletions"
+            ).fetchone()
+        conn.close()
+        self.assertEqual(tombstone, ("lyrics", "song.mp3::chapter:2"))
+
+        self.assertTrue(
+            self.service.save_lyrics_for_current("[00:02.00] again", "again", 2))
+        with sqlite3.connect(self.api.db_path) as conn:
+            self.assertIsNone(
+                conn.execute("SELECT 1 FROM Sync_Deletions").fetchone())
         conn.close()
 
     def test_missing_chapter_target_is_rejected(self):
@@ -128,6 +143,10 @@ class LyricsServiceTests(unittest.TestCase):
             conn.execute(
                 "CREATE TABLE Lyrics (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "song_file TEXT, lyrics TEXT, offset_ms INTEGER DEFAULT 0)"
+            )
+            conn.execute(
+                "CREATE TABLE Sync_Deletions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "table_name TEXT, row_key TEXT)"
             )
             conn.commit()
         conn.close()

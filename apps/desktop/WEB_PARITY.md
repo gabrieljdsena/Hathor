@@ -542,7 +542,8 @@ independent of each other.
     prefill, Web API `/lyrics/search` with lrclib fallback, normalized
     candidates (instrumental/empty/duplicates filtered), preview, save/replace,
     remove-saved, and chapter-aware delete. Candidate cards show
-    track/artist/album/duration and synced/plain availability.
+    track/artist/album/duration and synced/plain availability. Saves clear
+    stale lyrics tombstones; deletes record one for sync.
 
 - [x] **P4.2 — Romaji toggle and chapter save target (D18)**
   - Stop romanizing unconditionally in `_lyrics_payload`; add a view toggle

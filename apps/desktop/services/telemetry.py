@@ -60,6 +60,8 @@ class PlaybackTelemetry:
             self._close_active()
             if not file or is_podcast:
                 return
+            if not getattr(self.api, 'playing', False):
+                return
             with self._lock:
                 self._active = {
                     'id': uuid.uuid4().hex,

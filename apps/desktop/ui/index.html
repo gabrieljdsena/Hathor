@@ -2603,8 +2603,11 @@
         window.toggleLyricsRomaji = async function () {
             window.lyricsRomaji = !window.lyricsRomaji;
             window.paintLyricsRomajiButton();
-            if (window.lyricsRomaji) await window.romanizeCurrentLyrics();
             window.applyLyricsDisplay();
+            if (window.lyricsRomaji) {
+                await window.romanizeCurrentLyrics();
+                window.applyLyricsDisplay();
+            }
         };
 
         window.splitLyricsChapterName = function (name) {
@@ -2846,7 +2849,10 @@
             const chapterId = chapter ? Number(chapter.id) : null;
             try {
                 const removed = await window.pywebview.api.delete_lyrics(chapterId);
-                window._lyricsPanelNotice(removed ? 'Saved lyrics removed.' : 'No saved lyrics for that target.');
+                if (!removed) {
+                    window._lyricsPanelNotice('No saved lyrics for that target.');
+                    return;
+                }
                 window.closeLyricsSearchPanel();
                 await window.fetchLyricsForCurrentSong(window.current_playing_song);
             } catch (e) {
