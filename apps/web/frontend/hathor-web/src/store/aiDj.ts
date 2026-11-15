@@ -66,6 +66,13 @@ export const useAiDj = create<AiDjStore>((set, get) => ({
       .catch(() => {})
   },
 
-  setVoicePlaying: (playing) => set({ voicePlaying: playing }),
-  setWaiting: (waiting) => set({ waiting }),
+  setVoicePlaying: (playing) => {
+    if (get().voicePlaying !== playing) set({ voicePlaying: playing })
+  },
+  setWaiting: (waiting) => {
+    // The player-store subscription re-runs tryResumeHeldDj on every AiDj
+    // update. Setting the same value still notifies subscribers in Zustand,
+    // which made a missing DJ transition recurse until the stack overflowed.
+    if (get().waiting !== waiting) set({ waiting })
+  },
 }))

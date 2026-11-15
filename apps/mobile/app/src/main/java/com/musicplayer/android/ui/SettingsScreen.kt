@@ -16,12 +16,13 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,12 +35,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
-import com.musicplayer.android.data.remote.PullWorker
+import com.musicplayer.android.data.api.HathorApi
+import com.musicplayer.android.data.api.SyncConfig
+import com.musicplayer.android.data.remote.RemoteSync
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
+import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HeaderIconTile
 import com.musicplayer.android.ui.theme.ModernSlider
 import com.musicplayer.android.ui.theme.hathorGlass
@@ -48,8 +53,7 @@ import kotlinx.coroutines.launch
 /**
  * Settings destination: everything in one place (desktop settings view +
  * the remote/local sync actions, which live here on desktop too — no
- * separate sync screen). Volume also lives on the NowPlaying sheet as the
- * mobile adaptation; both drive the same stream.
+ * separate sync screen). Playback volume lives on the Now Playing sheet.
  */
 @Composable
 fun SettingsScreen(
@@ -58,7 +62,6 @@ fun SettingsScreen(
     podcasts: com.musicplayer.android.data.PodcastRepository,
     onPull: () -> Unit
 ) {
-    val volume by settings.volume.collectAsState()
     val limit by settings.limit.collectAsState()
     val syncState by sync.state.collectAsState()
     var rescanResult by remember { mutableStateOf<String?>(null) }
@@ -68,8 +71,12 @@ fun SettingsScreen(
     var podFolderResult by remember { mutableStateOf<String?>(null) }
     var podFolderPath by remember { mutableStateOf(settings.podcastsFolder()) }
     var busy by remember { mutableStateOf(false) }
+    var apiUrl by remember { mutableStateOf(SyncConfig.baseUrl()) }
+    var apiToken by remember { mutableStateOf(SyncConfig.token()) }
+    var apiMessage by remember { mutableStateOf<String?>(null) }
+    var testingApi by remember { mutableStateOf(false) }
     // Background pull status (first-run dialog and this button share one worker).
-    var pullStatus by remember { mutableStateOf<String?>(null) }
+    var pullProgress by remember { mutableStateOf<SyncProgress?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val prefs = remember {
@@ -83,7 +90,7 @@ fun SettingsScreen(
         folderPath = settings.musicFolder()
         // Poll the pull worker; the dialog/screen never block on downloads.
         while (true) {
-            pullStatus = queryPullStatus(context)
+            pullProgress = querySyncProgress(context)
             kotlinx.coroutines.delay(2000)
         }
     }
@@ -122,6 +129,62 @@ fun SettingsScreen(
             }
         }
 
+        // ---- Web API connection (runtime; no account/login on mobile) ----
+        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel(Icons.Filled.Sync, "Web API")
+            Text(
+                "The mobile app talks to your self-hosted Hathor Web API. No login is needed — use a scoped hth_ API key.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
+            HathorTextField(
+                value = apiUrl,
+                onValueChange = { apiUrl = it },
+                label = "Server URL (http://host:5051)",
+                modifier = Modifier.fillMaxWidth()
+            )
+            HathorTextField(
+                value = apiToken,
+                onValueChange = { apiToken = it },
+                label = "API key (hth_…)",
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        SyncConfig.save(apiUrl, apiToken)
+                        apiUrl = SyncConfig.baseUrl()
+                        apiToken = SyncConfig.token()
+                        apiMessage = "Saved. Pull/push and Discover/AI DJ use this server."
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HathorColors.Accent,
+                        contentColor = Color.White
+                    )
+                ) { Text("Save") }
+                OutlinedButton(
+                    onClick = {
+                        testingApi = true
+                        apiMessage = null
+                        scope.launch {
+                            apiMessage = HathorApi.testConnection(apiUrl, apiToken)
+                            testingApi = false
+                        }
+                    },
+                    enabled = !testingApi,
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (testingApi) "Testing…" else "Test") }
+            }
+            apiMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint) }
+            Text(
+                "Scopes: library:read + library:write for sync/Discover; add player:read + player:control for AI DJ.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
+        }
+
         // ---- Sync server (desktop settings view owns these actions) ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel(Icons.Filled.Sync, "Sync server")
@@ -139,7 +202,28 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
                 ) { Text("Push") }
             }
-            pullStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            pullProgress?.let { progress ->
+                if (progress.running) {
+                    SyncProgressBar(progress)
+                } else {
+                    Text(progress.text, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            TextButton(
+                onClick = {
+                    RemoteSync.resetCursor(context)
+                    onPull()
+                    pullProgress = SyncProgress(
+                        "Full resync queued — retrying missing files…",
+                        running = true
+                    )
+                }
+            ) { Text("Full resync files") }
+            Text(
+                "Replays the server delta and retries any files missing on this device. Downloaded music is kept.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -166,17 +250,6 @@ fun SettingsScreen(
                 is SyncRepository.SyncState.Error -> Text("FAILED: ${s.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 else -> {}
             }
-        }
-
-        // ---- Volume ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SectionLabel(Icons.Filled.VolumeUp, "Volume (${(volume * 100).toInt()}%)")
-            ModernSlider(
-                value = volume,
-                onValueChange = { settings.setVolume(it) },
-                onValueChangeFinished = { scope.launch { settings.persistVolume() } },
-                modifier = Modifier.fillMaxWidth()
-            )
         }
 
         // ---- Crossfade (desktop Settings toggle + 1-12s, default off / 5s) ----
@@ -321,33 +394,5 @@ private fun SectionLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, 
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(icon, contentDescription = null, tint = HathorColors.AccentBright)
         Text(text, style = MaterialTheme.typography.titleSmall)
-    }
-}
-
-/** Latest pull-worker state for the Settings section (null when never run). */
-private fun queryPullStatus(context: android.content.Context): String? {
-    return try {
-        val infos = androidx.work.WorkManager.getInstance(context)
-            .getWorkInfosForUniqueWork(PullWorker.UNIQUE_NAME).get()
-        val info = infos.firstOrNull() ?: return null
-        when (info.state) {
-            androidx.work.WorkInfo.State.ENQUEUED -> "Pull queued — starts when online."
-            androidx.work.WorkInfo.State.RUNNING -> {
-                val step = info.progress.getString("step")
-                val total = info.progress.getInt("total", 0)
-                val done = info.progress.getInt("done", 0)
-                if (total > 0) "Syncing in background… $step ($done/$total)"
-                else step?.takeIf { it.isNotBlank() }?.let { "Syncing in background… $it" }
-                    ?: "Syncing in background…"
-            }
-            androidx.work.WorkInfo.State.SUCCEEDED ->
-                info.outputData.getString("summary") ?: "Pull finished."
-            androidx.work.WorkInfo.State.FAILED ->
-                "Background pull failed: ${info.outputData.getString("error") ?: "unknown"}"
-            androidx.work.WorkInfo.State.CANCELLED -> "Background pull cancelled."
-            else -> null
-        }
-    } catch (_: Exception) {
-        null
     }
 }

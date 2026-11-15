@@ -20,10 +20,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -32,6 +37,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +60,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.playback.PlayerManager
+import com.musicplayer.android.playback.PreviewPlayer
+import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.SyncProgressBar
 import com.musicplayer.android.ui.theme.HathorColors
+import com.musicplayer.android.ui.theme.ModernSlider
 
 /**
  * Destinations mirror the desktop sidebar (Home, Download, Playlists,
@@ -66,15 +77,19 @@ enum class Dest(val label: String, val icon: ImageVector, val inRail: Boolean = 
     Library("Home", Icons.Filled.Home),
     AllSongs("All Songs", Icons.Filled.MusicNote, inRail = false),
     DailyMix("Daily Mix", Icons.Filled.Refresh, inRail = false),
+    Artists("Artists", Icons.Filled.Person, inRail = false),
+    Albums("Albums", Icons.Filled.Album, inRail = false),
+    Discover("Discover", Icons.Filled.Explore),
     Download("Download", Icons.Filled.Download),
     Podcasts("Podcasts", Icons.Filled.Mic),
     Playlists("Playlists", Icons.Filled.List),
     History("History", Icons.Filled.History),
+    AiDj("AI DJ", Icons.Filled.AutoAwesome),
     Settings("Settings", Icons.Filled.Settings);
 
     /** Rail highlight mapping (desktop: all_songs/daily_mix -> home). */
     fun railActive(): Dest = when (this) {
-        AllSongs, DailyMix -> Library
+        AllSongs, DailyMix, Artists, Albums -> Library
         else -> this
     }
 }
@@ -87,13 +102,16 @@ enum class Dest(val label: String, val icon: ImageVector, val inRail: Boolean = 
 @Composable
 fun HathorShell(
     player: PlayerManager,
+    preview: PreviewPlayer,
     nowPlayingTitle: String?,
     nowPlayingArtist: String?,
     nowPlayingCover: android.graphics.Bitmap?,
     selected: Dest,
     onSelect: (Dest) -> Unit,
     onBarClick: () -> Unit,
+    onOpenLyrics: () -> Unit,
     wallpaper: android.graphics.Bitmap?,
+    syncProgress: SyncProgress? = null,
     content: @Composable () -> Unit
 ) {
     var expanded by remember { mutableStateOf(true) }
@@ -209,8 +227,18 @@ fun HathorShell(
                             )
                         )
                 )
-                Box(modifier = Modifier.fillMaxSize()) { content() }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (syncProgress?.running == true) {
+                            SyncProgressBar(syncProgress)
+                        }
+                        Box(modifier = Modifier.weight(1f)) { content() }
+                    }
+                }
             }
+        }
+        if (selected != Dest.Discover) {
+            PreviewDock(preview)
         }
         // ---- Bottom player bar (desktop fixed bottom bar) ----
         PlayerBar(
@@ -218,13 +246,82 @@ fun HathorShell(
             title = nowPlayingTitle,
             artist = nowPlayingArtist,
             cover = nowPlayingCover,
-            onClick = onBarClick
+            onClick = onBarClick,
+            onOpenLyrics = onOpenLyrics
         )
     }
 }
 
 @Composable
-private fun PlayerBar(player: PlayerManager, title: String?, artist: String?, cover: android.graphics.Bitmap?, onClick: () -> Unit) {
+private fun PreviewDock(preview: PreviewPlayer) {
+    val state by preview.state.collectAsState()
+    val info by preview.info.collectAsState()
+    val position by preview.positionMs.collectAsState()
+    val duration by preview.durationMs.collectAsState()
+    val playing = state is PreviewPlayer.State.Playing
+    val loading = state is PreviewPlayer.State.Loading
+    val current = info ?: return
+    if (!playing && !loading) return
+    val fraction = if (duration > 0) {
+        (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().background(Color(0x66000000)).padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(50)).background(HathorColors.AccentBright))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    current.title.ifBlank { "Discover preview" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = HathorColors.TextPrimary,
+                    maxLines = 1
+                )
+                Text(
+                    listOfNotNull(
+                        current.artist.takeIf { it.isNotBlank() },
+                        "Discover preview"
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HathorColors.TextHint,
+                    maxLines = 1
+                )
+            }
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = HathorColors.AccentBright
+                )
+            }
+            IconButton(onClick = { preview.stop() }) {
+                Icon(Icons.Filled.Stop, contentDescription = "Stop preview", tint = HathorColors.TextBody)
+            }
+        }
+        if (playing && duration > 0) {
+            ModernSlider(
+                value = fraction,
+                onValueChange = { preview.seekToFraction(it) },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerBar(
+    player: PlayerManager,
+    title: String?,
+    artist: String?,
+    cover: android.graphics.Bitmap?,
+    onClick: () -> Unit,
+    onOpenLyrics: () -> Unit
+) {
     val playing by player.playing.collectAsState()
     val position by player.positionMs.collectAsState()
     val duration by player.durationMs.collectAsState()
@@ -297,6 +394,9 @@ private fun PlayerBar(player: PlayerManager, title: String?, artist: String?, co
             }
             IconButton(onClick = { player.next() }, enabled = current != null) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", tint = HathorColors.TextPrimary)
+            }
+            IconButton(onClick = onOpenLyrics, enabled = current != null) {
+                Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = HathorColors.TextPrimary)
             }
         }
     }

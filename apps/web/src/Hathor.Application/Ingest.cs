@@ -10,7 +10,8 @@ namespace Hathor.Application.Ingest;
 // (Infrastructure singleton pump); handlers only validate + delegate.
 
 public sealed record SubmitDownloadCommand(
-    Guid UserId, string? Url, string? Title, string? Artist, bool IsPodcast)
+    Guid UserId, string? Url, string? Title, string? Artist, bool IsPodcast,
+    string? TargetFile = null)
     : IRequest<string>;
 
 public sealed class SubmitDownloadValidator : AbstractValidator<SubmitDownloadCommand>
@@ -31,7 +32,7 @@ public sealed class SubmitDownloadHandler(IDownloadQueue queue)
             (cmd.Url ?? "").Trim(),
             (cmd.Title ?? "").Trim(),
             string.IsNullOrWhiteSpace(cmd.Artist) ? null : cmd.Artist.Trim(),
-            cmd.IsPodcast, ct);
+            cmd.IsPodcast, ct, cmd.TargetFile);
 }
 
 public sealed record BatchDownloadCommand(Guid UserId, IReadOnlyList<string> Lines, bool IsPodcast)

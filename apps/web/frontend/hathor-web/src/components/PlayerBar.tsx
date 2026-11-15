@@ -379,7 +379,7 @@ export default function PlayerBar({
             {song && song.artist !== 'Unknown' ? (
               <button
                 onClick={(e) => goArtist(e, song.artist)}
-                className="text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
+                className="block max-w-full min-w-0 text-left text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
               >
                 {song.artist}
               </button>
@@ -448,7 +448,7 @@ export default function PlayerBar({
           {song && song.artist !== 'Unknown' ? (
             <button
               onClick={(e) => goArtist(e, song.artist)}
-              className="text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
+              className="block max-w-full min-w-0 text-left text-xs text-zinc-500 truncate hover:text-orange-400 transition-colors cursor-pointer"
             >
               {song.artist}
             </button>

@@ -45,15 +45,33 @@ class PreviewPlayer(appContext: Context) {
         data class Failed(val id: String, val message: String) : State
     }
 
+    /** Metadata shown by the cross-tab preview dock. */
+    data class PreviewInfo(
+        val id: String,
+        val title: String,
+        val artist: String,
+        val artworkUrl: String
+    )
+
     private val appCtx = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    private val _info = MutableStateFlow<PreviewInfo?>(null)
+    val info: StateFlow<PreviewInfo?> = _info.asStateFlow()
+
+    private val _positionMs = MutableStateFlow(0L)
+    val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
+
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
+
     private var player: ExoPlayer? = null
     private var task: Job? = null
     private var readyWatchdog: Job? = null
+    private var progressTicker: Job? = null
     private var resolveEngine: DownloadEngine? = null
     private var resolveProcessId: String? = null
 
@@ -62,21 +80,29 @@ class PreviewPlayer(appContext: Context) {
      * switch. [onStarted] fires when audio actually starts (used to pause
      * the main player so both never play at once).
      */
-    fun toggle(id: String, pageUrl: String, engine: DownloadEngine, onStarted: () -> Unit = {}) {
+    fun toggle(
+        id: String,
+        pageUrl: String,
+        engine: DownloadEngine,
+        onStarted: () -> Unit = {},
+        stateId: String = id,
+        info: PreviewInfo? = null
+    ) {
         when (val cur = _state.value) {
-            is State.Playing -> if (cur.id == id) {
+            is State.Playing -> if (cur.id == stateId) {
                 stop()
                 return
             }
-            is State.Loading -> if (cur.id == id) {
+            is State.Loading -> if (cur.id == stateId) {
                 stop()
                 return
             }
             else -> {}
         }
         stopInternal()
+        _info.value = info
         resolveEngine = engine
-        _state.value = State.Loading(id)
+        _state.value = State.Loading(stateId)
         task = scope.launch {
             val pid = "preview-$id-${System.currentTimeMillis()}"
             resolveProcessId = pid
@@ -100,16 +126,56 @@ class PreviewPlayer(appContext: Context) {
             if (!isActive) return@launch
             res.fold(
                 onSuccess = { stream ->
-                    startStream(id, stream)
+                    startStream(stateId, stream)
                     onStarted()
                 },
                 onFailure = { e ->
                     // Cancelled by stop()/switch: stay silent, state is Idle.
                     if (e !is CancellationException) {
-                        _state.value = State.Failed(id, e.message ?: e.toString())
+                        _state.value = State.Failed(stateId, e.message ?: e.toString())
                     }
                 }
             )
+        }
+    }
+
+    /**
+     * Play a stream URL resolved elsewhere (the Web API preview endpoint).
+     * [stateId] is the caller's row/card key; it need not be the video id.
+     */
+    fun playResolved(stateId: String, audioUrl: String, info: PreviewInfo? = null) {
+        when (val cur = _state.value) {
+            is State.Playing -> if (cur.id == stateId) {
+                stop()
+                return
+            }
+            is State.Loading -> if (cur.id == stateId) {
+                stop()
+                return
+            }
+            else -> {}
+        }
+        stopInternal()
+        _info.value = info
+        _state.value = State.Loading(stateId)
+        startStream(stateId, audioUrl)
+    }
+
+    /** Seek the active preview to a fraction of its duration (0..1). */
+    fun seekToFraction(fraction: Float) {
+        val exo = player ?: return
+        val dur = try {
+            exo.duration
+        } catch (_: Exception) {
+            0L
+        }
+        if (dur <= 0) return
+        val target = (fraction.coerceIn(0f, 1f) * dur).toLong()
+        try {
+            exo.seekTo(target)
+            _positionMs.value = target
+            Log.i(TAG, "preview seek ${target}ms / ${dur}ms")
+        } catch (_: Exception) {
         }
     }
 
@@ -120,6 +186,7 @@ class PreviewPlayer(appContext: Context) {
         task = null
         stopInternal()
         _state.value = State.Idle
+        _info.value = null
     }
 
     fun release() {
@@ -160,6 +227,9 @@ class PreviewPlayer(appContext: Context) {
             exo.setMediaItem(MediaItem.fromUri(streamUrl))
             exo.prepare()
             exo.play()
+            _positionMs.value = 0L
+            _durationMs.value = 0L
+            startProgressTicker()
             // Watchdog: a stream that never becomes ready (and never errors)
             // must not spin the row forever.
             readyWatchdog?.cancel()
@@ -195,6 +265,7 @@ class PreviewPlayer(appContext: Context) {
     }
 
     private fun stopPlayer() {
+        stopProgressTicker()
         val exo = player
         player = null
         if (exo == null) return
@@ -206,6 +277,32 @@ class PreviewPlayer(appContext: Context) {
             exo.release()
         } catch (_: Exception) {
         }
+    }
+
+    private fun startProgressTicker() {
+        stopProgressTicker()
+        progressTicker = scope.launch {
+            while (isActive) {
+                val exo = player ?: break
+                try {
+                    if (exo.isPlaying) {
+                        val pos = exo.currentPosition
+                        if (pos >= 0) _positionMs.value = pos
+                        val dur = exo.duration
+                        if (dur > 0) _durationMs.value = dur
+                    }
+                } catch (_: Exception) {
+                }
+                delay(250)
+            }
+        }
+    }
+
+    private fun stopProgressTicker() {
+        progressTicker?.cancel()
+        progressTicker = null
+        _positionMs.value = 0L
+        _durationMs.value = 0L
     }
 
     companion object {

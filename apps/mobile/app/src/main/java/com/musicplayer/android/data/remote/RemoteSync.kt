@@ -19,6 +19,7 @@ import com.musicplayer.android.data.local.PodcastTagLinkEntity
 import com.musicplayer.android.data.local.SongEntity
 import com.musicplayer.android.data.local.SongPlaylistEntity
 import com.musicplayer.android.engine.DownloadEngine
+import kotlinx.coroutines.delay
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -48,10 +49,16 @@ object RemoteSync {
             "Downloads OK: $downloadsOk, failed: $downloadsFailed."
     }
 
-    suspend fun pullNow(db: AppDatabase, engine: DownloadEngine, context: Context): PullReport {
+    suspend fun pullNow(
+        db: AppDatabase,
+        engine: DownloadEngine,
+        context: Context,
+        onProgress: suspend (step: String, done: Int, total: Int) -> Unit = { _, _, _ -> }
+    ): PullReport {
         if (!SyncConfig.isConfigured()) {
             throw IllegalStateException(SyncConfig.NOT_CONFIGURED)
         }
+        onProgress("Reading library from server…", 0, 0)
         val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
         val prefs = context.getSharedPreferences("hathor", Context.MODE_PRIVATE)
         val cursor = prefs.getString(CURSOR_KEY, "") ?: ""
@@ -67,6 +74,8 @@ object RemoteSync {
         var addedPodcasts = 0
         var downloadsOk = 0
         var downloadsFailed = 0
+        val total = snapshot.songs.size + snapshot.podcasts.size
+        var done = 0
 
         for (row in snapshot.songs) {
             val existing = db.songDao().getByFile(row.file)
@@ -86,6 +95,10 @@ object RemoteSync {
                 true -> downloadsOk++
                 false -> downloadsFailed++
                 null -> { /* already on disk */ }
+            }
+            done++
+            if (done % 5 == 0 || done == total) {
+                onProgress("Downloading songs", done, total)
             }
         }
 
@@ -108,7 +121,11 @@ object RemoteSync {
                 false -> downloadsFailed++
                 null -> { /* already on disk */ }
             }
+            done++
+            onProgress("Downloading podcasts", done, total)
         }
+
+        onProgress("Updating playlists, lyrics and history…", total, total)
 
         for (row in snapshot.playlists) {
             val existing = db.playlistDao().getPlaylist(row.id)
@@ -205,11 +222,28 @@ object RemoteSync {
             db.dailyMixDao().purgeNonToday(LocalDate.now().toString())
         }
 
-        // Cursor advances only on full success (one bad row never aborts,
-        // but a failed pull must retry the same delta next time).
+        // Cursor advances only on full success. A failed download must retry
+        // the same delta on the next pull instead of silently skipping files.
         val next = delta.optString("cursor")
-        if (next.isNotBlank()) prefs.edit().putString(CURSOR_KEY, next).apply()
+        if (next.isNotBlank() && downloadsFailed == 0) {
+            prefs.edit().putString(CURSOR_KEY, next).apply()
+        } else if (downloadsFailed > 0) {
+            Log.w(TAG, "Not advancing sync cursor: $downloadsFailed download(s) failed")
+        }
+        Log.i(
+            TAG,
+            "Pull complete: songs=$addedSongs podcasts=$addedPodcasts " +
+                "downloadsOk=$downloadsOk failed=$downloadsFailed"
+        )
         return PullReport(addedSongs, addedPodcasts, downloadsOk, downloadsFailed)
+    }
+
+    /** Force the next pull to replay the full delta (retries missing files). */
+    fun resetCursor(context: Context) {
+        context.getSharedPreferences("hathor", Context.MODE_PRIVATE)
+            .edit()
+            .remove(CURSOR_KEY)
+            .apply()
     }
 
     // Server-authoritative tombstones (delta lists deletions-since): drop
@@ -272,7 +306,7 @@ object RemoteSync {
     // Byte-identical server download under the exact filename (replaces the
     // old YouTube re-download — no codec drift, no wrong search hits).
     // Null = already on disk (not counted); false = failed (counted).
-    private fun downloadMissing(
+    private suspend fun downloadMissing(
         api: SyncApi,
         outDir: File,
         library: String,
@@ -280,15 +314,29 @@ object RemoteSync {
     ): Boolean? {
         if (targetFile.isBlank() || '/' in targetFile || '\\' in targetFile) return false
         if (outDir.resolve(targetFile).exists()) return null
-        return try {
-            if (api.downloadFile(targetFile, library, outDir.resolve(targetFile))) true else false
-        } catch (e: SyncApiException) {
-            Log.w(TAG, "Pull download failed for $targetFile: ${e.message}")
-            false
-        } catch (e: Exception) {
-            Log.w(TAG, "Pull download failed for $targetFile", e)
-            false
+        var lastError: Exception? = null
+        for (attempt in 1..3) {
+            try {
+                if (api.downloadFile(targetFile, library, outDir.resolve(targetFile))) {
+                    return true
+                }
+                lastError = IllegalStateException("download returned false")
+            } catch (e: SyncApiException) {
+                lastError = e
+                // 401/404 will not improve on retry; the cursor stays put so
+                // the next full pull still reports them.
+                val message = e.message.orEmpty()
+                if (message.contains("401") || message.contains("404")) break
+            } catch (e: Exception) {
+                lastError = e
+            }
+            if (attempt < 3) delay(500L * attempt)
         }
+        Log.w(
+            TAG,
+            "Pull download failed for $targetFile: ${lastError?.message ?: "unknown"}"
+        )
+        return false
     }
 
     // Server ISO timestamps -> the desktop text shape the local DB and UI

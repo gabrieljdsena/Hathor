@@ -1,5 +1,7 @@
 package com.musicplayer.android.data.api
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.musicplayer.android.BuildConfig
 import java.io.File
@@ -101,19 +103,46 @@ data class RemoteSnapshot(
 class SyncApiException(message: String) : Exception(message)
 
 object SyncConfig {
-    fun baseUrl(): String =
-        try { BuildConfig.API_BASE_URL } catch (_: Exception) { "" }.trim().trimEnd('/')
+    private const val PREFS = "hathor_api"
+    private const val KEY_BASE_URL = "base_url"
+    private const val KEY_TOKEN = "token"
+    private var prefs: SharedPreferences? = null
 
-    fun token(): String =
-        try { BuildConfig.API_TOKEN } catch (_: Exception) { "" }.trim()
+    /** Called once from PlayerApp.onCreate; runtime values override BuildConfig. */
+    fun init(context: Context) {
+        prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    }
+
+    fun baseUrl(): String {
+        val raw = prefs?.getString(KEY_BASE_URL, null)
+            ?: try { BuildConfig.API_BASE_URL } catch (_: Exception) { "" }
+        return raw.trim().trimEnd('/')
+    }
+
+    fun token(): String {
+        val raw = prefs?.getString(KEY_TOKEN, null)
+            ?: try { BuildConfig.API_TOKEN } catch (_: Exception) { "" }
+        return raw.trim()
+    }
+
+    fun save(baseUrl: String, token: String) {
+        prefs?.edit()
+            ?.putString(KEY_BASE_URL, baseUrl.trim().trimEnd('/'))
+            ?.putString(KEY_TOKEN, token.trim())
+            ?.apply()
+    }
+
+    fun clearRuntime() {
+        prefs?.edit()?.remove(KEY_BASE_URL)?.remove(KEY_TOKEN)?.apply()
+    }
 
     fun isConfigured(): Boolean = baseUrl().isNotBlank() && token().isNotBlank()
 
     fun describe(): String =
-        if (baseUrl().isNotBlank()) "Server: ${baseUrl()}" else "Sync off."
+        if (baseUrl().isNotBlank()) "Web API: ${baseUrl()}" else "Web API off."
 
     const val NOT_CONFIGURED =
-        "No sync server configured. Set API_BASE_URL and API_TOKEN in local.properties."
+        "No Web API configured. Set the server URL and an API key in Settings."
 }
 
 class SyncApi(val baseUrl: String, private val token: String) {
@@ -206,7 +235,7 @@ class SyncApi(val baseUrl: String, private val token: String) {
         if (dest.exists()) return false
         dest.parentFile?.mkdirs()
         val tmp = File(dest.absolutePath + ".hathor-part")
-        val conn = open("GET", "/files/${URLEncoder.encode(file, "UTF-8")}", mapOf("library" to library))
+        val conn = open("GET", "/files/${encodePathSegment(file)}", mapOf("library" to library))
         try {
             val code = try {
                 conn.responseCode
@@ -242,7 +271,7 @@ class SyncApi(val baseUrl: String, private val token: String) {
     fun putFile(file: String, library: String, src: File) {
         if (file.isBlank() || '/' in file || '\\' in file) return
         val conn = open(
-            "PUT", "/files/${URLEncoder.encode(file, "UTF-8")}",
+            "PUT", "/files/${encodePathSegment(file)}",
             mapOf("library" to library), "audio/mpeg",
         )
         try {
@@ -264,6 +293,14 @@ class SyncApi(val baseUrl: String, private val token: String) {
 
     companion object {
         private const val TAG = "SyncApi"
+
+        /**
+         * Path-segment encoding: URLEncoder emits `+` for spaces, but ASP.NET
+         * treats `+` in a path as a literal plus, not a space (404 for every
+         * filename with spaces). Percent-encode spaces instead.
+         */
+        internal fun encodePathSegment(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
         private fun JSONObject.optText(key: String): String? =
             if (isNull(key)) null else optString(key).ifEmpty { null }

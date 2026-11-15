@@ -154,18 +154,23 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
         var year = "Unknown"
         var durationSec = 0L
         var hasCover = false
+        val retriever = MediaMetadataRetriever()
         try {
-            MediaMetadataRetriever().use { r ->
-                r.setDataSource(file.absolutePath)
-                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }?.let { title = it }
-                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }?.let { artist = it }
-                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }?.let { album = it }
-                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.takeIf { it.isNotBlank() }?.let { year = it }
-                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationSec = it / 1000 }
-                hasCover = r.embeddedPicture != null
-            }
+            retriever.setDataSource(file.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }?.let { title = it }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }?.let { artist = it }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }?.let { album = it }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.takeIf { it.isNotBlank() }?.let { year = it }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationSec = it / 1000 }
+            hasCover = retriever.embeddedPicture != null
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load metadata for ${file.name}: ${e.message}")
+        } finally {
+            // MediaMetadataRetriever is not AutoCloseable on API < 29.
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
         }
         return SongMeta(file.name, title, artist, album, year, durationSec, dateDownload = null, hasCover)
     }
@@ -182,18 +187,22 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
     suspend fun coverBytesFor(file: File): ByteArray? = withContext(Dispatchers.IO) {
         val key = file.absolutePath
         synchronized(coverCache) { coverCache.get(key) }?.let { return@withContext it }
+        val retriever = MediaMetadataRetriever()
         try {
-            MediaMetadataRetriever().use { r ->
-                r.setDataSource(file.absolutePath)
-                val pic = r.embeddedPicture
-                if (pic != null) {
-                    synchronized(coverCache) { coverCache.put(key, pic) }
-                }
-                return@withContext pic
+            retriever.setDataSource(file.absolutePath)
+            val pic = retriever.embeddedPicture
+            if (pic != null) {
+                synchronized(coverCache) { coverCache.put(key, pic) }
             }
+            return@withContext pic
         } catch (e: Exception) {
             Log.w(TAG, "No cover for ${file.name}: ${e.message}")
             return@withContext null
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {
+            }
         }
     }
 

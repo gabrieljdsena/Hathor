@@ -1,7 +1,10 @@
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.musicplayer.android.ui
 
+import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,15 +53,19 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.musicplayer.android.data.ArtworkRepository
+import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.PlaylistItem
 import com.musicplayer.android.data.PlaylistRepository
 import com.musicplayer.android.data.SongMeta
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.hathorGlass
+import com.musicplayer.android.util.FuzzySearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /** Rows rendered before "Show more" — playlists can hold hundreds of songs. */
@@ -73,7 +80,10 @@ private const val PLAYLIST_PAGE = 50
 @Composable
 fun PlaylistsScreen(
     repo: PlaylistRepository,
+    metadata: MetadataRepository,
+    artwork: ArtworkRepository,
     musicDir: File,
+    nowPlayingFile: String?,
     onPlayFiles: (List<File>, Long) -> Unit,
     onPlaySong: (SongMeta, List<SongMeta>, Long) -> Unit,
     onPlayNext: (SongMeta) -> Unit,
@@ -91,8 +101,11 @@ fun PlaylistsScreen(
     opened?.let { pl ->
         PlaylistDetail(
             repo = repo,
+            metadata = metadata,
+            artwork = artwork,
             playlist = pl,
             musicDir = musicDir,
+            nowPlayingFile = nowPlayingFile,
             onBack = { opened = null; scope.launch { repo.refresh() } },
             onPlayFiles = onPlayFiles,
             onPlaySong = onPlaySong,
@@ -223,8 +236,11 @@ fun PlaylistsScreen(
 @Composable
 private fun PlaylistDetail(
     repo: PlaylistRepository,
+    metadata: MetadataRepository,
+    artwork: ArtworkRepository,
     playlist: PlaylistItem,
     musicDir: File,
+    nowPlayingFile: String?,
     onBack: () -> Unit,
     onPlayFiles: (List<File>, Long) -> Unit,
     onPlaySong: (SongMeta, List<SongMeta>, Long) -> Unit,
@@ -233,6 +249,7 @@ private fun PlaylistDetail(
     onDeleted: () -> Unit
 ) {
     var songs by remember(playlist.id) { mutableStateOf<List<SongMeta>>(emptyList()) }
+    var thumbnail by remember(playlist.id) { mutableStateOf(playlist.thumbnail) }
     var coverMsg by remember { mutableStateOf<String?>(null) }
     var pvQuery by remember { mutableStateOf("") }
     var pvSort by remember { mutableStateOf<String?>(null) }
@@ -240,6 +257,8 @@ private fun PlaylistDetail(
     var pvLimit by remember { mutableIntStateOf(PLAYLIST_PAGE) }
     // Menu snapshot: song + the visible list at open time (queue context).
     var menuSong by remember { mutableStateOf<Pair<SongMeta, List<SongMeta>>?>(null) }
+    var editSong by remember { mutableStateOf<SongMeta?>(null) }
+    var playlistSong by remember { mutableStateOf<SongMeta?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -253,17 +272,21 @@ private fun PlaylistDetail(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch(Dispatchers.IO) {
             try {
-                val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val bytes = downscaleCover(context, uri)
                 if (bytes == null) {
                     coverMsg = "Could not read image"
                 } else {
-                    val dataUri = "data:$mime;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    val dataUri = "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
                     repo.setThumbnail(playlist.id, dataUri)
-                    coverMsg = "Cover updated"
+                    withContext(Dispatchers.Main) {
+                        thumbnail = dataUri
+                        coverMsg = "Cover updated"
+                    }
                 }
             } catch (e: Exception) {
-                coverMsg = "Cover failed: ${e.message}"
+                withContext(Dispatchers.Main) {
+                    coverMsg = "Cover failed: ${e.message}"
+                }
             }
         }
     }
@@ -274,14 +297,29 @@ private fun PlaylistDetail(
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = HathorColors.TextBody)
             }
             Box(modifier = Modifier.clickable { pickCover.launch("image/*") }) {
-                PlaylistThumb(dataUri = playlist.thumbnail, size = 56.dp)
+                PlaylistThumb(dataUri = thumbnail, size = 56.dp)
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(playlist.title, style = MaterialTheme.typography.titleMedium)
                 Text("${songs.size} songs · tap cover to change it", style = MaterialTheme.typography.bodySmall)
             }
         }
-        coverMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (thumbnail != null) {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            repo.setThumbnail(playlist.id, null)
+                            withContext(Dispatchers.Main) {
+                                thumbnail = null
+                                coverMsg = "Cover removed"
+                            }
+                        }
+                    }
+                ) { Text("Remove cover") }
+            }
+            coverMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
         // Desktop playlist search + column sorts (_pvSortColumn).
         HathorTextField(
             value = pvQuery,
@@ -317,9 +355,9 @@ private fun PlaylistDetail(
                 Text("Delete playlist", color = MaterialTheme.colorScheme.error)
             }
         }
-        val pq = pvQuery.trim().lowercase()
+        val pq = pvQuery.trim()
         val filtered = if (pq.isBlank()) songs else songs.filter {
-            it.title.lowercase().contains(pq) || it.artist.lowercase().contains(pq)
+            FuzzySearch.matchesFields(listOf(it.title, it.artist), pq)
         }
         val ordered = when (pvSort) {
             "Title" -> filtered.sortedBy { it.title.lowercase() }
@@ -383,7 +421,30 @@ private fun PlaylistDetail(
             onOpenArtist = {},
             onOpenAlbum = {},
             showNav = false,
-            onDismiss = { menuSong = null }
+            onDismiss = { menuSong = null },
+            onEdit = { editSong = song },
+            onPlaylists = { playlistSong = song }
+        )
+    }
+
+    editSong?.let { song ->
+        EditSongDialog(
+            song = song,
+            repo = metadata,
+            playlistRepo = repo,
+            artwork = artwork,
+            onPlayNext = { onPlayNext(song); editSong = null },
+            onEnqueue = { onEnqueue(song); editSong = null },
+            onDismiss = { editSong = null; metadata.clearStatus() },
+            playingFile = nowPlayingFile
+        )
+    }
+
+    playlistSong?.let { song ->
+        SongPlaylistsDialog(
+            song = song,
+            repo = repo,
+            onDismiss = { playlistSong = null }
         )
     }
 }
@@ -413,5 +474,57 @@ private fun decodeDataUri(uri: String, reqWidthPx: Int = 0): android.graphics.Bi
         ImageLoader.decodeSampled(bytes, reqWidthPx)
     } catch (_: Exception) {
         null
+    }
+}
+
+/** Covers are stored as data URIs, so cap them like the web client (800px JPEG). */
+private const val PLAYLIST_COVER_MAX_PX = 800
+
+private fun downscaleCover(
+    context: Context,
+    uri: Uri,
+    maxPx: Int = PLAYLIST_COVER_MAX_PX
+): ByteArray? {
+    val original = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+    return downscaleCoverBytes(original, maxPx)
+}
+
+/** Pure-ish decode/scale/JPEG encode so it can be covered by a JVM test. */
+internal fun downscaleCoverBytes(
+    original: ByteArray,
+    maxPx: Int = PLAYLIST_COVER_MAX_PX
+): ByteArray? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(original, 0, original.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= maxPx || bounds.outHeight / (sample * 2) >= maxPx) {
+        sample *= 2
+    }
+    val bitmap = BitmapFactory.decodeByteArray(
+        original,
+        0,
+        original.size,
+        BitmapFactory.Options().apply { inSampleSize = sample }
+    ) ?: return null
+
+    val scale = minOf(1f, maxPx.toFloat() / maxOf(bitmap.width, bitmap.height))
+    val scaled = if (scale < 1f) {
+        Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * scale).toInt().coerceAtLeast(1),
+            (bitmap.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
+    } else {
+        bitmap
+    }
+    return try {
+        val out = ByteArrayOutputStream()
+        if (scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)) out.toByteArray() else null
+    } finally {
+        if (scaled !== bitmap) scaled.recycle()
+        bitmap.recycle()
     }
 }

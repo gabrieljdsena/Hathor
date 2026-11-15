@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
@@ -161,8 +162,12 @@ fun HathorTextField(
     modifier: Modifier = Modifier,
     label: String? = null,
     singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+    placeholder: String? = null,
     leadingIcon: @Composable (() -> Unit)? = null,
-    trailingIcon: @Composable (() -> Unit)? = null
+    trailingIcon: @Composable (() -> Unit)? = null,
+    visualTransformation: VisualTransformation = VisualTransformation.None
 ) {
     androidx.compose.material3.OutlinedTextField(
         value = value,
@@ -171,6 +176,10 @@ fun HathorTextField(
         leadingIcon = leadingIcon,
         trailingIcon = trailingIcon,
         singleLine = singleLine,
+        minLines = minLines,
+        maxLines = maxLines,
+        placeholder = placeholder?.let { { Text(it, color = HathorColors.TextHint) } },
+        visualTransformation = visualTransformation,
         shape = RoundedCornerShape(16.dp),
         colors = androidx.compose.material3.TextFieldDefaults.colors(
             focusedContainerColor = HathorColors.SurfaceGlass,

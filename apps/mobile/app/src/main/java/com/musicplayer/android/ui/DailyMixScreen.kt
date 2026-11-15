@@ -34,13 +34,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.DailyMixRepository
 import com.musicplayer.android.data.MetadataRepository
+import com.musicplayer.android.data.PlaylistRepository
 import com.musicplayer.android.data.SongMeta
 import com.musicplayer.android.playback.PlaybackSource
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HeaderIconTile
+import com.musicplayer.android.util.FuzzySearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -59,6 +62,8 @@ private const val MIX_PAGE = 50
 fun DailyMixScreen(
     dailyMix: DailyMixRepository,
     library: MetadataRepository,
+    playlistRepo: PlaylistRepository,
+    artwork: ArtworkRepository,
     onBack: () -> Unit,
     onPlay: (SongMeta, List<SongMeta>, String?) -> Unit,
     onPlayAll: (List<SongMeta>, String?, Boolean) -> Unit,
@@ -74,6 +79,8 @@ fun DailyMixScreen(
     var sortKey by remember { mutableStateOf<String?>(null) }
     var sortAsc by remember { mutableStateOf(true) }
     var menuSong by remember { mutableStateOf<SongMeta?>(null) }
+    var editSong by remember { mutableStateOf<SongMeta?>(null) }
+    var playlistSong by remember { mutableStateOf<SongMeta?>(null) }
 
     LaunchedEffect(Unit) {
         try {
@@ -92,9 +99,9 @@ fun DailyMixScreen(
     }
 
     val visible = remember(songs, debouncedQuery) {
-        val q = debouncedQuery.trim().lowercase()
+        val q = debouncedQuery.trim()
         if (q.isBlank()) songs else songs.filter {
-            it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
+            FuzzySearch.matchesFields(listOf(it.title, it.artist, it.album), q)
         }
     }
     val sorted = remember(visible, sortKey, sortAsc) {
@@ -267,7 +274,30 @@ fun DailyMixScreen(
             onOpenArtist = {},
             onOpenAlbum = {},
             showNav = false,
-            onDismiss = { menuSong = null }
+            onDismiss = { menuSong = null },
+            onEdit = { editSong = song },
+            onPlaylists = { playlistSong = song }
+        )
+    }
+
+    editSong?.let { song ->
+        EditSongDialog(
+            song = song,
+            repo = library,
+            playlistRepo = playlistRepo,
+            artwork = artwork,
+            onPlayNext = { onPlayNext(song); editSong = null },
+            onEnqueue = { onEnqueue(song); editSong = null },
+            onDismiss = { editSong = null; library.clearStatus() },
+            playingFile = nowPlayingFile
+        )
+    }
+
+    playlistSong?.let { song ->
+        SongPlaylistsDialog(
+            song = song,
+            repo = playlistRepo,
+            onDismiss = { playlistSong = null }
         )
     }
 }

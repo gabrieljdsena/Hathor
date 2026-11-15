@@ -16,14 +16,26 @@ public sealed class DapperHistoryReadModel(
         GetDownloadPageAsync(Guid userId, int page, int pageSize, CancellationToken ct = default)
     {
         var t = factory.Quote("Songs");
-        var rows = $"SELECT {factory.Quote("File")}, {factory.Quote("DateDownloadUtc")}, " +
-            $"{factory.Quote("DownloadedLink")} FROM {t} " +
+        var file = factory.Quote("File");
+        var date = factory.Quote("DateDownloadUtc");
+        var link = factory.Quote("DownloadedLink");
+        // Re-downloading the same source URL must not duplicate history:
+        // keep the newest row per URL. Older duplicates (and their files)
+        // stay on disk, but the history page shows one entry.
+        var rows =
+            $"SELECT {file}, {date}, {link} FROM (" +
+            $"SELECT DISTINCT ON ({link}) {file}, {date}, {link} FROM {t} " +
             $"WHERE {factory.UserIdPredicate()} " +
-            $"AND {factory.Quote("DownloadedLink")} IS NOT NULL AND {factory.Quote("DownloadedLink")} != '' " +
-            $"ORDER BY {factory.Quote("DateDownloadUtc")} DESC LIMIT @Limit OFFSET @Offset";
-        var count = $"SELECT COUNT(*) FROM {t} " +
+            $"AND {link} IS NOT NULL AND {link} != '' " +
+            $"ORDER BY {link}, {date} DESC, {file} DESC" +
+            $") AS dedup ORDER BY {date} DESC LIMIT @Limit OFFSET @Offset";
+        var count =
+            $"SELECT COUNT(*) FROM (" +
+            $"SELECT DISTINCT ON ({link}) 1 FROM {t} " +
             $"WHERE {factory.UserIdPredicate()} " +
-            $"AND {factory.Quote("DownloadedLink")} IS NOT NULL AND {factory.Quote("DownloadedLink")} != ''";
+            $"AND {link} IS NOT NULL AND {link} != '' " +
+            $"ORDER BY {link}" +
+            $") AS dedup";
         using var conn = factory.Create();
         var items = (await conn.QueryAsync<(string File, DateTime DateDownload, string? Link)>(
             new CommandDefinition(rows, new

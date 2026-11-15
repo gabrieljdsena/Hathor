@@ -10,6 +10,13 @@ jaudiotagger = "3.0.1"
 desugar = "2.1.4"
 work = "2.9.0"
 media3 = "1.4.1"
+junit = "4.13.2"
+robolectric = "4.14.1"
+androidxTestCore = "1.6.1"
+androidxTestExtJunit = "1.2.1"
+androidxTestRunner = "1.6.2"
+androidxTestRules = "1.6.1"
+espresso = "3.6.1"
 
 [libraries]
 youtubedl-library = { group = "io.github.junkfood02.youtubedl-android", name = "library", version.ref = "youtubedlAndroid" }
@@ -31,3 +38,14 @@ jaudiotagger = { group = "net.jthink", name = "jaudiotagger", version.ref = "jau
 desugar-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
 work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+androidx-test-core = { group = "androidx.test", name = "core-ktx", version.ref = "androidxTestCore" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTestRules" }
+espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
+coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }

@@ -13,6 +13,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.musicplayer.android.data.api.PlaybackApi
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import androidx.compose.animation.AnimatedContent
@@ -44,19 +45,23 @@ import com.musicplayer.android.data.HistoryRepository
 import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.LyricsRepository
 import com.musicplayer.android.data.MetadataRepository
+import com.musicplayer.android.data.PendingMetadataEdits
 import com.musicplayer.android.data.PlaylistRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.engine.DownloadEngine
+import com.musicplayer.android.playback.AiDjController
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.DownloadScreen
 import com.musicplayer.android.ui.HistoryScreen
-import com.musicplayer.android.ui.LibraryScreen
+import com.musicplayer.android.ui.LyricsScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
+import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.querySyncProgress
 import com.musicplayer.android.ui.shell.Dest
 import com.musicplayer.android.ui.shell.HathorShell
 import com.musicplayer.android.ui.theme.HathorColors
@@ -64,9 +69,11 @@ import com.musicplayer.android.ui.theme.HathorMotion
 import com.musicplayer.android.ui.theme.HathorTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
@@ -78,11 +85,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var historyRepo: HistoryRepository
     private lateinit var lyricsRepo: LyricsRepository
     private lateinit var artworkRepo: ArtworkRepository
+    private lateinit var deviceId: String
     private lateinit var settingsRepo: SettingsRepository
     private lateinit var dailyMixRepo: com.musicplayer.android.data.DailyMixRepository
     private lateinit var podcastRepo: com.musicplayer.android.data.PodcastRepository
     private lateinit var player: PlayerManager
     private lateinit var previewPlayer: PreviewPlayer
+    private lateinit var aiDjController: AiDjController
 
     companion object {
         const val DEFAULT_TEST_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -90,10 +99,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        deviceId = getSharedPreferences("hathor", MODE_PRIVATE).let { prefs ->
+            prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
+                prefs.edit().putString("device_id", it).apply()
+            }
+        }
         // Shared process-lifetime instances (also used by workers/service).
         engine = PlayerApp.instance.downloadEngine
         player = PlayerApp.instance.player
         previewPlayer = PlayerApp.instance.previewPlayer
+        aiDjController = PlayerApp.instance.aiDjController
         queueRepo = PlayerApp.instance.queueRepo
         syncRepo = PlayerApp.instance.syncRepo
         metadataRepo = MetadataRepository(this, engine)
@@ -104,6 +119,16 @@ class MainActivity : ComponentActivity() {
         settingsRepo = SettingsRepository(this, engine, metadataRepo)
         dailyMixRepo = com.musicplayer.android.data.DailyMixRepository(this, engine, metadataRepo)
         podcastRepo = com.musicplayer.android.data.PodcastRepository(this, engine, metadataRepo)
+        aiDjController.onSessionChanged = { session ->
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    settingsRepo.saveQueueSource(
+                        session?.let { com.musicplayer.android.playback.PlaybackSource("ai_dj", it) }
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
         settingsRepo.onCrossfadeChanged = { enabled, seconds ->
             player.setCrossfade(enabled, seconds)
         }
@@ -118,6 +143,26 @@ class MainActivity : ComponentActivity() {
                 false
             }
         }
+        player.onPauseSpot = { file, posMs, isPodcast ->
+            if (SyncConfig.isConfigured()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val source = settingsRepo.loadQueueSource()
+                        PlaybackApi.push(
+                            deviceId = deviceId,
+                            deviceLabel = "Android",
+                            file = file.name,
+                            positionSec = posMs / 1000.0,
+                            isPodcast = isPodcast,
+                            queueFiles = player.queueFlow.value.take(50).map { it.name },
+                            sourceType = source?.type,
+                            sourceId = source?.id
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
         settingsRepo.onChapterSkipChanged = { player.setChapterSkip(it) }
         // Restore persisted prefs at startup (folders, volume, crossfade):
         // Settings might never be opened, but the player needs its prefs.
@@ -126,6 +171,7 @@ class MainActivity : ComponentActivity() {
                 settingsRepo.load()
                 withContext(Dispatchers.Main) {
                     player.setChapterSkip(settingsRepo.chapterSkip.value)
+                    player.setVolume(settingsRepo.volume.value)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("MainActivity", "settings load failed: ${e.message}")
@@ -138,6 +184,7 @@ class MainActivity : ComponentActivity() {
         // Desktop _persist_queue + current_song: persist order + track.
         // Flags resolved per file so mixed queues restore intact.
         player.onQueueChanged = { files ->
+            aiDjController.onQueueChanged(files)
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val podRoot = try {
@@ -165,6 +212,13 @@ class MainActivity : ComponentActivity() {
                 settingsRepo.saveCurrentSong(name)
             }
         }
+        // Starting the main queue always takes over from a Discover preview.
+        player.onPlaybackStarting = {
+            try {
+                previewPlayer.stop()
+            } catch (_: Exception) {
+            }
+        }
         // Desktop idle callback: a drained queue refreshes the visible lists.
         queueRepo.onIdle = {
             CoroutineScope(Dispatchers.IO).launch {
@@ -181,9 +235,20 @@ class MainActivity : ComponentActivity() {
                     // link); consumed once by the All Songs view.
                     var artistTarget by remember { mutableStateOf<String?>(null) }
                     var showNowPlaying by remember { mutableStateOf(false) }
+                    var showLyrics by remember { mutableStateOf(false) }
+                    var lyricsReturnToNowPlaying by remember { mutableStateOf(false) }
                     var showFirstRun by remember { mutableStateOf(false) }
                     val syncState by syncRepo.state.collectAsState()
                     val wallpaper by settingsRepo.background.collectAsState()
+                    var syncProgress by remember { mutableStateOf<SyncProgress?>(null) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            syncProgress = withContext(Dispatchers.IO) {
+                                querySyncProgress(applicationContext)
+                            }
+                            delay(1500)
+                        }
+                    }
                     // Desktop on_start(): first run (empty library) + remote
                     // configured -> ask whether to load from it. One-shot,
                     // non-dismissable, like the SweetAlert2 prompt.
@@ -222,6 +287,37 @@ class MainActivity : ComponentActivity() {
                     }
                     val currentFile by player.current.collectAsState()
                     val isPlaying by player.playing.collectAsState()
+                    LaunchedEffect(currentFile) {
+                        if (currentFile == null) {
+                            showLyrics = false
+                            showNowPlaying = false
+                        }
+                    }
+                    // Metadata edited on the currently playing file is applied
+                    // once the player moves on (tag rewrite safety).
+                    val pendingEdit by PendingMetadataEdits.edit.collectAsState()
+                    LaunchedEffect(pendingEdit, currentFile) {
+                        val edit = pendingEdit ?: return@LaunchedEffect
+                        if (currentFile?.name == edit.file) return@LaunchedEffect
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val saved = metadataRepo.updateMeta(
+                                    fileName = edit.file,
+                                    title = edit.title,
+                                    artist = edit.artist,
+                                    album = edit.album,
+                                    year = edit.year,
+                                    removeCover = edit.removeCover
+                                )
+                                if (saved && edit.cover != null) {
+                                    metadataRepo.setCoverBytes(edit.file, edit.cover, "image/jpeg")
+                                }
+                            } catch (_: Exception) {
+                            } finally {
+                                PendingMetadataEdits.clearFor(edit.file)
+                            }
+                        }
+                    }
                     var nowTitle by remember { mutableStateOf<String?>(null) }
                     var nowArtist by remember { mutableStateOf<String?>(null) }
                     var nowCover by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -266,13 +362,22 @@ class MainActivity : ComponentActivity() {
 
                     HathorShell(
                         player = player,
+                        preview = previewPlayer,
                         nowPlayingTitle = nowTitle,
                         nowPlayingArtist = nowArtist,
                         nowPlayingCover = nowCover,
                         selected = dest,
                         onSelect = { dest = it },
                         onBarClick = { if (currentFile != null) showNowPlaying = true },
-                        wallpaper = wallpaper
+                        onOpenLyrics = {
+                            if (currentFile != null) {
+                                lyricsReturnToNowPlaying = false
+                                showNowPlaying = false
+                                showLyrics = true
+                            }
+                        },
+                        wallpaper = wallpaper,
+                        syncProgress = syncProgress
                     ) {
                         // Desktop view switch (jQuery load): crossfade + slide.
                         AnimatedContent(
@@ -295,9 +400,52 @@ class MainActivity : ComponentActivity() {
                             Dest.Library -> com.musicplayer.android.ui.HomeScreen(
                                 dailyMix = dailyMixRepo,
                                 library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
+                                podcasts = podcastRepo,
+                                deviceId = deviceId,
                                 onOpenAllSongs = { dest = Dest.AllSongs },
                                 onOpenDailyMix = { dest = Dest.DailyMix },
+                                onOpenArtists = { dest = Dest.Artists },
+                                onOpenAlbums = { dest = Dest.Albums },
+                                onOpenPodcasts = { dest = Dest.Podcasts },
                                 onOpenHistory = { dest = Dest.History },
+                                onPlayPodcast = { ep ->
+                                    playWithContext(
+                                        ep.file,
+                                        podcastRepo.episodes.value,
+                                        null,
+                                        com.musicplayer.android.playback.PlaybackSource("podcast", ep.file)
+                                    )
+                                },
+                                onResumeSpot = { spot ->
+                                    val files = (spot.queueFiles.ifEmpty { listOf(spot.file) })
+                                        .mapNotNull { name ->
+                                            resolveFileByName(name).takeIf { it.exists() }
+                                        }
+                                        .distinct()
+                                    val index = files.indexOfFirst { it.name == spot.file }
+                                        .coerceAtLeast(0)
+                                    if (files.isNotEmpty()) {
+                                        previewPlayer.stop()
+                                        player.playFilesAtPosition(
+                                            files,
+                                            index,
+                                            (spot.positionSec * 1000).toInt()
+                                        )
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            try {
+                                                settingsRepo.saveQueueSource(
+                                                    com.musicplayer.android.playback.PlaybackSource(
+                                                        spot.queueSourceType ?: "recently_played",
+                                                        spot.queueSourceId
+                                                    )
+                                                )
+                                            } catch (_: Exception) {
+                                            }
+                                        }
+                                    }
+                                },
                                 onPlay = { song, visible, source ->
                                     playWithContext(song.file, visible, null, source)
                                 },
@@ -329,6 +477,8 @@ class MainActivity : ComponentActivity() {
                             Dest.DailyMix -> com.musicplayer.android.ui.DailyMixScreen(
                                 dailyMix = dailyMixRepo,
                                 library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
                                 onBack = { dest = Dest.Library },
                                 onPlay = { song, visible, date ->
                                     playWithContext(
@@ -344,10 +494,44 @@ class MainActivity : ComponentActivity() {
                                 nowPlayingFile = currentFile?.name,
                                 isPlaying = isPlaying
                             )
+                            Dest.Artists -> com.musicplayer.android.ui.ArtistsScreen(
+                                library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
+                                onBack = { dest = Dest.Library },
+                                onPlay = { song, visible, source ->
+                                    playWithContext(song.file, visible, null, source)
+                                },
+                                onPlayNext = { song -> queueFile(song.file, next = true) },
+                                onEnqueue = { song -> queueFile(song.file, next = false) },
+                                nowPlayingFile = currentFile?.name,
+                                isPlaying = isPlaying
+                            )
+                            Dest.Albums -> com.musicplayer.android.ui.AlbumsScreen(
+                                library = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
+                                onBack = { dest = Dest.Library },
+                                onPlay = { song, visible, source ->
+                                    playWithContext(song.file, visible, null, source)
+                                },
+                                onPlayNext = { song -> queueFile(song.file, next = true) },
+                                onEnqueue = { song -> queueFile(song.file, next = false) },
+                                nowPlayingFile = currentFile?.name,
+                                isPlaying = isPlaying
+                            )
+                            Dest.Discover -> com.musicplayer.android.ui.DiscoverScreen(
+                                metadata = metadataRepo,
+                                queue = queueRepo,
+                                engine = engine,
+                                preview = previewPlayer,
+                                onPreviewStarted = { player.pause() }
+                            )
                             Dest.Download -> DownloadScreen(
                                 queueRepo,
                                 engine,
                                 previewPlayer,
+                                metadataRepo,
                                 // A preview must never play over the library.
                                 onPreviewStarted = { player.pause() }
                             )
@@ -395,7 +579,10 @@ class MainActivity : ComponentActivity() {
                             )
                             Dest.Playlists -> PlaylistsScreen(
                                 repo = playlistRepo,
+                                metadata = metadataRepo,
+                                artwork = artworkRepo,
                                 musicDir = engine.outputDir(),
+                                nowPlayingFile = currentFile?.name,
                                 onPlayFiles = { files, playlistId ->
                                     previewPlayer.stop()
                                     player.playFiles(files, 0)
@@ -425,14 +612,33 @@ class MainActivity : ComponentActivity() {
                             Dest.History -> HistoryScreen(
                                 repo = historyRepo,
                                 queue = queueRepo,
+                                metadata = metadataRepo,
+                                playlistRepo = playlistRepo,
+                                artwork = artworkRepo,
                                 musicDir = engine.outputDir(),
-                                onPlayFile = { file -> playSong(file.name) },
+                                nowPlayingFile = currentFile?.name,
+                                isPlaying = isPlaying,
+                                onPlaySong = { song, visible, source ->
+                                    playWithContext(song.file, visible, null, source)
+                                },
+                                onPlayNext = { song -> queueFile(song.file, next = true) },
+                                onEnqueue = { song -> queueFile(song.file, next = false) },
                                 onOpenArtist = { name ->
                                     artistTarget = name
                                     dest = Dest.AllSongs
                                 }
                             )
-                            Dest.Settings -> SettingsScreen(settingsRepo, syncRepo, podcastRepo, onPull = { enqueuePull() })
+                            Dest.Settings -> SettingsScreen(
+                                settingsRepo,
+                                syncRepo,
+                                podcastRepo,
+                                onPull = { enqueuePull() }
+                            )
+                            Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
+                                controller = aiDjController,
+                                player = player,
+                                metadata = metadataRepo
+                            )
                         }
                         }
                     }
@@ -443,11 +649,44 @@ class MainActivity : ComponentActivity() {
                         NowPlayingSheet(
                             player = player,
                             metadata = metadataRepo,
-                            lyrics = lyricsRepo,
                             volume = volume,
-                            onVolumeChange = { settingsRepo.setVolume(it) },
+                            onVolumeChange = {
+                                settingsRepo.setVolume(it)
+                                player.setVolume(it)
+                            },
                             onVolumeDone = { sheetScope.launch { settingsRepo.persistVolume() } },
-                            onDismiss = { showNowPlaying = false }
+                            onDismiss = { showNowPlaying = false },
+                            onOpenLyrics = {
+                                if (currentFile != null) {
+                                    lyricsReturnToNowPlaying = true
+                                    showNowPlaying = false
+                                    showLyrics = true
+                                }
+                            }
+                        )
+                    }
+
+                    if (showLyrics && currentFile != null) {
+                        LyricsScreen(
+                            file = currentFile!!,
+                            metadata = metadataRepo,
+                            lyrics = lyricsRepo,
+                            player = player,
+                            chaptersProvider = { name -> podcastRepo.chaptersFor(name) },
+                            isPodcast = try {
+                                currentFile!!.canonicalPath.startsWith(
+                                    PlayerApp.instance.podcastsDir.canonicalPath
+                                )
+                            } catch (_: Exception) {
+                                false
+                            },
+                            onDismiss = {
+                                showLyrics = false
+                                if (lyricsReturnToNowPlaying) {
+                                    showNowPlaying = true
+                                }
+                                lyricsReturnToNowPlaying = false
+                            }
                         )
                     }
 

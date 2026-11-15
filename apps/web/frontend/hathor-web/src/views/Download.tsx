@@ -6,6 +6,7 @@ import Icon from '../components/ui/icons'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import Modal from '../components/ui/Modal'
 import VideoPreview from '../components/ui/VideoPreview'
+import { EmptyState } from '../components/ui/states'
 import { formatDuration } from '../lyrics'
 import { isBotCheckError } from '../utils/youtube'
 
@@ -16,12 +17,16 @@ export default function Download() {
   const [isPodcast, setIsPodcast] = useState(false)
   const [results, setResults] = useState<VideoHit[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [searchedTerm, setSearchedTerm] = useState('')
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const searchSeq = useRef(0)
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [batchBusy, setBatchBusy] = useState(false)
   // In-flight submit URLs: blocks double-click double-submits, which the
   // backend would otherwise persist as twin jobs ("Title (1).mp3").
   const [busyUrls, setBusyUrls] = useState<ReadonlySet<string>>(new Set())
+  const busyUrlsRef = useRef<Set<string>>(new Set())
   // Pending already-owned confirm (url/title/artist + owned filename).
   const [confirm, setConfirm] = useState<{
     url: string
@@ -57,26 +62,53 @@ export default function Download() {
 
   const search = async (q: string) => {
     const term = q.trim()
-    if (!term) return
+    if (!term) {
+      setSearchError('Enter a song, artist, or album to search.')
+      return
+    }
+    const seq = searchSeq.current + 1
+    searchSeq.current = seq
     setSearching(true)
+    setSearchError(null)
+    setResults(null)
+    setNotice(null)
     try {
-      setResults(await api.youtubeSearch(term, 5))
+      const hits = await api.youtubeSearch(term, 5)
+      if (seq !== searchSeq.current) return
+      setResults(hits)
+      setSearchedTerm(term)
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Search failed.')
+      if (seq !== searchSeq.current) return
       setResults([])
+      setSearchedTerm(term)
+      setSearchError(err instanceof Error ? err.message : 'Search failed.')
     } finally {
-      setSearching(false)
+      if (seq === searchSeq.current) setSearching(false)
     }
   }
 
-  const requestDownload = async (url: string, title: string) => {
+  const clearSearch = () => {
+    searchSeq.current += 1
+    setQuery('')
+    setResults(null)
+    setSearchedTerm('')
+    setSearchError(null)
+    setSearching(false)
+  }
+
+  const requestDownload = async (
+    url: string,
+    title: string,
+    targetFile: string | null = null,
+  ) => {
     try {
-      await api.submitDownload(url, title, null, isPodcast)
+      await api.submitDownload(url, title, null, isPodcast, targetFile)
       setNotice(isPodcast ? `Podcast queued: ${title}` : `Download queued: ${title}`)
       void queryClient.invalidateQueries({ queryKey: ['download-jobs'] })
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Download failed.')
     } finally {
+      busyUrlsRef.current.delete(url)
       setBusyUrls((prev) => {
         const next = new Set(prev)
         next.delete(url)
@@ -88,20 +120,22 @@ export default function Download() {
   // Ownership guard: titles matching the live library ask first instead of
   // silently producing "Title (1).mp3" twins.
   const download = async (url: string, title: string, artist: string | null) => {
-    if (busyUrls.has(url)) return
+    if (busyUrlsRef.current.has(url)) return
+    busyUrlsRef.current.add(url)
     setBusyUrls((prev) => new Set(prev).add(url))
     const check = await api.checkDownload(title, artist).catch(() => null)
     if (check?.owned) {
       setConfirm({ url, title, artist, file: check.file })
       return
     }
-    await requestDownload(url, title)
+    await requestDownload(url, title, check?.file ?? null)
   }
 
   const cancelConfirm = () => {
     if (confirm) {
       const url = confirm.url
       setConfirm(null)
+      busyUrlsRef.current.delete(url)
       setBusyUrls((prev) => {
         const next = new Set(prev)
         next.delete(url)
@@ -148,7 +182,7 @@ export default function Download() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void search(query)
+                if (e.key === 'Enter' && !searching) void search(query)
               }}
               placeholder="Search for songs, artists, or albums..."
               spellCheck={false}
@@ -156,17 +190,35 @@ export default function Download() {
               className="w-full py-4 pr-4 bg-transparent text-white placeholder-gray-500 text-base border-none tracking-wide focus:ring-0 focus:outline-none"
             />
             {query.length > 0 && (
-              <button onClick={() => setQuery('')} className="pr-4 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer" aria-label="Clear search">
+              <button onClick={clearSearch} className="pr-4 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer" aria-label="Clear search">
                 <Icon name="x" className="w-5 h-5" />
               </button>
             )}
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 mt-5 w-full">
+        <div className="min-h-[20px] px-1 text-center text-xs" role="status" aria-live="polite">
+          {searching ? (
+            <span className="inline-flex items-center gap-2 text-zinc-400">
+              <span className="spinner-btn" aria-hidden="true" />
+              Searching YouTube…
+            </span>
+          ) : searchError ? (
+            <span className="text-red-400">{searchError}</span>
+          ) : results && results.length > 0 ? (
+            <span className="text-zinc-500">
+              {results.length} result{results.length === 1 ? '' : 's'} for “{searchedTerm}”
+            </span>
+          ) : results && results.length === 0 ? (
+            <span className="text-zinc-500">No results for “{searchedTerm}”.</span>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 mt-2 w-full">
           <button
             onClick={() => void search(query)}
             disabled={searching}
+            aria-busy={searching}
             className="flex-1 rounded-2xl font-semibold text-white text-lg py-4 transition-all duration-300 active:scale-[0.98] hover:-translate-y-1 hover:shadow-xl hover:shadow-orange-500/30 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-wait cursor-pointer"
           >
             <span className="flex items-center justify-center gap-3">
@@ -252,9 +304,29 @@ export default function Download() {
         )}
 
         <div className="mt-8 w-full flex flex-col gap-3 pb-6">
-          {(results ?? []).map((r) => (
-            <ResultRow key={r.id} hit={r} busy={busyUrls.has(`https://www.youtube.com/watch?v=${r.id}`)} onDownload={() => void download(`https://www.youtube.com/watch?v=${r.id}`, r.title, r.uploader)} onPreview={() => setPreviewId(r.id)} />
-          ))}
+          {searching ? null : results && results.length === 0 ? (
+            searchError ? (
+              <div className="py-10 flex flex-col items-center gap-3 text-center">
+                <p className="text-zinc-300 font-medium">Search failed</p>
+                <p className="text-sm text-zinc-500 max-w-md">{searchError}</p>
+                <button
+                  onClick={() => void search(searchedTerm || query)}
+                  className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium hover:bg-orange-400 transition-colors cursor-pointer"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : (
+              <EmptyState
+                title={`No results for “${searchedTerm}”`}
+                hint="Try a different spelling, fewer words, or search by the artist name."
+              />
+            )
+          ) : (
+            (results ?? []).map((r) => (
+              <ResultRow key={r.id} hit={r} busy={busyUrls.has(`https://www.youtube.com/watch?v=${r.id}`)} onDownload={() => void download(`https://www.youtube.com/watch?v=${r.id}`, r.title, r.uploader)} onPreview={() => setPreviewId(r.id)} />
+            ))
+          )}
         </div>
 
         {(jobs ?? []).length > 0 && <JobsPanel jobs={jobs ?? []} />}
@@ -269,17 +341,17 @@ export default function Download() {
         onCancel={cancelConfirm}
         onConfirm={() => {
           if (!confirm) return
-          const { url, title } = confirm
+          const { url, title, file } = confirm
           setConfirm(null)
-          void requestDownload(url, title)
+          void requestDownload(url, title, file)
         }}
         title="Already in your library"
         message={
           confirm
-            ? `"${confirm.title}" is already in your library${confirm.file ? ` (${confirm.file})` : ''}. Download it again anyway?`
+            ? `"${confirm.title}" is already in your library${confirm.file ? ` (${confirm.file})` : ''}. Download it again and replace the existing file?`
             : ''
         }
-        confirmLabel="Download anyway"
+        confirmLabel="Replace file"
       />
     </div>
   )
@@ -308,6 +380,7 @@ function ResultRow({ hit, busy, onDownload, onPreview }: { hit: VideoHit; busy: 
         onClick={onDownload}
         disabled={busy}
         title={busy ? 'Queuing…' : 'Download'}
+        aria-label={`Download ${hit.title}`}
         className="flex items-center justify-center w-10 h-10 rounded-full bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white disabled:opacity-50 transition-colors shadow-md cursor-pointer disabled:cursor-default flex-shrink-0"
       >
         <Icon name="download" className="w-5 h-5" />

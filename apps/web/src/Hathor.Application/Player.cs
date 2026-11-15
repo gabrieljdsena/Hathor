@@ -82,12 +82,11 @@ public sealed class PlayHandler(
                     ?? (await songs.GetByFileAsync(cmd.UserId, cmd.File, includeCover: false, ct))?.IsPodcast
                     ?? false;
                 state.StartPlaying(cmd.File, isPodcast, now);
+                if (!state.CurrentIsPodcast)
+                    PlayerEvents.RaiseSongPlayed(cmd.UserId, cmd.File, state.CurrentPlaylistId);
             }
             else if (state.IsPlaying) state.Pause(now);
             else state.Resume(now);
-
-            if (!state.CurrentIsPodcast)
-                PlayerEvents.RaiseSongPlayed(cmd.UserId, cmd.File, state.CurrentPlaylistId);
         }
 
         await PendingEditHooks.ApplyForLeftFileAsync(pendingEdits, cmd.UserId, oldFile, state.CurrentFile, ct);

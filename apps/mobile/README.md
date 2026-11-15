@@ -19,9 +19,15 @@ background, glass surfaces, orange accent.
 - **Podcasts** — separate podcast library with its own storage folder,
   per-episode chapter marks (seek chips, edit, delete) with optional
   chapter auto-skip (Settings), and podcast tags
-- **Lyrics** — lrclib synced/plain fetch with offline Room cache plus a
-  per-song highlight-timing correction (±20 s stepper, persisted)
+- **Lyrics** — full-screen synced/plain lyrics with active-line follow and
+  tap-to-seek, ±20 s timing correction, romaji, search/replace/edit, and
+  per-chapter podcast lyrics; no drawer.
 - **Playlists & history** — playlist CRUD, played/download history tabs
+- **Web API-backed features** — Discover recommendations and the AI DJ
+  (Vohithe) run on the Hathor Web API; the phone renders the feed/sets and
+  plays returned files. Vohithe's commentary clips are played over ducked
+  music, and the vibe can be typed or spoken (server transcription). No login
+  is required — configure a scoped `hth_` key in Settings.
 - **Server sync** — pulls the library from the Hathor server over the LAN
   (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast
@@ -50,11 +56,96 @@ background, glass surfaces, orange accent.
    API_TOKEN=hth_<per-device key with library:read + library:write>
    ```
 
-   The base URL is your Hathor server on the LAN; the token is a per-device
-   key (create one in the web UI under API keys). Leaving either empty
-   disables sync — the app runs fully offline with local downloads and
-   playback.
+   These are **build-time defaults**. You can also set the server URL and API
+   key at runtime under **Settings → Web API** (no rebuild, no login). Keys for
+   Discover/sync need `library:read` + `library:write`; add `player:read` +
+   `player:control` for AI DJ. Leaving both empty disables server features —
+   the app still runs offline with local downloads and playback.
 3. **Run ▶** on a phone or emulator.
+
+## Develop & test
+
+Prerequisites: **JDK 17**, **Android SDK platform 34 + build-tools 34.0.0**
+(platform-tools gives you `adb`). The repo ships the Gradle wrapper
+(`gradlew` / `gradlew.bat`, Gradle 8.7) — no global Gradle install needed.
+
+```powershell
+# one-time SDK packages (skip what you already have)
+sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+# build + install the debug APK on the connected device
+.\gradlew.bat :app:assembleDebug
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+adb shell am start -n com.musicplayer.android/.MainActivity
+```
+
+### Devices
+
+**BlueStacks 5** (Pie64, Android 9 / API 28, x86_64) is fine for manual runs:
+
+1. In BlueStacks: **Settings → Advanced → Android Debug Bridge** → enable it.
+2. Connect adb to the instance (default port `5555`):
+
+   ```powershell
+   adb connect 127.0.0.1:5555
+   adb devices           # expect 127.0.0.1:5555  device
+   ```
+
+3. Keep BlueStacks running while Gradle installs and drives the app.
+
+> **Known BlueStacks limitation:** installing an instrumentation (androidTest)
+> APK makes BlueStacks 5 terminate the instance on this machine, so
+> `connectedDebugAndroidTest` cannot drive it. Use the AVD below (or a
+> physical phone) for automation and BlueStacks for manual UI work.
+
+**Android emulator (recommended for tests).** One-time setup:
+
+```powershell
+sdkmanager "emulator" "system-images;android-34;google_apis;x86_64"
+avdmanager create avd -n hathor_api34 `
+  -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+
+# headless boot (WHPX acceleration required; check with: emulator -accel-check)
+emulator -avd hathor_api34 -no-window -no-audio -no-boot-anim `
+  -gpu swiftshader_indirect -no-snapshot
+```
+
+The app ships `x86_64` and `arm64-v8a` native binaries, so the AVD, BlueStacks
+and physical phones all work.
+
+### Automated tests
+
+```powershell
+# fast JVM suite: no device needed (Robolectric)
+.\gradlew.bat testDebugUnitTest
+
+# instrumentation suite on a running device/emulator (Compose UI smoke tests)
+.\gradlew.bat connectedDebugAndroidTest
+
+# convenience wrapper: unit tests, then optionally device tests
+.\scripts\test.ps1
+.\scripts\test.ps1 -Device
+.\scripts\test.ps1 -Device -Avd hathor_api34     # boots the AVD if needed
+.\scripts\test.ps1 -Device -Serial <adb-serial>  # phone / BlueStacks
+```
+
+Coverage today:
+
+- `SearchQueryTest` — linkless download search query building (title/artist
+  recovery, whitespace, "Unknown" placeholders).
+- `LyricsParserTest` — LRC `[mm:ss.xx]` parsing, empty-line placeholder,
+  malformed-line skipping.
+- `SyncApiTest` — sync contract decoding (`parseSnapshot`, chapter pseudo-lyrics
+  filtering, `missingFiles` casings, ISO timestamps).
+- `SongDaoTest` — Room schema/DAO contract (upsert-ignore, ordering, deletes,
+  playlist links) on an in-memory database.
+- `MainActivityTest` (`androidTest`) — shell renders every rail destination and
+  Settings opens.
+
+CI runs the JVM suite on pushes/PRs touching `apps/mobile`
+(`.github/workflows/mobile-tests.yml`). The instrumentation suite runs locally
+on an AVD/phone because hosted emulators are slow and flaky; wire it into CI
+with `reactivecircus/android-emulator-runner` if you need it.
 
 ## Project structure
 
@@ -83,9 +174,9 @@ The app talks to the Hathor Web API over the LAN (`data/api/SyncApi.kt`,
 stdlib `HttpURLConnection` + `org.json` — no extra dependencies), using the
 same table semantics as the desktop `database.sql` (see
 `data/db/Entities.kt`), and keeps a local Room copy (`hathor.db`) for
-offline use. Server URL + API token are baked in from `local.properties` at
-build time via `BuildConfig` fields — they never appear in source. Empty
-values disable sync, exactly like desktop.
+offline use. Server URL + API token come from **Settings → Web API**, with
+`local.properties` / `BuildConfig` as build-time defaults; they never appear in
+source. Empty values disable server features.
 
 - **Pull** (`data/remote/PullWorker.kt`, shared by the first-run prompt and
   the Settings Pull button): `GET /api/v1/sync/delta?cursor=` (incremental —
@@ -104,11 +195,12 @@ values disable sync, exactly like desktop.
 
 ## Current status
 
-Sync is complete: Room database, remote reader/writer, `SyncRepository` and
-`PullWorker` are in the repo, wired to the exact APIs the UI already calls.
-Still missing (separate features, untouched by sync): `QueueRepository`,
-`MetadataRepository`, `ArtworkRepository`, `SettingsRepository`,
-`PodcastRepository`, the remaining read repositories the screens import, and
-`DownloadService` — so the project does not compile on a fresh checkout yet.
-`PLAN.md` and `FEATURE_PLAN.md` in this folder are the original build plans
-kept for reference; this README describes the app itself.
+The app builds and both test suites pass (JVM/Robolectric + Compose). Sync,
+local playback/downloads, metadata, playlists, podcasts, Artists/Albums,
+Discover and AI DJ are wired. AI DJ v1 uses the text brief and server-selected
+batches; server voice clips/transcription are not played yet. Cross-device
+resume is still pending.
+
+`WEB_PARITY.md` tracks the web→mobile gap backlog and what remains
+(runtime Web API, Discover, AI DJ and cross-device resume are implemented;
+AI DJ voice clips/auto-advance and optional polish remain).

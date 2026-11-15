@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, deviceId, deviceLabel } from '../api/client'
@@ -73,11 +73,11 @@ function NavItem({
 }
 
 // Sidebar + bottom player bar shell. Classes cloned from Music Player/ui/index.html
-// (desktop titlebar/resize zones intentionally dropped â€” responsive web only).
+// (desktop titlebar/resize zones intentionally dropped - responsive web only).
 export default function Shell() {
   const { logout, username } = useAuth()
   // Converge this tab on every control mutation from anywhere (other tabs,
-  // phone, headless clients) â€” no-op until logged in.
+  // phone, headless clients) - no-op until logged in.
   usePlayerHub(username)
   useAiDjPolling()
   useEffect(() => startPlayerTelemetry(), [])
@@ -87,7 +87,7 @@ export default function Shell() {
   const [vibeOpen, setVibeOpen] = useState(false)
   const djActive = useAiDj((s) => s.state?.status === 'active')
   const [signingOut, setSigningOut] = useState(false)
-  // Collapsible icon rail (desktop #sidebar-toggle â†’ w-64/w-20). Phone
+  // Collapsible icon rail (desktop #sidebar-toggle -> w-64/w-20). Phone
   // screens (<=700px) hide the sidebar entirely behind a hamburger drawer.
   const [collapsed, setCollapsed] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 700,
@@ -177,7 +177,7 @@ export default function Shell() {
   )
 
   // Keyboard shortcuts (desktop Now Playing & shortcuts): Space play/pause,
-  // â†/â†’ seek Â±10s, â†‘/â†“ volume, n/p chapter-aware next/prev, [ ] chapter-only
+  // Left/Right seek +/-10s, Up/Down volume, n/p chapter-aware next/prev, [ ] chapter-only
   // jumps, m mute, s/r shuffle/repeat, ? help. Ignored while typing or when
   // a dialog owns the keyboard. Chapter jumps read a ref: the query cache
   // fills asynchronously, long after this one-time listener is attached.
@@ -386,7 +386,7 @@ export default function Shell() {
             <NavItem
               to="/dj"
               icon="sparkles"
-              label={djActive ? 'AI DJ Â· on air' : 'AI DJ'}
+              label={djActive ? 'AI DJ - ON AIR' : 'AI DJ'}
               collapsed={!narrow && collapsed}
               onNavigate={() => setMobileOpen(false)}
             />
@@ -412,7 +412,7 @@ export default function Shell() {
               )}
               {(narrow || !collapsed) && (
                 <span className="font-medium tracking-wide text-sm">
-                  {signingOut ? 'Signing outâ€¦' : 'Sign out'}
+                  {signingOut ? 'Signing out...' : 'Sign out'}
                 </span>
               )}
             </button>

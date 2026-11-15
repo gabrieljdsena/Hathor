@@ -216,10 +216,27 @@ public class YtDlpDownloader(
         });
         var stdoutTask = ConsumeAsync(proc.StandardOutput, Handle, ct);
         var stderrTask = ConsumeAsync(proc.StandardError, Handle, ct);
-        await proc.WaitForExitAsync(ct);
-        await Task.WhenAll(stdoutTask, stderrTask);
-        lock (stdout) return (proc.ExitCode, stdout.ToString(),
-            Interlocked.CompareExchange(ref stalled, 0, 0) == 1);
+        try
+        {
+            await proc.WaitForExitAsync(ct);
+            await Task.WhenAll(stdoutTask, stderrTask);
+            lock (stdout) return (proc.ExitCode, stdout.ToString(),
+                Interlocked.CompareExchange(ref stalled, 0, 0) == 1);
+        }
+        finally
+        {
+            try
+            {
+                if (!proc.HasExited)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    try { await proc.WaitForExitAsync(stopCts.Token); } catch { }
+                }
+            }
+            catch { }
+            try { await Task.WhenAll(stdoutTask, stderrTask); } catch { }
+        }
     }
 
     // Bound for yt-dlp's progress-blind resolve phase

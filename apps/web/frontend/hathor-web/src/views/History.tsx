@@ -83,7 +83,13 @@ export default function History() {
     if (!item.downloadedLink) return
     const key = `${item.song.file}-${item.datePlayed ?? item.dateDownload}`
     void api
-      .redownload(item.downloadedLink, item.song.title, item.song.artist, item.song.isPodcast)
+      .redownload(
+        item.downloadedLink,
+        item.song.title,
+        item.song.artist,
+        item.song.isPodcast,
+        item.song.file,
+      )
       .then(() => {
         setQueued(key)
         window.setTimeout(() => setQueued((k) => (k === key ? null : k)), 3000)
@@ -156,7 +162,7 @@ export default function History() {
                         e.stopPropagation()
                         navigate(`/artists/${encodeURIComponent(item.song.artist)}`)
                       }}
-                      className="text-zinc-400 text-xs sm:text-sm truncate hover:text-orange-400 transition-colors cursor-pointer"
+                      className="block max-w-full min-w-0 text-left text-zinc-400 text-xs sm:text-sm truncate hover:text-orange-400 transition-colors cursor-pointer"
                     >
                       {item.song.artist}
                     </button>
