@@ -52,6 +52,7 @@
     let allNames = [];
 
     function fuzzyMatches(name, query) {
+        if (window.fuzzyMatch) return window.fuzzyMatch(name, query);
         const hay = (name || '').toLowerCase();
         const needle = (query || '').trim().toLowerCase();
         if (!needle) return true;

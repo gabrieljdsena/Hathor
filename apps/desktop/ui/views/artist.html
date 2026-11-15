@@ -44,6 +44,17 @@
                             clip-rule="evenodd" />
                     </svg>
                 </button>
+                <!-- Shuffle Button -->
+                <button id="av-shuffle-btn" title="Shuffle artist"
+                    class="flex items-center justify-center w-12 h-12 hover:cursor-pointer bg-white/5 text-zinc-300 rounded-full hover:bg-white/10 hover:text-white transition-all duration-300 hover:scale-105 active:scale-95 border border-white/5 shadow-lg focus:outline-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+                        <path d="m18 14 4 4-4 4" />
+                        <path d="m18 2 4 4-4 4" />
+                        <path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22" />
+                        <path d="M2 6h1.972a4 4 0 0 1 3.6 2.2" />
+                        <path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45" />
+                    </svg>
+                </button>
             </div>
         </div>
     </div>
@@ -195,17 +206,14 @@
         // Re-apply active search filter after sort
         const searchInput = document.getElementById("av_txt_search");
         if (searchInput && searchInput.value.trim()) {
-            const value = searchInput.value.toLowerCase();
+            const value = searchInput.value;
             document.querySelectorAll("#av-songs-container .song-row-container").forEach(container => {
                 const songData = container._songData || (typeof window.songDataFromRow === 'function' ? window.songDataFromRow(container) : null) || {};
-                const title = (songData.Title || "").toLowerCase();
-                const artist = (songData.Artist || "").toLowerCase();
-                const album = (songData.Album || "").toLowerCase();
-                if (title.indexOf(value) > -1 || artist.indexOf(value) > -1 || album.indexOf(value) > -1) {
-                    container.style.display = "";
-                } else {
-                    container.style.display = "none";
-                }
+                const fields = [songData.Title || "", songData.Artist || "", songData.Album || ""];
+                const match = window.fuzzyFields
+                    ? window.fuzzyFields(fields, value)
+                    : fields.join(' ').toLowerCase().indexOf(value.toLowerCase()) > -1;
+                container.style.display = match ? "" : "none";
             });
         }
     };
@@ -217,7 +225,7 @@
         document.addEventListener("keyup", function (e) {
             if (e.target && e.target.id === "av_txt_search") {
                 clearTimeout(avSearchTimeout);
-                const value = e.target.value.toLowerCase();
+                const value = e.target.value;
 
                 const clearBtn = document.getElementById('av_clearBtn');
                 if (clearBtn) {
@@ -232,14 +240,11 @@
                     const containers = document.querySelectorAll("#av-songs-container .song-row-container");
                     containers.forEach(container => {
                         const songData = container._songData || (typeof window.songDataFromRow === 'function' ? window.songDataFromRow(container) : null) || {};
-                        const title = (songData.Title || "").toLowerCase();
-                        const artist = (songData.Artist || "").toLowerCase();
-                        const album = (songData.Album || "").toLowerCase();
-                        if (title.indexOf(value) > -1 || artist.indexOf(value) > -1 || album.indexOf(value) > -1) {
-                            container.style.display = "";
-                        } else {
-                            container.style.display = "none";
-                        }
+                        const fields = [songData.Title || "", songData.Artist || "", songData.Album || ""];
+                        const match = window.fuzzyFields
+                            ? window.fuzzyFields(fields, value)
+                            : fields.join(' ').toLowerCase().indexOf(value.toLowerCase()) > -1;
+                        container.style.display = match ? "" : "none";
                     });
                 }, 150);
             }
@@ -362,6 +367,25 @@
                     }
                     await window.play_button(firstSong);
                 }
+            });
+        }
+
+        const shuffleBtn = document.getElementById('av-shuffle-btn');
+        if (shuffleBtn) {
+            shuffleBtn.addEventListener('click', async function () {
+                const songs = (window.currentArtistSongs || []).slice();
+                if (songs.length < 2) return;
+                for (let i = songs.length - 1; i > 0; i -= 1) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [songs[i], songs[j]] = [songs[j], songs[i]];
+                }
+                const firstSong = songs[0];
+                window.current_playing_song = firstSong;
+                if (window.set_active_song_ui) window.set_active_song_ui(firstSong);
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.populate_queue_from_list) {
+                    await window.pywebview.api.populate_queue_from_list(firstSong, songs, null, { type: 'artist', id: window.currentArtistName || null });
+                }
+                await window.play_button(firstSong);
             });
         }
     })();

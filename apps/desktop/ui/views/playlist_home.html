@@ -52,6 +52,8 @@
                 <div>
                     <label for="cover" class="block text-sm font-semibold text-gray-200">Cover Image</label>
                     <input type="file" id="cover" accept="image/*" class="mt-1 block w-full text-sm text-zinc-300 border border-neutral-700 rounded-md cursor-pointer bg-neutral-700 outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-500 transition-all duration-300 hover:border-neutral-500 file:mr-4 file:py-2 file:px-4 file:border-0 file:text-sm file:font-semibold file:bg-neutral-800 file:text-zinc-200 file:hover:bg-neutral-600 file:cursor-pointer file:transition-colors shadow-sm">
+                    <button type="button" id="cover-remove-btn" onclick="clearPlaylistCover()"
+                        class="hidden mt-2 text-xs font-semibold text-red-400 hover:text-red-300 transition-colors cursor-pointer">Remove selected cover</button>
                 </div>
                 <div class="flex justify-end space-x-3 pt-4 border-t border-neutral-700 mt-5">
                     <button type="button" onclick="closePlaylistModal()" class="px-4 py-2 hover:cursor-pointer bg-gray-200 text-slate-800 font-medium rounded-lg hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-opacity-50 transition-all duration-300 hover:scale-105 active:scale-95">Cancel</button>
@@ -71,10 +73,23 @@
     }
 
     function openPlaylistModal() {
+        clearPlaylistCover();
         const modal = document.getElementById('playlistModal');
         modal.classList.remove('hidden');
         modal.classList.add('flex');
     }
+
+    function clearPlaylistCover() {
+        const cover = document.getElementById('cover');
+        if (cover) cover.value = '';
+        const remove = document.getElementById('cover-remove-btn');
+        if (remove) remove.classList.add('hidden');
+    }
+
+    document.getElementById('cover').addEventListener('change', function () {
+        const remove = document.getElementById('cover-remove-btn');
+        if (remove) remove.classList.toggle('hidden', !this.files || !this.files.length);
+    });
 
     window.addEventListener('click', function(event) {
         const modal = document.getElementById('playlistModal');

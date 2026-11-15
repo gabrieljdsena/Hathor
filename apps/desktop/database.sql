@@ -52,6 +52,10 @@ create table if not exists Settings(
     crossfade_seconds real DEFAULT 5,
     chapter_skip integer DEFAULT 0,
     normalize_volume integer DEFAULT 1,
+    hathor_api_url text,
+    hathor_api_key text,
+    device_id text,
+    device_label text,
     FOREIGN KEY (current_song) REFERENCES Songs(file)
 );
 

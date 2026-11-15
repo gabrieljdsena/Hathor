@@ -53,13 +53,74 @@
                         <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
                     </svg>
                 </div>
-                <span id="home-daily-badge" class="text-[11px] font-semibold uppercase tracking-widest px-2.5 py-1 rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30">Today</span>
+                <div class="relative z-20 flex items-center gap-2">
+                    <span id="home-daily-badge" class="text-[11px] font-semibold uppercase tracking-widest px-2.5 py-1 rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30">Today</span>
+                    <button id="home-daily-play" type="button" title="Play Daily Mix" aria-label="Play Daily Mix" disabled
+                        class="pointer-events-auto flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/40 transition-all duration-300 hover:scale-105 hover:bg-orange-400 active:scale-95 disabled:cursor-wait disabled:opacity-40">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 ml-0.5"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                </div>
             </div>
 
             <div class="relative z-10 mt-auto">
                 <h2 class="text-2xl font-bold text-zinc-100 group-hover:text-orange-400 transition-colors">Daily Mix</h2>
                 <p id="home-daily-count" class="text-sm text-zinc-500 mt-1">Generating your mix…</p>
                 <p class="text-xs text-zinc-600 mt-3 leading-relaxed">Fresh every day.</p>
+            </div>
+        </div>
+        <!-- AI DJ card -->
+        <div id="home-card-ai-dj"
+            class="group relative rounded-3xl overflow-hidden p-6 sm:p-8 flex flex-col gap-6 bg-zinc-900/40 border border-white/5 hover:border-orange-500/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] transition-all duration-300 cursor-pointer hover:shadow-orange-500/10 min-h-[260px]">
+            <div class="absolute inset-0 bg-gradient-to-b from-white/[0.04] to-transparent pointer-events-none"></div>
+            <div class="absolute -right-16 -top-16 w-64 h-64 bg-orange-500/15 rounded-full blur-[80px] pointer-events-none"></div>
+
+            <div class="relative z-10 flex items-start justify-between">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center shadow-lg shadow-orange-500/30 group-hover:scale-110 transition-transform duration-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+                    </svg>
+                </div>
+                <div class="relative z-20 flex items-center gap-2">
+                    <span id="home-ai-dj-badge" class="text-[11px] font-semibold uppercase tracking-widest px-2.5 py-1 rounded-full bg-white/[0.04] text-zinc-500 border border-white/10">AI</span>
+                    <button id="home-ai-dj-play" type="button" title="Start AI DJ" aria-label="Start AI DJ"
+                        class="pointer-events-auto flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/40 transition-all duration-300 hover:scale-105 hover:bg-orange-400 active:scale-95 disabled:cursor-wait disabled:opacity-40">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 ml-0.5"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="relative z-10 mt-auto">
+                <h2 class="text-2xl font-bold text-zinc-100 group-hover:text-orange-400 transition-colors">AI DJ</h2>
+                <p id="home-ai-dj-status" class="text-sm text-zinc-500 mt-1">Vohithe picks the set.</p>
+                <p id="home-ai-dj-subtitle" class="text-xs text-zinc-600 mt-3 leading-relaxed">Vohithe picks the set and speaks the transitions.</p>
+            </div>
+        </div>
+
+        <!-- Podcasts card -->
+        <div id="home-card-podcasts"
+            class="group relative rounded-3xl overflow-hidden p-6 sm:p-8 flex flex-col gap-6 bg-zinc-900/40 border border-white/5 hover:border-orange-500/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] transition-all duration-300 cursor-pointer hover:shadow-orange-500/10 min-h-[260px]">
+            <div class="absolute inset-0 bg-gradient-to-b from-white/[0.04] to-transparent pointer-events-none"></div>
+            <div class="absolute -right-16 -top-16 w-64 h-64 bg-amber-500/10 rounded-full blur-[80px] pointer-events-none"></div>
+
+            <div class="relative z-10 flex items-start justify-between">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30 group-hover:scale-110 transition-transform duration-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                    </svg>
+                </div>
+                <div class="relative z-20 flex items-center gap-2">
+                    <span id="home-podcasts-badge" class="text-[11px] font-semibold uppercase tracking-widest px-2.5 py-1 rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30">0 episodes</span>
+                    <button id="home-podcasts-play" type="button" title="Play podcasts" aria-label="Play podcasts" disabled
+                        class="pointer-events-auto flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/40 transition-all duration-300 hover:scale-105 hover:bg-orange-400 active:scale-95 disabled:cursor-wait disabled:opacity-40">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 ml-0.5"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="relative z-10 mt-auto">
+                <h2 class="text-2xl font-bold text-zinc-100 group-hover:text-orange-400 transition-colors">Podcasts</h2>
+                <p id="home-podcasts-count" class="text-sm text-zinc-500 mt-1">Catch up on your saved shows.</p>
+                <p id="home-podcasts-subtitle" class="text-xs text-zinc-600 mt-3 leading-relaxed">Loading episodes�?�</p>
             </div>
         </div>
     </div>
@@ -102,8 +163,71 @@
         }
     }
 
+    async function _homePlayQueue(song, songs, source) {
+        if (!song || !songs || !songs.length) return;
+        window.current_playing_song = song;
+        if (window.set_active_song_ui) window.set_active_song_ui(song);
+        const bridge = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        if (bridge && typeof bridge.populate_queue_from_list === 'function') {
+            await bridge.populate_queue_from_list(song, songs, null, source);
+        }
+        await window.play_button(song);
+    }
+
+    async function _homePlayDaily() {
+        const songs = window._homeDailySongs || [];
+        if (!songs.length) return;
+        await _homePlayQueue(songs[0], songs, {
+            type: 'daily_mix',
+            id: window._homeDailyDate || null
+        });
+    }
+
+    async function _homePlayPodcasts() {
+        const bridge = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        if (!bridge || typeof bridge.get_podcasts !== 'function') return;
+        const list = (await bridge.get_podcasts()) || [];
+        if (!list.length) return;
+        const songs = list.map((item) => Object.assign({}, item, { IsPodcast: true }));
+        const firstFile = songs[0].File;
+        let first = songs[0];
+        if (firstFile && typeof bridge.get_podcast_details === 'function') {
+            try {
+                const details = await bridge.get_podcast_details(firstFile);
+                if (details && details.File) {
+                    first = Object.assign({}, details, { IsPodcast: true });
+                    songs[0] = first;
+                }
+            } catch (e) { /* fall back to the lightweight row */ }
+        }
+        await _homePlayQueue(first, songs, { type: 'podcast', id: firstFile });
+    }
+
     document.getElementById('home-card-all-songs').addEventListener('click', () => _homeGo('all_songs'));
     document.getElementById('home-card-daily-mix').addEventListener('click', () => _homeGo('daily_mix'));
+    const _homeDailyPlay = document.getElementById('home-daily-play');
+    if (_homeDailyPlay) _homeDailyPlay.addEventListener('click', (event) => {
+        event.stopPropagation();
+        _homePlayDaily().catch(() => {});
+    });
+    const _homePodcastsCard = document.getElementById('home-card-podcasts');
+    if (_homePodcastsCard) _homePodcastsCard.addEventListener('click', () => _homeGo('podcasts'));
+    const _homePodcastsPlay = document.getElementById('home-podcasts-play');
+    if (_homePodcastsPlay) _homePodcastsPlay.addEventListener('click', (event) => {
+        event.stopPropagation();
+        _homePlayPodcasts().catch(() => {});
+    });
+    const _homeAiCard = document.getElementById('home-card-ai-dj');
+    if (_homeAiCard) _homeAiCard.addEventListener('click', () => _homeGo('ai_dj'));
+    const _homeAiPlay = document.getElementById('home-ai-dj-play');
+    if (_homeAiPlay) _homeAiPlay.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (window.startAiDj) window.startAiDj('', true);
+    });
+    if (window.AiDjUI) {
+        if (window.AiDjUI.view) window.AiDjUI.apply(window.AiDjUI.view);
+        window.AiDjUI.refresh();
+    }
 
     // Home dashboard exposes no song list (cards only).
     window._homeSongsData = [];
@@ -220,6 +344,10 @@
                 if (py && typeof py.get_daily_mix === 'function') {
                     const mix = await py.get_daily_mix();
                     const songs = (mix && mix.songs) || [];
+                    window._homeDailySongs = songs;
+                    window._homeDailyDate = (mix && mix.date) || null;
+                    const dailyPlay = document.getElementById('home-daily-play');
+                    if (dailyPlay) dailyPlay.disabled = songs.length === 0;
                     const date = (mix && mix.date) || '';
                     const el = document.getElementById('home-daily-count');
                     if (el) {
@@ -233,6 +361,34 @@
             } catch (e) {
                 const el = document.getElementById('home-daily-count');
                 if (el) el.textContent = 'A fresh mix every day';
+                const dailyPlay = document.getElementById('home-daily-play');
+                if (dailyPlay) dailyPlay.disabled = true;
+            }
+
+            try {
+                const py = await api();
+                if (py && typeof py.get_podcasts === 'function') {
+                    const podcasts = (await py.get_podcasts()) || [];
+                    window._homePodcasts = podcasts;
+                    const count = podcasts.length;
+                    const badge = document.getElementById('home-podcasts-badge');
+                    if (badge) badge.textContent = `${count} episode${count === 1 ? '' : 's'}`;
+                    const line = document.getElementById('home-podcasts-count');
+                    if (line) line.textContent = count ? 'Catch up on your saved shows.' : 'No episodes yet.';
+                    const subtitle = document.getElementById('home-podcasts-subtitle');
+                    if (subtitle) {
+                        subtitle.textContent = count
+                            ? `${count} episode${count === 1 ? '' : 's'} ready to play.`
+                            : 'Download a podcast to start listening.';
+                    }
+                    const play = document.getElementById('home-podcasts-play');
+                    if (play) play.disabled = count === 0;
+                }
+            } catch (e) {
+                const subtitle = document.getElementById('home-podcasts-subtitle');
+                if (subtitle) subtitle.textContent = 'Could not load podcasts.';
+                const play = document.getElementById('home-podcasts-play');
+                if (play) play.disabled = true;
             }
 
             try {

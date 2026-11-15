@@ -13,17 +13,28 @@ settings.py           Loads persisted settings from SQLite
 monitor.py            Debug RAM monitor (disabled)
 services/
   playback.py         PlaybackController — queue, shuffle, repeat, position, crossfade engine, queue-source persistence
-  metadata.py         MetadataManager — mutagen tag read/write, covers, deletes (songs + podcasts)
-  database.py         DatabaseManager — SQLite CRUD, library/podcast listings, daily mix, recents, queue rebuild + remote import
+  metadata.py         MetadataManager — mutagen tag read/write, covers, deletes (songs + podcasts), pending edits
+  library_moves.py    Song ↔ podcast file/catalog moves with tombstones and rollback
+  images.py           Pillow playlist-cover downscale/JPEG normalization
+  database.py         DatabaseManager — SQLite CRUD, library/podcast listings, daily mix, recents, history, queue rebuild + remote import
   lyrics.py           LyricsService — fetch, cache, LRC parse, romaji, track-only fallback
   windows_media.py    WindowsMediaOverlay — winsdk SMTC media keys/overlay
   downloads.py        DownloadManager — bounded download pool, job log, retries
+  discover.py         DiscoverService — feed, preview resolution, owned guard, local downloads
+  ai_dj.py            AiDjController — Vohithe session, batches, voice, boundary handoff
+  player_sync.py      Server player queue/play/next bridge used by AI DJ
+  api_config.py       Runtime Web API URL/key (SQLite + .env fallback)
+  hathor_api.py       Shared authenticated HTTP client
   apple.py            AppleService — artist/album artwork lookups
   startup_maintenance.py  FFmpeg auto-download + yt-dlp update checks
-  __init__.py         Exports the services
+  __init__.py         Lazy service exports
 ui/
   index.html          Main single-page app shell
-  views/*.html        View fragments (home dashboard, all_songs, daily_mix, podcasts, artist, album, playlists, download, history, settings)
+  views/*.html        View fragments (home dashboard, all_songs, daily_mix, discover, ai_dj, podcasts, artist, album, playlists, download, history, settings)
+  js/discover-preview.js  Global Discover preview queue/dock
+  js/fuzzy.js         Shared typo-tolerant search matcher
+  js/ai-dj-*.js       Global Vohithe voice bus, vibe recorder, shell state
+  assets/             Vohithe portrait and bundled UI images
   modals/*.html       Modal fragments (add/edit playlist, edit song)
   input.css           Tailwind source (v4 syntax)
   output.css          Compiled Tailwind output (generated)
@@ -31,6 +42,10 @@ ui/
   cdn.min.js          Vendored Alpine.js
   notyf.*             Vendored Notyf
   sweetalert2/        Vendored SweetAlert2
+tests/                Python stdlib/pytest tests + JS preview/voice/fuzzy smoke tests
+pytest.ini            Test discovery config
+requirements-dev.txt  Test tooling (pytest)
+WEB_PARITY.md         Web -> desktop parity plan/progress
 music_player.spec     PyInstaller spec
 requirements.txt      Python deps
 package.json          npm deps (Alpine, SweetAlert2, Notyf, Tailwind toolchain)
@@ -87,10 +102,23 @@ The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `node_modules/`, and `pykakas
 - Logging to stdout uses `[Python]`, `[Sync]`, `[Debug]` prefixes.
 - JSON is passed between Python and JS as serialized strings via `evaluate_js`; bridge methods that receive data from JS accept plain dicts from `pywebview`.
 
+## Testing
+
+```powershell
+python -m pytest -q
+python -m unittest discover -s tests
+npm run test:js
+```
+
+The Python suite is stdlib-compatible, so it runs without pygame/pywebview. The
+JS smoke test uses minimal DOM/Audio fakes for the global Discover preview
+queue. `.github/workflows/desktop-tests.yml` runs both suites, `npm ci` and the
+Tailwind build on Windows.
+
 ## Contributing flow
 
 1. Create a branch / fork.
 2. Make changes, keeping the service-wrapper pattern in `api.py`.
-3. Run the app once with the new code; sanity-check downloads, playback, and (if configured) sync.
-4. No automated test suite currently exists; manual verification is the norm.
+3. Run the automated tests above.
+4. Run the app once with the new code; sanity-check downloads, playback, and (if configured) sync/Discover.
 5. Commit with a concise message referencing the feature/version (repo history uses version tags like `0.90`).

@@ -24,6 +24,9 @@ from services import (
     DownloadManager,
     startup_maintenance
 )
+from services.discover import DiscoverService
+from services.ai_dj import AiDjController
+from services.images import normalize_image_data_uri
 
 # ==========================================================================
 # Native Windows window chrome
@@ -173,6 +176,9 @@ class Api:
         self.lyrics = LyricsService(self)
         self.apple = AppleService(self)
         self.download_manager = DownloadManager(self)
+        self.discover = DiscoverService(self)
+        self.ai_dj = AiDjController(self)
+        self._suppress_preview_stop = False
 
     def _ensure_schema(self):
         """Add columns/tables introduced after the database was first created."""
@@ -194,6 +200,10 @@ class Api:
                         conn.execute(f"ALTER TABLE Settings ADD COLUMN {column} {ddl}")
                     except sqlite3.OperationalError:
                         pass
+                # Runtime Web API columns live beside the other settings and
+                # are also covered by database.sql for fresh installs.
+                from services.api_config import ensure_settings_columns
+                ensure_settings_columns(conn)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS Download_Queue (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -516,6 +526,12 @@ class Api:
     def delete_song(self, song_data):
         return self.metadata.delete_song(song_data)
 
+    def move_song_to_podcast(self, song_data):
+        return self.metadata.move_song_to_podcast(song_data)
+
+    def move_podcast_to_song(self, song_data):
+        return self.metadata.move_podcast_to_song(song_data)
+
     def update_song_metadata(self, song_data):
         return self.metadata.update_song_metadata(song_data)
 
@@ -759,12 +775,22 @@ class Api:
         return self.db.load_playlists()
 
     def new_playlist(self, data):
+        data = dict(data or {})
+        if data.get("Cover"):
+            data["Cover"] = normalize_image_data_uri(data["Cover"])
         return self.db.new_playlist(data)
 
     def getImage(self, id):
         return self.db.getImage(id)
 
     def update_playlist(self, playlist_id, data):
+        data = dict(data or {})
+        if "thumbnail" in data:
+            thumb = data.get("thumbnail")
+            if thumb in (None, "", "REMOVE"):
+                data["thumbnail"] = None
+            else:
+                data["thumbnail"] = normalize_image_data_uri(thumb)
         return self.db.update_playlist(playlist_id, data)
 
     def delete_playlist(self, playlist_id):
@@ -895,11 +921,11 @@ class Api:
     def get_recently_downloaded(self, limit=15):
         return self.db.get_recently_downloaded(limit)
 
-    def get_download_history(self, page=1, limit=10):
-        return self.db.get_download_history(page, limit)
+    def get_download_history(self, page=1, limit=10, include_cover=True):
+        return self.db.get_download_history(page, limit, include_cover)
 
-    def get_played_history(self, page=1, limit=10):
-        return self.db.get_played_history(page, limit)
+    def get_played_history(self, page=1, limit=10, include_cover=True):
+        return self.db.get_played_history(page, limit, include_cover)
 
     def sync_local_songs_to_db(self):
         return self.db.sync_local_songs_to_db()
@@ -999,6 +1025,22 @@ class Api:
             self.playback.sync_output_volume()
         except Exception:
             pass
+        # Discover previews and AI DJ voice are separate webview audio
+        # elements; keep their level aligned with the main slider.
+        if self._window:
+            try:
+                self._window.evaluate_js(
+                    f"if (window.DiscoverPreview) window.DiscoverPreview.setVolume({float(volume)});"
+                    f"if (window.AiDjVoice) window.AiDjVoice.setVolume({float(volume)});"
+                )
+            except Exception:
+                pass
+
+    def get_current_volume(self):
+        try:
+            return max(0.0, min(1.0, float(settings.volume)))
+        except (TypeError, ValueError):
+            return 0.7
 
     def get_playback_settings(self):
         """Crossfade + chapter-skip prefs for the Settings UI."""
@@ -1240,6 +1282,147 @@ class Api:
     def retry_download(self, data):
         return self.download_manager.retry(data)
 
+    # ==========================
+    # Discover
+    # ==========================
+    def _discover_call(self, method, *args):
+        try:
+            data = method(*args)
+            return {"ok": True, "data": data}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def discover_get(self):
+        return self._discover_call(self.discover.feed)
+
+    def discover_refresh(self):
+        return self._discover_call(self.discover.refresh)
+
+    def discover_insights(self, window_days=90):
+        return self._discover_call(self.discover.insights, window_days)
+
+    def discover_tune(self, window_days=90):
+        return self._discover_call(self.discover.tune, window_days)
+
+    def discover_feedback(self, payload):
+        try:
+            self.discover.feedback(payload)
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def discover_check_download(self, title, artist="", library="songs"):
+        try:
+            result = self.discover.check_owned(title, artist, library)
+            return {"ok": True, **result}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def check_download(self, title, artist="", library="songs"):
+        """Shared owned-copy guard for Discover and the Download screen."""
+        return self.discover_check_download(title, artist, library)
+
+    def download_check_owned(self, query, library="songs"):
+        """Owned check for a direct/batch download query."""
+        try:
+            result = self.discover.check_owned_query(query, library)
+            return {"ok": True, **result}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def discover_download(self, title, artist=""):
+        try:
+            result = self.discover.submit_download(title, artist)
+            return {"ok": True, **result}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def resolve_discover_preview(self, title, artist=""):
+        try:
+            return {"ok": True, **self.discover.resolve_preview(title, artist)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def resolve_discover_video(self, title, artist=""):
+        try:
+            return {"ok": True, **self.discover.resolve_video(title, artist)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    # ==========================
+    # Discover preview / main handoff
+    # ==========================
+    def pause_for_preview(self):
+        """Pause main playback before a Discover preview starts."""
+        try:
+            if not self.playing:
+                return False
+            self._suppress_preview_stop = True
+            try:
+                self.playback.play_button(None)
+            finally:
+                self._suppress_preview_stop = False
+            return True
+        except Exception as exc:
+            print(f" [Python] Preview pause failed: {exc}")
+            return False
+
+    # ==========================
+    # AI DJ / Vohithe
+    # ==========================
+    def ai_dj_view(self):
+        return self.ai_dj.view()
+
+    def ai_dj_refresh(self):
+        return self.ai_dj.refresh()
+
+    def ai_dj_start(self, brief=""):
+        return self.ai_dj.start(brief)
+
+    def ai_dj_stop(self):
+        return self.ai_dj.stop()
+
+    def ai_dj_feedback(self, event, track_file=None):
+        try:
+            return {"ok": self.ai_dj.feedback(event, track_file)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def ai_dj_transcribe(self, audio, language=None):
+        try:
+            return {"ok": True, "text": self.ai_dj.transcribe(audio, language)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def ai_dj_clip_url(self, clip_id):
+        try:
+            return {"ok": True, "url": self.ai_dj.clip_url(clip_id)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def ai_dj_voice_finished(self, generation):
+        return self.ai_dj.voice_finished(generation)
+
+    def ai_dj_voice_error(self, generation, message):
+        return self.ai_dj.voice_error(generation, message)
+
+    def set_ai_dj_duck(self, level):
+        return self.ai_dj.set_duck(level)
+
+    def _stop_discover_preview(self):
+        """Called by playback when a main track starts/resumes."""
+        if getattr(self, '_suppress_preview_stop', False):
+            return
+        if not self._window:
+            return
+        try:
+            self._window.evaluate_js(
+                "if (window.DiscoverPreview && window.DiscoverPreview.isActive "
+                "&& window.DiscoverPreview.isActive()) { window.DiscoverPreview.stop(); }"
+            )
+        except Exception:
+            pass
+
     def send_song_list(self):
         path = Path(settings.path)
         files = [f.name for f in path.iterdir() if f.is_file() and f.suffix.lower() == '.mp3']
@@ -1275,6 +1458,55 @@ class Api:
         safe_podcasts = json.dumps(getattr(settings, 'podcasts_path', ''))
         if self._window:
             self._window.evaluate_js(f"if (typeof window.load_settings === 'function') window.load_settings({settings.volume}, {settings.limit_downloads}, {safe_bg}, {safe_path}, {safe_podcasts});")
+
+    # ---- Runtime Web API configuration -------------------------------
+    def get_api_config_view(self):
+        """Settings payload; the full API key never crosses the bridge."""
+        from services.api_config import get_api_config_view
+        return get_api_config_view(self.db_path)
+
+    def _push_api_config(self, config=None):
+        if not self._window:
+            return
+        try:
+            payload = config or self.get_api_config_view()
+            self._window.evaluate_js(
+                "if (typeof window.load_api_config === 'function') "
+                f"window.load_api_config({json.dumps(payload)});"
+            )
+        except Exception as exc:
+            print(f" [Python] API config UI update failed: {exc}")
+
+    def save_api_config(self, url, key=""):
+        """Persist the server URL/key. A blank key keeps the saved one."""
+        from services.api_config import save_api_config
+        try:
+            config = save_api_config(url, key, self.db_path)
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+        self._push_api_config(config)
+        return {
+            "ok": True,
+            "message": "Web API settings saved.",
+            "config": config,
+        }
+
+    def clear_api_config(self):
+        from services.api_config import clear_api_config
+        try:
+            config = clear_api_config(self.db_path)
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+        self._push_api_config(config)
+        return {
+            "ok": True,
+            "message": "Saved Web API settings cleared; .env fallback still applies.",
+            "config": config,
+        }
+
+    def test_api_connection(self, url=None, key=""):
+        from services.api_config import test_connection
+        return test_connection(url, key, self.db_path)
 
     def load_current_song(self):
         try:
@@ -1361,6 +1593,16 @@ class Api:
                 songs = self.db.get_recently_played()
             elif stype == 'recently_downloaded':
                 songs = self.db.get_recently_downloaded()
+            elif stype == 'download_history':
+                history = self.db.get_download_history(1, 5000, include_cover=False)
+                raw = history.get('items', []) if isinstance(history, dict) else []
+                seen = set()
+                songs = []
+                for item in raw:
+                    name = (item or {}).get('File')
+                    if name and name not in seen:
+                        seen.add(name)
+                        songs.append(item)
             elif stype == 'podcast' and file:
                 # Single-episode queue (no playlists/queue for podcasts). The
                 # episode may be gone (folder moved, file deleted) -> fall back.
@@ -1477,5 +1719,7 @@ class Api:
                 file_types=('Image Files (*.bmp;*.jpg;*.jpeg;*.gif;*.png)', 'All files (*.*)')
             )
             if result and len(result) > 0:
-                return self.get_local_image_base64(result[0])
+                return normalize_image_data_uri(
+                    self.get_local_image_base64(result[0])
+                )
         return None

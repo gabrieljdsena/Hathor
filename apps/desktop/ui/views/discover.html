@@ -1,0 +1,682 @@
+<div class="max-w-5xl mx-auto w-full px-6 sm:px-8 pt-6 pb-36">
+    <div class="flex items-center gap-4 flex-wrap">
+        <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.15)]">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm2.25-11.25-3 6-1.5-3.75-3.75-1.5 6-3 2.25 2.25Z" />
+            </svg>
+        </div>
+        <div class="min-w-0">
+            <h1 class="text-3xl font-bold text-zinc-100">Discover</h1>
+            <p id="discover-subtitle" class="text-sm text-zinc-500 mt-1 tracking-wide">Finding new music...</p>
+        </div>
+        <div class="ml-auto flex items-center gap-2">
+            <button id="discover-play-all" type="button" title="Preview the first 20 visible suggestions"
+                class="hidden items-center gap-2 rounded-full bg-orange-500 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-widest text-white shadow-lg shadow-orange-500/20 transition-colors hover:bg-orange-400 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3.5 h-3.5">
+                    <path d="M8 5v14l11-7z" />
+                </svg>
+                Play all
+            </button>
+            <button id="discover-refresh" type="button" title="Refresh suggestions"
+                class="inline-flex items-center gap-2 text-xs text-zinc-500 hover:text-orange-400 disabled:text-zinc-600 uppercase tracking-widest transition-colors cursor-pointer disabled:cursor-default">
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="flex items-center gap-3 mt-4 flex-wrap">
+        <div class="relative w-full sm:w-72">
+            <svg xmlns="http://www.w3.org/2000/svg" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z" />
+            </svg>
+            <input id="discover-search" type="text" spellcheck="false" placeholder="Search suggestions..."
+                class="w-full rounded-full border border-white/10 bg-white/[0.04] py-2.5 pl-10 pr-9 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none transition-all duration-300 focus:border-orange-500/50 focus:bg-white/[0.06] focus:ring-1 focus:ring-orange-500/40">
+            <button id="discover-search-clear" type="button" title="Clear search"
+                class="hidden absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-zinc-500 hover:text-white hover:bg-white/10 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
+            </button>
+        </div>
+        <div id="discover-source-filters" class="flex items-center gap-1.5 flex-wrap"></div>
+    </div>
+
+    <div id="discover-insights"></div>
+
+    <div id="discover-notice" role="status" aria-live="polite"
+        class="mt-4 hidden rounded-xl border border-white/10 bg-zinc-900/60 px-4 py-2.5 text-sm text-zinc-300"></div>
+    <div id="discover-refreshing" class="mt-4 hidden items-center gap-2 text-sm text-zinc-400" role="status" aria-live="polite">
+        <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-orange-400/30 border-t-orange-400" aria-hidden="true"></span>
+        <span>Refreshing suggestions...</span>
+    </div>
+
+    <div id="discover-loading" class="py-16 text-center text-sm text-zinc-500 animate-pulse">Finding songs you haven't heard...</div>
+    <div id="discover-empty" class="hidden py-16 text-center">
+        <p class="text-lg font-medium text-zinc-300">No suggestions right now</p>
+        <p class="mt-2 text-sm text-zinc-500">Play and download more music - suggestions grow from your listening history.</p>
+    </div>
+    <div id="discover-grid" class="hidden mt-6 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"></div>
+</div>
+
+<script>
+    (function initDiscoverView() {
+        'use strict';
+
+        var api = function () {
+            return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        };
+        var SOURCE_LABEL = {
+            similar: 'Similar tracks',
+            cf: 'Similar listeners',
+            graph: 'Related artists',
+            tag: 'From your genres',
+            audio: 'Sounds like yours',
+            popular: 'Popular',
+            artist: 'From your artists',
+            chart: 'Trending',
+            llm: 'Picked for you'
+        };
+        var SOURCE_BADGE = {
+            similar: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
+            cf: 'text-violet-400 border-violet-500/30 bg-violet-500/10',
+            graph: 'text-sky-400 border-sky-500/30 bg-sky-500/10',
+            tag: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
+            audio: 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10',
+            popular: 'text-zinc-300 border-white/15 bg-white/5',
+            artist: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
+            chart: 'text-orange-400 border-orange-500/30 bg-orange-500/10',
+            llm: 'text-violet-400 border-violet-500/30 bg-violet-500/10'
+        };
+        var FILTERS = ['all', 'similar', 'graph', 'tag', 'popular', 'artist', 'chart', 'llm'];
+
+        var state = {
+            feed: null,
+            items: [],
+            source: 'all',
+            search: '',
+            refreshing: false,
+            pending: new Set(),
+            jobs: {},
+            jobStatus: {},
+            tracked: {},
+            insights: null,
+            tuning: false,
+            loading: true,
+            disposed: false,
+            noticeTimer: null,
+            pollTimer: null
+        };
+
+        var els = {
+            subtitle: document.getElementById('discover-subtitle'),
+            playAll: document.getElementById('discover-play-all'),
+            refresh: document.getElementById('discover-refresh'),
+            search: document.getElementById('discover-search'),
+            clear: document.getElementById('discover-search-clear'),
+            filters: document.getElementById('discover-source-filters'),
+            insights: document.getElementById('discover-insights'),
+            notice: document.getElementById('discover-notice'),
+            refreshing: document.getElementById('discover-refreshing'),
+            loading: document.getElementById('discover-loading'),
+            empty: document.getElementById('discover-empty'),
+            grid: document.getElementById('discover-grid')
+        };
+
+        function esc(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+            });
+        }
+
+        function keyOf(item) {
+            return String((item && item.title) || '').trim().toLowerCase() + '|' +
+                String((item && item.artist) || '').trim().toLowerCase();
+        }
+
+        function jobKey(title, artist) {
+            return String(title || '').trim().toLowerCase() + '|' +
+                String(artist || '').trim().toLowerCase();
+        }
+
+        function dateLabel(value) {
+            try {
+                return new Date(value + 'T00:00:00').toLocaleDateString(undefined, {
+                    weekday: 'short', month: 'short', day: 'numeric'
+                });
+            } catch (e) {
+                return value || '';
+            }
+        }
+
+        function showNotice(text) {
+            if (!els.notice) return;
+            els.notice.textContent = text || '';
+            els.notice.classList.toggle('hidden', !text);
+            if (state.noticeTimer) clearTimeout(state.noticeTimer);
+            if (text) {
+                state.noticeTimer = setTimeout(function () {
+                    els.notice.classList.add('hidden');
+                }, 5000);
+            }
+        }
+
+        function filteredItems() {
+            var q = state.search.trim();
+            return state.items.filter(function (item) {
+                if (state.source !== 'all' && item.source !== state.source) return false;
+                if (!q) return true;
+                if (window.fuzzyFields) {
+                    return window.fuzzyFields(
+                        [item.title || '', item.artist || '', item.album || ''], q);
+                }
+                var hay = (String(item.title || '') + ' ' + String(item.artist || '') +
+                    ' ' + String(item.album || '')).toLowerCase();
+                return hay.indexOf(q.toLowerCase()) !== -1;
+            });
+        }
+
+        function paintHeader() {
+            var items = filteredItems();
+            if (els.subtitle) {
+                var text = items.length + ' suggestion' + (items.length === 1 ? '' : 's');
+                if (state.feed && state.feed.date) text += ' \u00b7 ' + dateLabel(state.feed.date);
+                if (state.feed && !state.feed.cached) text += ' \u00b7 fresh';
+                els.subtitle.textContent = state.loading ? 'Finding new music...' : text;
+            }
+            if (els.playAll) {
+                var showPlayAll = !state.loading && items.length > 0;
+                els.playAll.classList.toggle('hidden', !showPlayAll);
+                els.playAll.classList.toggle('inline-flex', showPlayAll);
+            }
+            if (els.refresh) {
+                els.refresh.disabled = !!state.refreshing;
+                els.refresh.innerHTML = (state.refreshing ? '<span class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-500/30 border-t-orange-400"></span><span>Refreshing...</span>' : '<span>Refresh</span>');
+            }
+            if (els.refreshing) {
+                els.refreshing.classList.toggle('hidden', !state.refreshing);
+                els.refreshing.classList.toggle('flex', !!state.refreshing);
+            }
+            if (els.loading) els.loading.classList.toggle('hidden', !state.loading);
+        }
+
+        function paintFilters() {
+            if (!els.filters) return;
+            els.filters.innerHTML = FILTERS.map(function (source) {
+                var active = state.source === source;
+                return '<button type="button" data-source="' + source + '" class="text-[11px] font-semibold uppercase tracking-widest px-3 py-1.5 rounded-full border transition-colors cursor-pointer ' +
+                    (active ? 'text-orange-400 border-orange-500/40 bg-orange-500/10' : 'text-zinc-500 border-white/10 hover:text-zinc-300 hover:border-white/20') + '">' +
+                    (source === 'all' ? 'All' : esc(SOURCE_LABEL[source] || source)) + '</button>';
+            }).join('');
+        }
+
+        function badgeFor(source) {
+            return SOURCE_BADGE[source] || SOURCE_BADGE.chart;
+        }
+
+        function cardHtml(item) {
+            var key = keyOf(item);
+            var source = item.source || 'chart';
+            var art = item.artworkUrl
+                ? '<img src="' + esc(item.artworkUrl) + '" alt="" loading="lazy" class="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" onerror="this.style.display=\'none\'">'
+                : '';
+            var album = [item.album, item.year].filter(Boolean).join(' \u00b7 ');
+            var pending = state.pending.has(key);
+            return '<article data-card="' + esc(key) + '" class="group relative rounded-2xl overflow-hidden bg-zinc-900/40 border border-white/5 hover:border-orange-500/40 transition-all duration-300">' +
+                '<div class="relative aspect-square w-full overflow-hidden bg-zinc-800">' +
+                '<div class="absolute inset-0 flex items-center justify-center text-zinc-600"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-10 h-10"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg></div>' + art +
+                '<div class="absolute top-2 left-2"><span class="text-[10px] font-semibold uppercase tracking-widest px-2 py-1 rounded-full border backdrop-blur-md ' + badgeFor(source) + '">' + esc(SOURCE_LABEL[source] || source) + '</span></div>' +
+                '<button type="button" data-action="play" data-key="' + esc(key) + '" title="Play ' + esc(item.title) + '" aria-label="Play ' + esc(item.title) + ' by ' + esc(item.artist) + '" class="absolute inset-0 m-auto w-12 h-12 rounded-full bg-orange-500/90 hover:bg-orange-400 text-white shadow-xl shadow-orange-500/30 backdrop-blur-sm flex items-center justify-center transition-all duration-300 cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100">' +
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 ml-0.5"><path d="M8 5v14l11-7z"/></svg></button>' +
+                '<button type="button" data-action="video" data-key="' + esc(key) + '" title="Preview ' + esc(item.title) + ' on YouTube" aria-label="Preview ' + esc(item.title) + ' on YouTube" class="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 hover:bg-orange-500 flex items-center justify-center text-white backdrop-blur-md transition-all duration-300 cursor-pointer">' +
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 ml-0.5"><path d="M8 5v14l11-7z"/></svg></button>' +
+                '<button type="button" data-action="dismiss" data-key="' + esc(key) + '" title="Not interested in ' + esc(item.title) + '" aria-label="Not interested in ' + esc(item.title) + ' by ' + esc(item.artist) + '" class="absolute bottom-2 left-2 w-8 h-8 rounded-full bg-black/60 hover:bg-red-500 flex items-center justify-center text-white backdrop-blur-md opacity-60 hover:opacity-100 transition-all duration-300 cursor-pointer">' +
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4"><path d="M6 6l12 12M18 6 6 18"/></svg></button>' +
+                '<button type="button" data-action="download" data-key="' + esc(key) + '" ' + (pending ? 'disabled' : '') + ' title="' + (pending ? 'Queuing...' : 'Download ' + esc(item.title)) + '" aria-label="Download ' + esc(item.title) + ' by ' + esc(item.artist) + '" class="absolute bottom-2 right-2 w-11 h-11 rounded-full bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-700 flex items-center justify-center text-white shadow-lg shadow-orange-500/40 transition-all duration-300 cursor-pointer disabled:cursor-default">' +
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg></button>' +
+                '<div data-role="progress" class="hidden absolute bottom-2 right-2 items-center gap-2 rounded-full bg-black/60 px-3 py-2.5 backdrop-blur-md" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
+                '<div class="w-16 h-1.5 rounded-full bg-white/10 overflow-hidden"><div data-role="progress-fill" class="h-full rounded-full bg-orange-400 transition-all duration-300" style="width:0%"></div></div>' +
+                '<span data-role="progress-label" class="text-[11px] font-mono text-zinc-200">0%</span></div>' +
+                '</div><div class="p-3 flex flex-col min-w-0">' +
+                '<div class="text-sm font-medium text-zinc-100 truncate group-hover:text-orange-400 transition-colors">' + esc(item.title || 'Unknown') + '</div>' +
+                '<div class="text-xs text-zinc-500 truncate mt-0.5">' + esc(item.artist || '') + '</div>' +
+                '<div class="text-[11px] text-zinc-600 truncate mt-0.5">' + esc(album || ' ') + '</div>' +
+                (item.reason ? '<div class="text-[10px] text-zinc-500 truncate mt-1" title="' + esc(item.reason) + '">' + esc(item.reason) + '</div>' : '') +
+                '</div></article>';
+        }
+
+        function paintGrid() {
+            var items = filteredItems();
+            if (!els.grid) return;
+            var showGrid = !state.loading && items.length > 0;
+            els.grid.classList.toggle('hidden', !showGrid);
+            els.grid.classList.toggle('grid', showGrid);
+            if (els.empty) els.empty.classList.toggle('hidden', state.loading || items.length > 0);
+            if (state.loading || items.length === 0) {
+                els.grid.innerHTML = '';
+            } else {
+                els.grid.innerHTML = items.map(cardHtml).join('');
+            }
+            applyProgress();
+            paintHeader();
+        }
+
+        function paintAll() {
+            paintHeader();
+            paintFilters();
+            paintGrid();
+            paintInsights();
+        }
+
+        function jobIsActive(job) {
+            if (!job) return false;
+            var status = String(job.status || '').toLowerCase();
+            return status !== 'done' && status !== 'completed' && status !== 'failed' && status !== 'cancelled';
+        }
+
+        function applyProgress() {
+            if (!els.grid) return;
+            Array.prototype.forEach.call(els.grid.querySelectorAll('[data-card]'), function (card) {
+                var key = card.getAttribute('data-card');
+                var job = state.jobs[key];
+                var progress = card.querySelector('[data-role="progress"]');
+                var download = card.querySelector('[data-action="download"]');
+                if (!progress || !download) return;
+                if (job && jobIsActive(job)) {
+                    var pct = Math.max(0, Math.min(100, Math.round(Number(job.progress) || 0)));
+                    progress.classList.remove('hidden');
+                    progress.classList.add('flex');
+                    progress.setAttribute('aria-valuenow', String(pct));
+                    var fill = progress.querySelector('[data-role="progress-fill"]');
+                    var label = progress.querySelector('[data-role="progress-label"]');
+                    if (fill) fill.style.width = pct + '%';
+                    if (label) label.textContent = pct + '%';
+                    download.classList.add('hidden');
+                } else {
+                    progress.classList.add('hidden');
+                    progress.classList.remove('flex');
+                    download.classList.remove('hidden');
+                }
+            });
+        }
+
+        function paintInsights() {
+            if (!els.insights) return;
+            var data = state.insights;
+            if (!data || typeof data.downloads !== 'number') {
+                els.insights.innerHTML = '';
+                return;
+            }
+            var activity = data.downloads + data.dismissals + data.previews + data.clicks +
+                (data.completedPlays || 0) + (data.skippedPlays || 0);
+            if (activity === 0) {
+                els.insights.innerHTML = '';
+                return;
+            }
+            function pct(value) {
+                return Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100) + '%';
+            }
+            function stat(label, value, hint) {
+                return '<div class="rounded-xl bg-black/20 border border-white/5 px-3 py-2">' +
+                    '<div class="text-[10px] uppercase tracking-widest text-zinc-500">' + esc(label) + '</div>' +
+                    '<div class="text-lg font-semibold text-zinc-100 mt-0.5">' + esc(value) + '</div>' +
+                    '<div class="text-[10px] text-zinc-600 truncate" title="' + esc(hint) + '">' + esc(hint) + '</div></div>';
+            }
+            var outcomes = data.downloads + data.dismissals;
+            var sources = Array.isArray(data.sources) ? data.sources : [];
+            var sourceChips = sources.map(function (source) {
+                return '<span title="Learned prior ' + esc(pct(source.learnedPrior)) + '" class="text-[10px] text-zinc-400 border border-white/10 bg-white/5 rounded-full px-2 py-1">' +
+                    esc(SOURCE_LABEL[source.source] || source.source) + ' \u00b7 ' + (source.downloads || 0) + '/' +
+                    ((source.downloads || 0) + (source.dismissals || 0)) + '</span>';
+            }).join('');
+            els.insights.innerHTML = '<div class="mt-4 rounded-2xl border border-white/5 bg-zinc-900/40 px-4 py-3">' +
+                '<div class="flex items-center justify-between gap-3"><span class="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Your signal</span>' +
+                '<div class="flex items-center gap-3"><span class="text-[10px] text-zinc-600">last ' + esc(data.windowDays || 90) + ' days</span>' +
+                '<button type="button" id="discover-tune" ' + (state.tuning ? 'disabled' : '') + ' class="text-[10px] uppercase tracking-widest text-zinc-500 hover:text-orange-400 disabled:text-zinc-700 transition-colors cursor-pointer disabled:cursor-default">' +
+                (state.tuning ? 'Tuning...' : 'Tune weights') + '</button></div></div>' +
+                '<div class="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">' +
+                stat('Conversion', pct(data.conversionRate), outcomes ? data.downloads + ' downloaded \u00b7 ' + data.dismissals + ' dismissed' : 'no outcomes yet') +
+                stat('Playback', pct(data.playbackCompletionRate), (data.completedPlays || 0) + ' completed \u00b7 ' + (data.skippedPlays || 0) + ' skipped') +
+                stat('Downloads', String(data.downloads || 0), (data.previews || 0) + ' previews \u00b7 ' + (data.clicks || 0) + ' clicks') +
+                stat('Artists', String(data.uniqueArtists || 0), 'with recorded feedback') +
+                '</div>' + (sourceChips ? '<div class="mt-3 flex flex-wrap gap-1.5">' + sourceChips + '</div>' : '') +
+                '</div>';
+            var tune = document.getElementById('discover-tune');
+            if (tune) tune.addEventListener('click', tuneWeights);
+        }
+
+        async function tuneWeights() {
+            var bridge = api();
+            if (!bridge || state.tuning) return;
+            state.tuning = true;
+            paintInsights();
+            try {
+                var res = await bridge.discover_tune(90);
+                if (!res || !res.ok) {
+                    showNotice((res && res.message) || 'Tuning failed.');
+                    return;
+                }
+                var data = res.data || {};
+                if (data.applied) {
+                    showNotice('Weights updated (' + (data.preset || 'tuned') + ') - refreshing Discover...');
+                    await load(false);
+                } else if (data.insufficientData) {
+                    showNotice('Need more feedback before tuning weights.');
+                } else {
+                    showNotice('Current weights already perform best.');
+                }
+            } catch (err) {
+                showNotice('Tuning failed: ' + (err && err.message ? err.message : err));
+            } finally {
+                state.tuning = false;
+                paintInsights();
+            }
+        }
+
+        async function load(initial) {
+            var bridge = api();
+            if (!bridge) {
+                state.loading = false;
+                paintAll();
+                showNotice('Desktop bridge unavailable.');
+                return;
+            }
+            state.loading = !!initial;
+            paintAll();
+            try {
+                var res = await bridge.discover_get();
+                if (state.disposed) return;
+                if (!res || !res.ok) throw new Error((res && res.message) || 'Could not load Discover.');
+                state.feed = res.data || {};
+                state.items = Array.isArray(state.feed.items) ? state.feed.items : [];
+                state.loading = false;
+                paintAll();
+                refreshJobs();
+                loadInsights();
+            } catch (err) {
+                state.loading = false;
+                state.items = [];
+                paintAll();
+                showNotice(err && err.message ? err.message : String(err));
+            }
+        }
+
+        async function loadInsights() {
+            var bridge = api();
+            if (!bridge || !bridge.discover_insights) return;
+            try {
+                var res = await bridge.discover_insights(90);
+                if (state.disposed) return;
+                state.insights = (res && res.ok) ? res.data : null;
+            } catch (e) {
+                if (state.disposed) return;
+                state.insights = null;
+            }
+            paintInsights();
+        }
+
+        function stopPolling() {
+            if (state.pollTimer) {
+                clearTimeout(state.pollTimer);
+                state.pollTimer = null;
+            }
+        }
+
+        function schedulePolling() {
+            if (state.disposed) return;
+            stopPolling();
+            var anyActive = Object.keys(state.jobs).some(function (key) {
+                return jobIsActive(state.jobs[key]);
+            });
+            if (!anyActive) return;
+            state.pollTimer = setTimeout(refreshJobs, 2500);
+        }
+
+        async function refreshJobs() {
+            if (state.disposed) return;
+            var bridge = api();
+            if (!bridge || !bridge.get_download_jobs) {
+                stopPolling();
+                return;
+            }
+            try {
+                var jobs = await bridge.get_download_jobs(50);
+                if (!Array.isArray(jobs)) {
+                    stopPolling();
+                    return;
+                }
+                var next = {};
+                jobs.forEach(function (job) {
+                    if (!job || job.is_podcast) return;
+                    next[jobKey(job.title, job.artist)] = job;
+                });
+                var previous = state.jobStatus;
+                var now = {};
+                Object.keys(next).forEach(function (key) { now[key] = String(next[key].status || '').toLowerCase(); });
+                jobs.forEach(function (job) {
+                    if (!job || job.is_podcast) return;
+                    var key = jobKey(job.title, job.artist);
+                    var status = String(job.status || '').toLowerCase();
+                    var was = previous[key];
+                    var tracked = !!state.tracked[key];
+                    if (tracked && status === 'done' && was !== 'done') {
+                        showNotice('Downloaded: ' + (job.title || job.filename || 'track'));
+                    } else if (tracked && status === 'failed' && was !== 'failed') {
+                        showNotice('Download failed: ' + (job.error || job.title || 'track'));
+                    }
+                    if (status === 'done' || status === 'failed' || status === 'cancelled') {
+                        delete state.tracked[key];
+                    }
+                });
+                state.jobs = next;
+                state.jobStatus = now;
+                applyProgress();
+                schedulePolling();
+            } catch (e) {
+                stopPolling();
+            }
+        }
+
+        function sendFeedback(item, event) {
+            var bridge = api();
+            if (!bridge || !bridge.discover_feedback) return;
+            bridge.discover_feedback({
+                title: item.title || '',
+                artist: item.artist || '',
+                mbid: item.mbid || null,
+                source: item.source || 'chart',
+                event: event,
+                seedArtist: item.seedArtist || null,
+                score: item.score == null ? null : item.score
+            }).catch(function () {});
+        }
+
+        async function requestDownload(item, key) {
+            var bridge = api();
+            if (!bridge) return;
+            try {
+                var res = await bridge.discover_download(item.title || '', item.artist || '');
+                if (!res || !res.ok) {
+                    showNotice((res && res.message) || 'Could not queue the download.');
+                    return;
+                }
+                sendFeedback(item, 'download');
+                showNotice('Download queued: ' + (item.title || 'track'));
+                state.tracked[key] = item.title || 'track';
+                await refreshJobs();
+            } catch (err) {
+                showNotice('Download failed: ' + (err && err.message ? err.message : err));
+            }
+        }
+
+        async function download(item) {
+            var key = keyOf(item);
+            if (state.pending.has(key)) return;
+            if (state.tracked[key]) {
+                showNotice('Already downloading: ' + (item.title || 'track'));
+                return;
+            }
+            state.pending.add(key);
+            paintGrid();
+            try {
+                var bridge = api();
+                if (!bridge) return;
+                var check = await bridge.discover_check_download(item.title || '', item.artist || '');
+                if (check && check.ok && check.owned) {
+                    var answer = { isConfirmed: false };
+                    if (typeof Swal !== 'undefined') {
+                        answer = await Swal.fire({
+                            title: 'Already in your library',
+                            text: '"' + (item.title || 'This track') + '" by ' + (item.artist || 'Unknown') +
+                                ' is already in your library. Download it again anyway?',
+                            icon: 'question',
+                            showCancelButton: true,
+                            confirmButtonText: 'Download anyway',
+                            cancelButtonText: 'Cancel'
+                        });
+                    } else {
+                        answer.isConfirmed = window.confirm('Already in your library. Download again?');
+                    }
+                    if (!answer.isConfirmed) return;
+                }
+                await requestDownload(item, key);
+            } catch (err) {
+                showNotice('Download check failed: ' + (err && err.message ? err.message : err));
+            } finally {
+                state.pending.delete(key);
+                paintGrid();
+            }
+        }
+
+        function dismiss(item) {
+            var key = keyOf(item);
+            state.items = state.items.filter(function (candidate) {
+                return keyOf(candidate) !== key;
+            });
+            sendFeedback(item, 'dismiss');
+            paintAll();
+        }
+
+        function playAll() {
+            var items = filteredItems();
+            if (!items.length) return;
+            if (!window.DiscoverPreview) {
+                showNotice('Preview player is not available.');
+                return;
+            }
+            window.DiscoverPreview.start(items);
+        }
+
+        function playCard(key) {
+            var items = filteredItems();
+            var index = items.findIndex(function (item) { return keyOf(item) === key; });
+            if (index < 0 || !window.DiscoverPreview) return;
+            window.DiscoverPreview.start(items, index);
+        }
+
+        async function videoPreview(item) {
+            if (!window.DiscoverPreview || !window.DiscoverPreview.resolveVideo) {
+                showNotice('Video preview is not available.');
+                return;
+            }
+            try {
+                var video = await window.DiscoverPreview.resolveVideo(item);
+                var embedUrl = 'https://www.youtube.com/embed/' + encodeURIComponent(video.videoId) + '?autoplay=1';
+                var watchUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(video.videoId);
+                var html = '<div class="relative w-full" style="padding-bottom:56.25%;">' +
+                    '<iframe class="absolute top-0 left-0 w-full h-full rounded-lg" src="' + embedUrl +
+                    '" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>' +
+                    '<a href="' + watchUrl + '" target="_blank" rel="noopener noreferrer" class="mt-3 inline-block text-xs text-orange-400 hover:text-orange-300 underline underline-offset-2">Watch on YouTube</a>';
+                if (typeof Swal !== 'undefined') {
+                    await Swal.fire({
+                        title: 'Preview: ' + (item.title || ''),
+                        html: html,
+                        width: 640,
+                        showConfirmButton: false,
+                        showCloseButton: true,
+                        padding: '1rem'
+                    });
+                } else {
+                    window.open(watchUrl, '_blank');
+                }
+            } catch (err) {
+                showNotice(err && err.message ? err.message : 'Video preview unavailable.');
+            }
+        }
+
+        async function refresh() {
+            var bridge = api();
+            if (!bridge || state.refreshing) return;
+            state.refreshing = true;
+            paintAll();
+            try {
+                var res = await bridge.discover_refresh();
+                if (state.disposed) return;
+                if (!res || !res.ok) throw new Error((res && res.message) || 'Refresh failed.');
+                state.feed = res.data || {};
+                state.items = Array.isArray(state.feed.items) ? state.feed.items : [];
+                showNotice('Suggestions refreshed.');
+                paintAll();
+                loadInsights();
+            } catch (err) {
+                showNotice(err && err.message ? err.message : 'Refresh failed.');
+            } finally {
+                state.refreshing = false;
+                paintAll();
+            }
+        }
+
+        function dispose() {
+            state.disposed = true;
+            stopPolling();
+            if (state.noticeTimer) clearTimeout(state.noticeTimer);
+            state.noticeTimer = null;
+            // The global preview queue intentionally keeps playing.
+        }
+
+        if (els.filters) {
+            els.filters.addEventListener('click', function (event) {
+                var button = event.target.closest('[data-source]');
+                if (!button) return;
+                state.source = button.getAttribute('data-source') || 'all';
+                paintAll();
+            });
+        }
+        if (els.grid) {
+            els.grid.addEventListener('click', function (event) {
+                var button = event.target.closest('[data-action]');
+                if (!button) return;
+                var key = button.getAttribute('data-key');
+                var item = state.items.find(function (candidate) { return keyOf(candidate) === key; });
+                if (!item) return;
+                var action = button.getAttribute('data-action');
+                if (action === 'play') playCard(key);
+                else if (action === 'download') download(item);
+                else if (action === 'dismiss') dismiss(item);
+                else if (action === 'video') videoPreview(item);
+            });
+        }
+        if (els.playAll) els.playAll.addEventListener('click', playAll);
+        if (els.refresh) els.refresh.addEventListener('click', refresh);
+        if (els.search) {
+            var searchTimer = null;
+            els.search.addEventListener('input', function () {
+                if (searchTimer) clearTimeout(searchTimer);
+                searchTimer = setTimeout(function () {
+                    state.search = els.search.value || '';
+                    if (els.clear) els.clear.classList.toggle('hidden', !state.search);
+                    paintAll();
+                }, 150);
+            });
+        }
+        if (els.clear) {
+            els.clear.addEventListener('click', function () {
+                if (els.search) els.search.value = '';
+                state.search = '';
+                els.clear.classList.add('hidden');
+                paintAll();
+            });
+        }
+
+        window._disposeCurrentView = dispose;
+        paintAll();
+        load(true);
+    })();
+</script>

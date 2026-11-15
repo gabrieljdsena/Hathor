@@ -21,6 +21,7 @@ hathor.log
 
 # Python (desktop)
 __pycache__/
+.pytest_cache/
 dist/
 build/
 ffmpeg/

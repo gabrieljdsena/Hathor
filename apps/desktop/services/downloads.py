@@ -306,7 +306,8 @@ class DownloadManager:
             limit = max(1, min(int(limit), 100))
             with sqlite3.connect(self.api.db_path) as conn:
                 rows = conn.execute(
-                    "SELECT id, qid, url, title, artist, status, progress, error, filename, created_at, updated_at "
+                    "SELECT id, qid, url, title, artist, status, progress, error, filename, "
+                    "created_at, updated_at, is_podcast "
                     "FROM Download_Queue ORDER BY id DESC LIMIT ?",
                     (limit,)
                 ).fetchall()
@@ -315,6 +316,7 @@ class DownloadManager:
                     'id': r[0], 'qid': r[1], 'url': r[2], 'title': r[3], 'artist': r[4],
                     'status': r[5], 'progress': r[6], 'error': r[7], 'filename': r[8],
                     'created_at': r[9], 'updated_at': r[10],
+                    'is_podcast': bool(r[11]) if len(r) > 11 else False,
                 }
                 for r in rows
             ]

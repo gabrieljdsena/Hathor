@@ -44,18 +44,20 @@ import json
 import logging
 import os
 import sqlite3
-import urllib.error
 import urllib.parse
-import urllib.request
 
-API_URL_ENV = "HATHOR_API_URL"
-API_KEY_ENV = "HATHOR_API_KEY"
+from .api_config import (
+    API_KEY_ENV,
+    API_URL_ENV,
+    get_api_config as _runtime_api_config,
+)
+from .hathor_api import HathorApi, HathorApiError
 
 _log = logging.getLogger("hathor.sync")
 
 NOT_CONFIGURED = (
-    "No sync server configured. "
-    f"Set {API_URL_ENV} (e.g. http://<server>:5051) and {API_KEY_ENV} in .env."
+    "No sync server configured. Open Settings -> Web API "
+    f"(or set {API_URL_ENV}/{API_KEY_ENV} in .env)."
 )
 SERVER_MISSING = (
     "Sync server does not speak the sync-file endpoints yet "
@@ -75,10 +77,9 @@ def sync_backend():
     return "unconfigured"
 
 
-def get_api_config():
-    url = (os.getenv(API_URL_ENV) or "").strip().rstrip("/")
-    key = (os.getenv(API_KEY_ENV) or "").strip()
-    return url, key
+def get_api_config(db_path=None):
+    """Runtime Settings pair first, .env fallback (kept for callers)."""
+    return _runtime_api_config(db_path)
 
 
 # server-field -> local-field per delta section (server sends camelCase;
@@ -328,51 +329,33 @@ class ApiSyncClient:
     def __init__(self, db_path, timeout=30):
         self.db_path = db_path
         self.timeout = timeout
-        base_url, api_key = get_api_config()
+        base_url, api_key = get_api_config(db_path)
         if not base_url or not api_key:
             raise ApiSyncError(NOT_CONFIGURED)
+        self.api_base = base_url
         self.base = base_url + "/api/v1/sync"
         self.key = api_key
+        self.client = HathorApi(base_url, api_key, timeout=timeout)
+
+    def _sync_path(self, path):
+        return "/api/v1/sync" + path
 
     # -- transport ------------------------------------------------------
     def _request(self, method, path, payload=None, query=None):
-        url = self.base + path
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
-        data = None
-        headers = {
-            "Authorization": f"Bearer {self.key}",
-            "User-Agent": "hathor-desktop/1",
-            "Accept": "application/json",
-        }
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = resp.read()
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                raise ApiSyncError(
-                    "Sync server rejected the API key (401). Check "
-                    f"{API_KEY_ENV} — it needs library:read + library:write scope."
-                )
-            if e.code == 404:
-                raise ApiSyncError(SERVER_MISSING)
-            try:
-                detail = json.loads(e.read().decode("utf-8")).get("message")
-            except Exception:
-                detail = None
-            raise ApiSyncError(f"Sync server error ({e.code}): {detail or e.reason}")
-        except urllib.error.URLError as e:
-            raise ApiSyncError(
-                f"Cannot reach sync server at {self.base}. Is the server running? ({e.reason})"
+            return self.client.request(
+                method, self._sync_path(path), payload=payload, query=query
             )
-        try:
-            return json.loads(body.decode("utf-8")) if body else {}
-        except ValueError:
-            raise ApiSyncError("Sync server returned a non-JSON response.")
+        except HathorApiError as exc:
+            if exc.status == 401:
+                raise ApiSyncError(
+                    "Sync server rejected the API key (401). Check Settings -> "
+                    "Web API or the HATHOR_API_KEY value; the key needs "
+                    "library:read + library:write."
+                ) from exc
+            if exc.status == 404:
+                raise ApiSyncError(SERVER_MISSING) from exc
+            raise ApiSyncError(exc.message) from exc
 
     def get_delta(self, cursor):
         return self._request("GET", "/delta", query={"cursor": cursor} if cursor else {})
@@ -487,6 +470,10 @@ class ApiSyncClient:
         _emit_progress(progress, library, "done", total, total, message=msg)
         return msg
 
+    def download_file(self, folder, filename, library="songs"):
+        """Public wrapper used by AI DJ to fill a missing batch track."""
+        return self._fetch_missing(folder, filename, library)
+
     def _fetch_missing(self, folder, filename, library="songs"):
         """Download one file if absent on disk. Returns True when fetched."""
         if not filename or "/" in filename or "\\" in filename:
@@ -495,44 +482,21 @@ class ApiSyncClient:
         if os.path.exists(dest):
             return False
         os.makedirs(folder, exist_ok=True)
-        tmp = dest + ".hathor-part"
         _log.info("download %s/%s", library, filename)
-        req = urllib.request.Request(
-            self.base + "/files/" + urllib.parse.quote(filename)
-            + "?" + urllib.parse.urlencode({"library": library}),
-            headers={
-                "Authorization": f"Bearer {self.key}",
-                "User-Agent": "hathor-desktop/1",
-            },
-            method="GET",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as f:
-                while True:
-                    chunk = resp.read(256 * 1024)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-        except urllib.error.HTTPError as e:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            if e.code == 404:
+            self.client.stream_to_file(
+                self._sync_path("/files/" + urllib.parse.quote(filename)),
+                dest,
+                query={"library": library},
+                timeout=120,
+            )
+        except HathorApiError as exc:
+            if exc.status == 404:
                 _log.warning("download %s/%s: server has no file",
                              library, filename)
-                raise ApiSyncError(SERVER_MISSING)
-            _log.error("download %s/%s failed: HTTP %s",
-                       library, filename, e.code)
-            raise ApiSyncError(f"File download failed ({e.code}): {filename}")
-        except urllib.error.URLError as e:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            _log.error("download %s/%s failed: %s", library, filename, e.reason)
-            raise ApiSyncError(f"File download failed: {e.reason}")
-        os.replace(tmp, dest)
+                raise ApiSyncError(SERVER_MISSING) from exc
+            _log.error("download %s/%s failed: %s", library, filename, exc)
+            raise ApiSyncError(f"File download failed: {exc.message}") from exc
         _log.info("downloaded %s/%s (%d bytes)", library, filename,
                   os.path.getsize(dest))
         return True
@@ -707,29 +671,20 @@ class ApiSyncClient:
                 break
         else:
             return False
-        with open(src, "rb") as f:
-            data = f.read()
-        _log.info("upload %s/%s (%d bytes)", library, filename, len(data))
-        req = urllib.request.Request(
-            self.base + "/files/" + urllib.parse.quote(filename)
-            + "?" + urllib.parse.urlencode({"library": library}),
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.key}",
-                "User-Agent": "hathor-desktop/1",
-                "Content-Type": "audio/mpeg",
-            },
-            method="PUT",
-        )
+        _log.info("upload %s/%s (%d bytes)", library, filename,
+                  os.path.getsize(src))
         try:
-            with urllib.request.urlopen(req, timeout=300):
-                pass
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                raise ApiSyncError(SERVER_MISSING)
-            raise ApiSyncError(f"File upload failed ({e.code}): {filename}")
-        except urllib.error.URLError as e:
-            raise ApiSyncError(f"File upload failed: {e.reason}")
+            self.client.upload_file(
+                self._sync_path("/files/" + urllib.parse.quote(filename)),
+                src,
+                query={"library": library},
+                content_type="audio/mpeg",
+                timeout=300,
+            )
+        except HathorApiError as exc:
+            if exc.status == 404:
+                raise ApiSyncError(SERVER_MISSING) from exc
+            raise ApiSyncError(f"File upload failed: {exc.message}") from exc
         return True
 
     # -- merge (same semantics as the retired JDBC pull) ------------------

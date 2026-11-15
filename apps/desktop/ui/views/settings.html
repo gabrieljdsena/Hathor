@@ -23,6 +23,59 @@
     <div class="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent pointer-events-none"></div>
 
     <div class="relative z-10 flex flex-col gap-3">
+        <!-- Web API -->
+        <div
+            class="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                <div class="flex items-start gap-4 min-w-0 flex-1">
+                    <div
+                        class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+                        </svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-zinc-200 font-medium">Web API</h3>
+                        <p class="text-xs text-zinc-500 mt-0.5">
+                            Server used by sync, Discover and AI DJ. Saved locally; <code class="text-zinc-400">.env</code> is the fallback.
+                        </p>
+                        <div class="mt-3 grid gap-2 sm:grid-cols-2 max-w-2xl">
+                            <input id="api-url-input" type="url" spellcheck="false" autocomplete="off"
+                                placeholder="http://192.168.1.10:5051"
+                                class="w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-lg placeholder:text-zinc-600 transition-all duration-300">
+                            <input id="api-key-input" type="password" spellcheck="false" autocomplete="new-password"
+                                placeholder="hth_... (blank keeps the saved key)"
+                                class="w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-lg placeholder:text-zinc-600 transition-all duration-300">
+                        </div>
+                        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 min-w-0">
+                            <span id="api-config-status" class="text-xs text-zinc-500">Checking configuration...</span>
+                            <span id="api-config-source" class="text-[10px] uppercase tracking-widest text-zinc-600"></span>
+                        </div>
+                        <p class="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+                            Needs <code class="text-zinc-400">library:read</code> + <code class="text-zinc-400">library:write</code>
+                            for Discover, and <code class="text-zinc-400">player:read</code> +
+                            <code class="text-zinc-400">player:control</code> for AI DJ. No login required.
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0 self-end lg:self-start">
+                    <button id="api-clear-btn" type="button"
+                        class="px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-300 bg-white/5 hover:bg-red-500/20 hover:text-red-300 border border-white/10 hover:border-red-500/40 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
+                        Clear
+                    </button>
+                    <button id="api-test-btn" type="button"
+                        class="px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
+                        Test
+                    </button>
+                    <button id="api-save-btn" type="button"
+                        class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-orange-300 bg-orange-500/10 hover:bg-orange-500 hover:text-white border border-orange-500/30 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Audios Library -->
         <div
             class="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
@@ -385,6 +438,166 @@
     if (window.pywebview && window.pywebview.api) {
         window.pywebview.api.load_settings();
     }
+
+    // ---- Runtime Web API configuration --------------------------------
+    (function initApiConfig() {
+        const api = () => (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        const urlEl = document.getElementById('api-url-input');
+        const keyEl = document.getElementById('api-key-input');
+        const statusEl = document.getElementById('api-config-status');
+        const sourceEl = document.getElementById('api-config-source');
+        const saveBtn = document.getElementById('api-save-btn');
+        const testBtn = document.getElementById('api-test-btn');
+        const clearBtn = document.getElementById('api-clear-btn');
+        let busy = false;
+
+        function setBusy(value) {
+            busy = !!value;
+            [saveBtn, testBtn, clearBtn].forEach(function (btn) {
+                if (btn) btn.disabled = busy;
+            });
+        }
+
+        function setStatus(text, kind) {
+            if (!statusEl) return;
+            statusEl.textContent = text || '';
+            statusEl.classList.remove(
+                'text-zinc-500', 'text-emerald-400', 'text-amber-300', 'text-red-400'
+            );
+            statusEl.classList.add(
+                kind === 'ok' ? 'text-emerald-400'
+                    : kind === 'warn' ? 'text-amber-300'
+                    : kind === 'error' ? 'text-red-400'
+                    : 'text-zinc-500'
+            );
+        }
+
+        function paint(cfg) {
+            if (!cfg) return;
+            if (urlEl) urlEl.value = cfg.url || '';
+            if (keyEl) {
+                keyEl.value = '';
+                keyEl.placeholder = cfg.keySet
+                    ? 'Saved key ' + cfg.keyHint + ' (blank keeps it)'
+                    : 'hth_... (required)';
+            }
+            if (sourceEl) {
+                sourceEl.textContent = cfg.source === 'settings'
+                    ? 'saved locally'
+                    : cfg.source === 'env' ? '.env fallback' : '';
+            }
+            if (cfg.configured) {
+                setStatus('Configured' + (cfg.keySet ? ' (' + cfg.keyHint + ')' : ''), 'ok');
+            } else {
+                setStatus('Not configured - sync, Discover and AI DJ need a server and key.', 'warn');
+            }
+        }
+
+        async function loadApiConfig() {
+            const bridge = api();
+            if (!bridge) {
+                setStatus('Waiting for the desktop bridge...', 'warn');
+                window.addEventListener('pywebviewready', loadApiConfig, { once: true });
+                return;
+            }
+            try {
+                const cfg = await bridge.get_api_config_view();
+                paint(cfg);
+            } catch (e) {
+                setStatus('Could not read Web API settings: ' + (e && e.message ? e.message : e), 'error');
+            }
+        }
+
+        async function saveApiConfig() {
+            const bridge = api();
+            if (!bridge || busy) return;
+            setBusy(true);
+            setStatus('Saving...', '');
+            try {
+                const res = await bridge.save_api_config(
+                    urlEl ? urlEl.value : '', keyEl ? keyEl.value : ''
+                );
+                if (res && res.ok) {
+                    paint(res.config);
+                    setStatus(res.message || 'Saved.', 'ok');
+                    if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
+                    if (typeof notyf !== 'undefined') notyf.success('Web API settings saved.');
+                } else {
+                    setStatus((res && res.message) || 'Could not save Web API settings.', 'error');
+                    if (typeof notyf !== 'undefined') notyf.error((res && res.message) || 'Could not save Web API settings.');
+                }
+            } catch (e) {
+                setStatus('Could not save Web API settings: ' + (e && e.message ? e.message : e), 'error');
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function testApiConfig() {
+            const bridge = api();
+            if (!bridge || busy) return;
+            setBusy(true);
+            setStatus('Testing connection...', '');
+            try {
+                const res = await bridge.test_api_connection(
+                    urlEl ? urlEl.value : '', keyEl ? keyEl.value : ''
+                );
+                if (res && res.ok) {
+                    setStatus(res.message || 'Connected.', (res.missing && res.missing.length) ? 'warn' : 'ok');
+                    if (typeof notyf !== 'undefined') notyf.success(res.message || 'Connected.');
+                } else {
+                    setStatus((res && res.message) || 'Connection failed.', 'error');
+                    if (typeof notyf !== 'undefined') notyf.error((res && res.message) || 'Connection failed.');
+                }
+            } catch (e) {
+                setStatus('Connection failed: ' + (e && e.message ? e.message : e), 'error');
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function clearApiConfig() {
+            const bridge = api();
+            if (!bridge || busy) return;
+            let confirmed = true;
+            if (typeof Swal !== 'undefined') {
+                const answer = await Swal.fire({
+                    title: 'Clear Web API settings?',
+                    text: 'Sync, Discover and AI DJ will fall back to .env, or stay disabled if it is not set.',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: 'Clear',
+                    cancelButtonText: 'Cancel'
+                });
+                confirmed = !!answer.isConfirmed;
+            } else {
+                confirmed = window.confirm('Clear the saved Web API settings?');
+            }
+            if (!confirmed) return;
+            setBusy(true);
+            try {
+                const res = await bridge.clear_api_config();
+                if (res && res.ok) {
+                    paint(res.config);
+                    setStatus(res.message || 'Cleared.', 'warn');
+                    if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
+                    if (typeof notyf !== 'undefined') notyf.success('Saved Web API settings cleared.');
+                } else {
+                    setStatus((res && res.message) || 'Could not clear Web API settings.', 'error');
+                }
+            } catch (e) {
+                setStatus('Could not clear Web API settings: ' + (e && e.message ? e.message : e), 'error');
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        if (saveBtn) saveBtn.addEventListener('click', saveApiConfig);
+        if (testBtn) testBtn.addEventListener('click', testApiConfig);
+        if (clearBtn) clearBtn.addEventListener('click', clearApiConfig);
+        window.load_api_config = paint;
+        loadApiConfig();
+    })();
 
     // One row per library: Push scans that folder first, Pull fetches only
     // that library. Keeping the scope explicit avoids the old "did that push

@@ -54,6 +54,15 @@ class PlaybackController:
         self._xfade_lock = threading.RLock()
         self._threads_started = False
 
+        # --- AI DJ / preview coordination ---
+        #: User volume * track normalization * voice ducking.
+        self._duck = 1.0
+        self.on_track_changed = None
+        self.on_queue_exhausted = None
+        self.on_queue_changed = None
+        self._track_changed_listeners = []
+        self._queue_exhausted_listeners = []
+
         # --- Podcast chapter-skip state (web parity) ---
         # Cached on every track change so the 0.2s monitor tick never hits
         # SQLite: {'file': str, 'chapters': [(start, end_or_None), ...]} or None.
@@ -76,8 +85,50 @@ class PlaybackController:
     VALID_SOURCE_TYPES = (
         'playlist', 'daily_mix', 'all_songs',
         'artist', 'album', 'recently_played', 'recently_downloaded',
-        'podcast',
+        'download_history', 'podcast', 'ai_dj',
     )
+
+    def _notify_track_changed(self, song):
+        callback = getattr(self, 'on_track_changed', None)
+        if callback:
+            try:
+                callback(song)
+            except Exception as e:
+                print(f" [Python] Track callback error: {e}")
+        for listener in list(getattr(self, '_track_changed_listeners', [])):
+            try:
+                listener(song)
+            except Exception as e:
+                print(f" [Python] Track listener error: {e}")
+
+    def _notify_queue_exhausted(self):
+        callback = getattr(self, 'on_queue_exhausted', None)
+        if callback:
+            try:
+                callback()
+            except Exception as e:
+                print(f" [Python] Queue-exhausted callback error: {e}")
+        for listener in list(getattr(self, '_queue_exhausted_listeners', [])):
+            try:
+                listener()
+            except Exception as e:
+                print(f" [Python] Queue-exhausted listener error: {e}")
+
+    def add_track_changed_listener(self, callback):
+        if callback and callback not in self._track_changed_listeners:
+            self._track_changed_listeners.append(callback)
+
+    def add_queue_exhausted_listener(self, callback):
+        if callback and callback not in self._queue_exhausted_listeners:
+            self._queue_exhausted_listeners.append(callback)
+
+    def _notify_queue_changed(self, source):
+        callback = getattr(self, 'on_queue_changed', None)
+        if callback:
+            try:
+                callback(source)
+            except Exception as e:
+                print(f" [Python] Queue-change callback error: {e}")
 
     def _base_for(self, song):
         """Songs folder vs podcasts folder for a song dict (or current song)."""
@@ -204,6 +255,7 @@ class PlaybackController:
         self.unshuffled_song_list = list(self.api.song_list)
         # The general library list is the context from here on.
         self._persist_source({'type': 'all_songs', 'id': None})
+        self._notify_queue_changed({'type': 'all_songs', 'id': None})
 
         found = False
         for song in self.api.song_list:
@@ -243,8 +295,11 @@ class PlaybackController:
 
         if source is not None:
             self._persist_source(source)
+            self._notify_queue_changed(source)
         elif playlist_id is not None:
-            self._persist_source({'type': 'playlist', 'id': playlist_id})
+            playlist_source = {'type': 'playlist', 'id': playlist_id}
+            self._persist_source(playlist_source)
+            self._notify_queue_changed(playlist_source)
         # else: internal re-derivation (e.g. unshuffle) keeps the stored source
 
         found = False
@@ -280,6 +335,7 @@ class PlaybackController:
         self.next_songs.append(song_data)
         self.is_custom_queue = True
         self._persist_queue()
+        self._notify_queue_changed(None)
         if getattr(self.api, '_window', None):
             self.api._window.evaluate_js(f"""
                 window.queue_songs = {json.dumps(self.next_songs)};
@@ -290,6 +346,7 @@ class PlaybackController:
         self.next_songs.insert(0, song_data)
         self.is_custom_queue = True
         self._persist_queue()
+        self._notify_queue_changed(None)
         if getattr(self.api, '_window', None):
             self.api._window.evaluate_js(f"""
                 window.queue_songs = {json.dumps(self.next_songs)};
@@ -301,6 +358,7 @@ class PlaybackController:
         self.fallback_to_general_list = False
         self.is_custom_queue = False
         self._persist_queue()
+        self._notify_queue_changed(None)
         if getattr(self.api, '_window', None):
             self.api._window.evaluate_js(f"""
                 window.queue_songs = [];
@@ -312,6 +370,7 @@ class PlaybackController:
             self.next_songs.pop(index)
             self.is_custom_queue = True
             self._persist_queue()
+            self._notify_queue_changed(None)
             if getattr(self.api, '_window', None):
                 self.api._window.evaluate_js(f"""
                     window.queue_songs = {json.dumps(self.next_songs)};
@@ -324,6 +383,7 @@ class PlaybackController:
             self.next_songs.insert(new_index, item)
             self.is_custom_queue = True
             self._persist_queue()
+            self._notify_queue_changed(None)
             if getattr(self.api, '_window', None):
                 self.api._window.evaluate_js(f"""
                     window.queue_songs = {json.dumps(self.next_songs)};
@@ -433,12 +493,22 @@ class PlaybackController:
                 pass
 
     def _effective_volume(self, gain=None):
-        """User volume leveled by the track gain (mute stays mute)."""
+        """User volume leveled by track gain and AI DJ voice ducking."""
         try:
             g = self._track_gain if gain is None else gain
-            return max(0.0, min(1.0, float(self._user_volume()) * float(g)))
+            duck = max(0.0, min(1.0, float(getattr(self, '_duck', 1.0))))
+            return max(0.0, min(1.0, float(self._user_volume()) * float(g) * duck))
         except Exception:
             return self._user_volume()
+
+    def set_duck(self, level):
+        """Duck music under Vohithe's voice (1.0 = normal, 0.18 = server default)."""
+        try:
+            self._duck = max(0.0, min(1.0, float(level)))
+        except (TypeError, ValueError):
+            self._duck = 1.0
+        self.sync_output_volume()
+        return self._duck
 
     def _push_resume_spot(self):
         """Snapshot this device's paused spot to the sync server (daemon).
@@ -818,6 +888,10 @@ class PlaybackController:
                 break  # pausing; snap to the new song, the toggle then pauses it
             try:
                 vol = self._user_volume()
+                try:
+                    vol *= max(0.0, min(1.0, float(getattr(self, '_duck', 1.0))))
+                except Exception:
+                    pass
                 t = i / steps
                 # Equal-power crossfade (what mixers/DAWs use): cos^2 + sin^2
                 # stays 1 so perceived loudness holds steady. A linear ramp
@@ -1148,6 +1222,7 @@ class PlaybackController:
                 pass
         self._refresh_chapter_state(next_song)
         self.api.playing = True
+        self._notify_track_changed(next_song)
 
     def _complete_ramp_to_channel(self, gen, next_song):
         """Finish a music -> channel ramp: the channel now owns playback."""
@@ -1230,6 +1305,15 @@ class PlaybackController:
 
     def play_button(self, current_song=None, opening=False):
         self._ensure_threads()
+        # Main playback always owns the audio output: take over from a
+        # Discover preview before deciding pause/resume/play.
+        try:
+            stop_preview = getattr(self.api, '_stop_discover_preview', None)
+            if stop_preview:
+                stop_preview()
+        except Exception:
+            pass
+        previous_file = self.api.current_filename
         if current_song is None:
             if self.api.first_play:
                 self._cancel_crossfade()
@@ -1449,6 +1533,8 @@ class PlaybackController:
 
         self.api.last_song = current_song
         self.api.first_play = False
+        if current_song and str(previous_file) != str(current_song.get('File')):
+            self._notify_track_changed(current_song)
         return self.api.playing
 
     def play_next(self, auto=False):
@@ -1488,6 +1574,7 @@ class PlaybackController:
                     self.api._window.evaluate_js("if (typeof window.update_play_button_ui === 'function') { window.update_play_button_ui(false); }")
                 except Exception as e:
                     print(f" [Python] update_play_button_ui JS error: {e}")
+            self._notify_queue_exhausted()
 
     def play_prev(self):
         self._ensure_threads()

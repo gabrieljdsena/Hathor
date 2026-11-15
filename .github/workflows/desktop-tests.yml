@@ -1,0 +1,56 @@
+name: Desktop tests
+
+on:
+  push:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-tests.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Python tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            apps/desktop/requirements.txt
+            apps/desktop/requirements-dev.txt
+
+      - name: Install Python dependencies
+        working-directory: apps/desktop
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Run Python unit tests
+        working-directory: apps/desktop
+        run: python -m pytest -q
+
+      - name: Run JavaScript smoke tests
+        working-directory: apps/desktop
+        run: npm run test:js
+
+      - name: Build Tailwind CSS
+        working-directory: apps/desktop
+        run: npx --yes @tailwindcss/cli@4.3.3 -i ./ui/input.css -o ./ui/output.css

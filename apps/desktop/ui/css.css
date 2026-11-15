@@ -62,6 +62,11 @@ body.lyrics-active #search-header {
     display: none !important;
 }
 
+/* The DJ deliberately hides upcoming tracks while a set is on air. */
+body.ai-dj-active #queue-sidebar {
+    display: none !important;
+}
+
 .visualizer-bar:nth-child(1) {
     animation-duration: 0.5s;
 }

@@ -11,16 +11,19 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 ## Features
 
 - **Playback & queue** — play/pause, next/previous, seek bar, volume with persistence, shuffle and repeat, plus a reorderable "play next" queue per song or playlist. Restarting rebuilds the queue from where you were listening (playlist, mix, artist, …). Optional equal-power **crossfade** (1–12 s) with gapless handoff.
-- **Library management** — scan a local folder for MP3s, edit song metadata (title, artist, album, year, genre, cover art) in place, and delete tracks. Home is a dashboard: full-library view, daily mix, and recently-played/downloaded strips.
+- **Library management** — scan a local folder for MP3s, edit song metadata (title, artist, album, year, genre, cover art) in place, and delete tracks. Home is a dashboard: full-library view, daily mix, AI DJ, podcasts, and recently-played/downloaded strips. Songs can be moved to Podcasts and back without losing the file; edits to the playing file apply when the track changes.
+- **Typo-tolerant search** — the shared fuzzy matcher folds diacritics and tolerates transpositions/typos across All Songs, playlists, podcasts, artists, albums and Discover.
 - **Daily Mix** — a fresh 50-song mix every day built from your listening history (favorites-weighted with room for discoveries).
 - **Podcasts / non-music audio** — a fully separate library (own folder, own tables) with its own view, per-episode menu, metadata editing, chapter marks with auto-skip, and two-way sync. Episodes can share the queue with songs in both directions.
 - **YouTube downloads** — search YouTube in-app and download audio as 320 kbps MP3 via `yt-dlp` + FFmpeg, with live progress in the UI. A Songs/Podcast toggle routes each download to the right library (podcast downloads skip the iTunes song-match).
 - **Automatic metadata enrichment** — every song download looks up the matching track on the iTunes Search API and writes ID3 tags (`TIT2`, `TPE1`, `TALB`, `TDRC`, `TCON`, `APIC`) and renames the file to the cleaned title.
 - **Lyrics** — synced (LRC-style) and plain lyrics fetched per track, cached locally for offline use, with Japanese-to-romaji romanization via `pykakasi`, a per-song highlight-timing correction (±20 s, persisted), and a track-only fallback for artist-less songs.
-- **Playlists** — create/delete playlists, add songs to multiple playlists, attach custom cover art, and play an entire playlist.
-- **History** — download history and playback (played songs / played playlists) with pagination.
+- **Playlists** — create/delete playlists, add songs to multiple playlists, attach custom cover art (downscaled to ≤800 px JPEG), remove covers, and play an entire playlist.
+- **History** — download history and playback (played songs / played playlists) with pagination, full-tab queues, row action menus and re-download.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
+- **Discover** — server-backed out-of-library recommendations with source filters, YouTube preview queue, feedback/tuning and local downloads. Configure the Web API in Settings first.
+- **AI DJ (Vohithe)** — server-planned sets with spoken intro/outro commentary, voice ducking, vibe briefs (typed or spoken), batch handoff, feedback and Home/player-bar entry points.
 - **Server sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history with the Hathor server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
 
 ## Tech stack
@@ -66,7 +69,7 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured exclusively through a `.env` file next to `main.py` (or the executable):
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured in **Settings → Web API** (URL + scoped `hth_` key), with a `.env` file next to `main.py` (or the executable) as the fallback:
 
 ```env
 HATHOR_API_URL=http://192.168.1.10:5051
@@ -78,11 +81,12 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 ## Documentation
 
 - [Installation guide](docs/INSTALLATION.md)
-- [Configuration (`.env` & settings)](docs/CONFIGURATION.md)
+- [Configuration (Web API & settings)](docs/CONFIGURATION.md)
 - [Usage guide](docs/USAGE.md)
 - [Architecture & code overview](docs/ARCHITECTURE.md)
 - [Database schema & remote sync](docs/DATABASE.md)
 - [Development & packaging](docs/DEVELOPMENT.md)
+- [Web → desktop parity backlog](WEB_PARITY.md)
 
 ## Project layout
 

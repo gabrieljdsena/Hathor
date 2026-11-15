@@ -4,14 +4,27 @@ import re
 import json
 import base64
 import sqlite3
+import threading
 import pygame
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, APIC
 import settings
 
+from .library_moves import LibraryMoveError, move_between_libraries
+
+
 class MetadataManager:
     def __init__(self, api):
         self.api = api
+        self._pending_lock = threading.RLock()
+        self._pending_edits = {}
+        try:
+            playback = getattr(api, 'playback', None)
+            if playback is not None:
+                playback.add_track_changed_listener(self._on_track_changed)
+                playback.add_queue_exhausted_listener(self._on_queue_exhausted)
+        except Exception as exc:
+            print(f" [Python] Metadata pending-edit hook error: {exc}")
 
     def get_song_metadata(self, file_path, file_name, include_cover=False):
         song_data = {
@@ -72,15 +85,40 @@ class MetadataManager:
                 print(f" [Python] Error loading local image: {e}")
         return None
 
+    def _advance_after_delete(self, was_current):
+        if not was_current:
+            return
+        self.api.current_filename = None
+        self.api.last_song = {}
+        try:
+            with sqlite3.connect(self.api.db_path) as conn:
+                conn.execute("UPDATE Settings SET current_song = NULL WHERE id = 1")
+        except Exception:
+            pass
+        playback = getattr(self.api, 'playback', None)
+        if playback is None:
+            return
+        try:
+            playback._notify_queue_changed(None)
+        except Exception:
+            pass
+        try:
+            if playback.next_songs:
+                playback.play_next(auto=True)
+        except Exception as exc:
+            print(f" [Python] Could not advance after deleting current track: {exc}")
+
     def delete_song(self, song_data):
         filename = song_data.get('File')
+        self.cancel_pending_edit(filename)
         total_path = os.path.join(settings.path, filename)
         
         # We need to access api.playback, but playback isn't created yet maybe?
         # Let's rely on api properties or method calls
         last_filename = self.api.last_song.get('File')
+        was_current = str(last_filename) == str(filename)
         
-        if str(last_filename) == str(filename):
+        if was_current:
             pygame.mixer.music.stop()
             if hasattr(pygame.mixer.music, 'unload'):
                 pygame.mixer.music.unload()
@@ -129,15 +167,18 @@ class MetadataManager:
                     self.api._window.evaluate_js(f"window.queue_songs = {queue_json}; if (typeof window.update_queue_ui === 'function') window.update_queue_ui();")
             except Exception as e:
                 print(f" [Python] Error deleting file: {e}")
+        self._advance_after_delete(was_current)
 
     def delete_podcast(self, song_data):
         """Delete a podcast episode: file + Podcasts row (+ remote tombstone)."""
         filename = song_data.get('File')
+        self.cancel_pending_edit(filename)
         total_path = os.path.join(settings.podcasts_path, filename)
 
         last_filename = self.api.last_song.get('File')
+        was_current = str(last_filename) == str(filename)
 
-        if str(last_filename) == str(filename):
+        if was_current:
             pygame.mixer.music.stop()
             if hasattr(pygame.mixer.music, 'unload'):
                 pygame.mixer.music.unload()
@@ -180,8 +221,187 @@ class MetadataManager:
                     self.api._window.evaluate_js(f"window.queue_songs = {queue_json}; if (typeof window.update_queue_ui === 'function') window.update_queue_ui();")
             except Exception as e:
                 print(f" [Python] Error deleting file: {e}")
+        self._advance_after_delete(was_current)
+
+    def move_song_to_podcast(self, song_data):
+        """Move a song into the Podcasts library (file kept, tags/history dropped)."""
+        return self._move_library_file(song_data, to_podcast=True)
+
+    def move_podcast_to_song(self, song_data):
+        """Move an episode into the Songs library (file kept, chapters/tags dropped)."""
+        return self._move_library_file(song_data, to_podcast=False)
+
+    def _stop_for_library_move(self, filename):
+        """The source file is about to leave this folder: release it first."""
+        current = str((getattr(self.api, 'last_song', None) or {}).get('File') or '')
+        if not current:
+            current = str(getattr(self.api, 'current_filename', '') or '')
+        if current != filename:
+            return False
+        try:
+            pygame.mixer.music.stop()
+            if hasattr(pygame.mixer.music, 'unload'):
+                pygame.mixer.music.unload()
+        except Exception as exc:
+            print(f" [Python] Move-stop playback error: {exc}")
+        self.api.playing = False
+        self.api.first_play = True
+        self.api.current_filename = None
+        self.api.last_song = {}
+        try:
+            conn = sqlite3.connect(self.api.db_path)
+            try:
+                conn.execute("UPDATE Settings SET current_song = NULL WHERE id = 1")
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:
+            print(f" [Python] Could not clear current_song after move: {exc}")
+        if hasattr(self.api, 'media_controls'):
+            try:
+                self.api.media_controls.set_stopped()
+            except Exception:
+                pass
+        if getattr(self.api, '_window', None):
+            try:
+                self.api._window.evaluate_js(
+                    "if (typeof window.update_play_button_ui === 'function') "
+                    "{ window.update_play_button_ui(false); }"
+                )
+            except Exception:
+                pass
+        return True
+
+    def _drop_from_queues(self, filename):
+        playback = getattr(self.api, 'playback', None)
+        removed = False
+        for owner, attr in (
+            (playback, 'next_songs'),
+            (playback, 'prev_songs'),
+            (playback, 'unshuffled_song_list'),
+            (self.api, 'next_songs'),
+            (self.api, 'prev_songs'),
+            (self.api, 'unshuffled_song_list'),
+        ):
+            if owner is None:
+                continue
+            songs = getattr(owner, attr, None)
+            if not isinstance(songs, list):
+                continue
+            kept = [s for s in songs if (s or {}).get('File') != filename]
+            if len(kept) != len(songs):
+                removed = True
+                setattr(owner, attr, kept)
+        if removed and playback is not None:
+            try:
+                playback._persist_queue()
+            except Exception:
+                pass
+            try:
+                playback._notify_queue_changed(None)
+            except Exception:
+                pass
+        if getattr(self.api, '_window', None):
+            try:
+                queue = getattr(playback, 'next_songs', []) if playback is not None else []
+                self.api._window.evaluate_js(
+                    f"window.queue_songs = {json.dumps(queue)}; "
+                    "if (typeof window.update_queue_ui === 'function') window.update_queue_ui();"
+                )
+            except Exception:
+                pass
+        return removed
+
+    def _move_library_file(self, song_data, to_podcast):
+        filename = str((song_data or {}).get('File') or '').strip()
+        if not filename:
+            return {"ok": False, "message": "No audio file was selected."}
+        self.cancel_pending_edit(filename)
+        self._stop_for_library_move(filename)
+        try:
+            result = move_between_libraries(
+                self.api.db_path,
+                settings.path,
+                settings.podcasts_path,
+                filename,
+                to_podcast=to_podcast,
+            )
+        except LibraryMoveError as exc:
+            return {"ok": False, "message": str(exc)}
+        except Exception as exc:
+            print(f" [Python] Library move failed: {exc}")
+            return {"ok": False, "message": "The file could not be moved."}
+        self._drop_from_queues(filename)
+        try:
+            self.api.song_list = self.api.db.get_all_songs()
+        except Exception as exc:
+            print(f" [Python] Could not refresh song list after move: {exc}")
+        return result
+
+    def _on_track_changed(self, song):
+        new_file = str((song or {}).get('File') or '')
+        try:
+            threading.Thread(
+                target=self.apply_pending_edits,
+                kwargs={'exclude_file': new_file},
+                daemon=True,
+            ).start()
+        except Exception as exc:
+            print(f" [Python] Pending metadata apply error: {exc}")
+
+    def _on_queue_exhausted(self):
+        # Nothing is loaded now; clear the current pointer so applying a
+        # pending edit cannot reload/restart the last track.
+        try:
+            if not getattr(self.api, 'playing', False):
+                self.api.current_filename = None
+                self.api.last_song = {}
+        except Exception:
+            pass
+        return self.apply_pending_edits()
 
     def update_song_metadata(self, song_data):
+        """Apply immediately, or hold a playing file's edit until it changes."""
+        filename = str((song_data or {}).get('File') or '')
+        current = str((getattr(self.api, 'last_song', None) or {}).get('File') or '')
+        if not current:
+            current = str(getattr(self.api, 'current_filename', '') or '')
+        if filename and current == filename:
+            with self._pending_lock:
+                self._pending_edits[filename] = dict(song_data or {})
+            return {
+                "ok": True,
+                "pending": True,
+                "file": filename,
+                "message": "Pending edit - applies when the track changes.",
+            }
+        return self._write_song_metadata(song_data)
+
+    def cancel_pending_edit(self, filename):
+        with self._pending_lock:
+            return self._pending_edits.pop(str(filename), None) is not None
+
+    def apply_pending_edits(self, exclude_file=None):
+        """Write queued edits whose files are no longer loaded by pygame."""
+        with self._pending_lock:
+            pending = [
+                (name, data) for name, data in self._pending_edits.items()
+                if name != exclude_file
+            ]
+        applied = []
+        for filename, data in pending:
+            try:
+                ok = self._write_song_metadata(data)
+            except Exception as exc:
+                print(f" [Python] Pending metadata write failed for {filename}: {exc}")
+                ok = False
+            if ok:
+                with self._pending_lock:
+                    self._pending_edits.pop(filename, None)
+                applied.append(filename)
+        return applied
+
+    def _write_song_metadata(self, song_data):
         filename = song_data.get('File')
         print(f" [Python] Updating metadata for: {filename}")
         try:
