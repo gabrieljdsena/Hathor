@@ -342,11 +342,15 @@ every feature below requires rebuilding the APK.
   - Tests: API JSON contract tests (Robolectric/org.json), Compose filter/card
     tests.
   - **Done:** `DiscoverApi` + `DiscoverScreen` load `/discover`, refresh, filter
-    by source/search, show iTunes art/reasons, dismiss with feedback, preview
-    via the on-device YouTube resolver, and download through
-    `QueueRepository.submit` (on-device engine, no server ingest). Owned tracks
-    prompt before re-download. Insights/tuning cards and multi-item preview
-    queues are not ported yet. JSON contract covered by `ApiContractTest`.
+    by source/search, show iTunes art/reasons, dismiss with feedback, and
+    download through `QueueRepository.submit` (on-device bytes). Previews use
+    the same Web API `/youtube/search` + `/youtube/preview` path as the web
+    (tries five hits, server-resolved audio URL) with an on-device fallback;
+    the card shows Finding/Playing/Failed state, a large cover play button and
+    a mini preview bar. Downloads resolve their YouTube candidate through the
+    same server search first. Owned tracks prompt before re-download.
+    Insights/tuning cards and multi-item preview queues are not ported yet.
+    JSON contracts covered by `ApiContractTest`.
 
 - [x] **P4.3 — AI DJ / Vohithe (W2)**
   - Needs a token with `player:read` + `player:control`.
@@ -471,6 +475,7 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **P3.3 — download extras** | `.txt` batch import, owned-copy confirmation, audio-only preview kept; parser tests added. |
 | 2026-11-14 | **P4.1 — runtime Web API** | URL/API-key fields persisted in `SyncConfig`, Settings Save/Test, BuildConfig fallback; no login. |
 | 2026-11-14 | **P4.2 — Discover** | Web API feed/filters/preview/dismiss/feedback + on-device download and owned guard. |
+| 2026-11-14 | **Discover preview fix** | Previews now use server YouTube search + resolved audio URL (same as web), try multiple candidates, show Finding/Playing/Failed state and a mini player, support cover-play, and surface errors instead of silently staying highlighted. Downloads search via the server first. |
 | 2026-11-14 | **P4.3 — AI DJ** | Web API state/start/stop/feedback + local batch playback and commentary display (voice/auto-advance deferred). |
 | 2026-11-14 | **P4.4 — cross-device resume** | Pause pushes a spot to `/sync/playback`; Home shows a “Continue on …” card that restores queue + position. |
 | 2026-11-14 | **P4.5 — accounts** | Dropped by product decision: API-key entry only, no mobile login. |

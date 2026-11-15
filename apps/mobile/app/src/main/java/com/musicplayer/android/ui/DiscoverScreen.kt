@@ -1,7 +1,10 @@
 package com.musicplayer.android.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,15 +15,20 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,7 +36,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,12 +46,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.api.DiscoverApi
 import com.musicplayer.android.data.api.DiscoverItem
+import com.musicplayer.android.data.api.SyncConfig
+import com.musicplayer.android.data.api.YoutubeApi
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.theme.HathorColors
@@ -86,10 +99,38 @@ fun DiscoverScreen(
     var sourceFilter by remember { mutableStateOf("all") }
     var busyKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var previewKey by remember { mutableStateOf<String?>(null) }
+    var previewResolvingKey by remember { mutableStateOf<String?>(null) }
+    var previewError by remember { mutableStateOf<String?>(null) }
     var confirmItem by remember { mutableStateOf<DiscoverItem?>(null) }
+    val previewState by preview.state.collectAsState()
     val scope = rememberCoroutineScope()
 
     fun key(item: DiscoverItem) = "${item.title}|${item.artist}"
+
+    DisposableEffect(Unit) {
+        onDispose { preview.stop() }
+    }
+
+    LaunchedEffect(previewState, previewKey) {
+        when (val s = previewState) {
+            is PreviewPlayer.State.Playing -> if (s.id == previewKey) {
+                previewResolvingKey = null
+                onPreviewStarted()
+                items.firstOrNull { key(it) == previewKey }?.let { item ->
+                    runCatching { DiscoverApi.feedback(item, "preview") }
+                }
+            }
+            is PreviewPlayer.State.Failed -> if (s.id == previewKey) {
+                previewResolvingKey = null
+                previewError = "Preview failed: ${s.message}"
+                previewKey = null
+            }
+            is PreviewPlayer.State.Idle -> if (previewKey != null && previewResolvingKey == null) {
+                previewKey = null
+            }
+            else -> {}
+        }
+    }
 
     suspend fun load(refresh: Boolean) {
         try {
@@ -110,9 +151,20 @@ fun DiscoverScreen(
         scope.launch {
             busyKeys = busyKeys + key(item)
             try {
-                queue.submit("", item.title, item.artist)
+                // Resolve the video through the same server search the web
+                // uses; the on-device downloader still does the bytes.
+                val candidate = if (SyncConfig.isConfigured()) {
+                    runCatching {
+                        YoutubeApi.search("${item.title} ${item.artist}", 1)
+                            .firstOrNull()?.pageUrl
+                    }.getOrNull()
+                } else {
+                    null
+                }
+                queue.submit(candidate ?: "", item.title, item.artist)
                 runCatching { DiscoverApi.feedback(item, "download") }
                 error = null
+                previewError = null
             } catch (e: Exception) {
                 error = "Download failed: ${e.message}"
             } finally {
@@ -121,28 +173,73 @@ fun DiscoverScreen(
         }
     }
 
+    fun stopPreview() {
+        preview.stop()
+        previewKey = null
+        previewResolvingKey = null
+    }
+
     fun preview(item: DiscoverItem) {
         val k = key(item)
         if (previewKey == k) {
-            preview.stop()
-            previewKey = null
+            stopPreview()
             return
         }
+        preview.stop()
+        previewError = null
+        previewKey = k
+        previewResolvingKey = k
         scope.launch {
-            previewKey = k
-            val result = withContext(Dispatchers.IO) {
-                engine.searchYouTube("${item.title} ${item.artist}", 1)
+            val query = "${item.title} ${item.artist}".trim()
+            var started = false
+
+            if (SyncConfig.isConfigured()) {
+                try {
+                    val hits = YoutubeApi.search(query, 5)
+                    if (previewKey != k) return@launch
+                    for (hit in hits) {
+                        val resolved = try {
+                            YoutubeApi.preview(hit.id)
+                        } catch (_: Exception) {
+                            continue
+                        }
+                        if (previewKey != k) return@launch
+                        val audioUrl = resolved.audioUrl ?: continue
+                        preview.playResolved(k, audioUrl)
+                        previewResolvingKey = null
+                        started = true
+                        break
+                    }
+                } catch (_: Exception) {
+                    // Web API unavailable; use the on-device resolver below.
+                }
             }
-            val hit = result.getOrNull()?.firstOrNull()
-            if (hit == null) {
-                error = "No YouTube preview found for ${item.title}."
-                previewKey = null
-            } else {
-                runCatching { DiscoverApi.feedback(item, "preview") }
-                preview.toggle(hit.id, hit.url, engine, onPreviewStarted)
+
+            if (!started) {
+                if (previewKey != k) return@launch
+                val result = withContext(Dispatchers.IO) {
+                    engine.searchYouTube(query, 5)
+                }
+                if (previewKey != k) return@launch
+                val hit = result.getOrNull()?.firstOrNull()
+                if (hit == null) {
+                    previewError = "No YouTube preview found for ${item.title}."
+                    previewKey = null
+                    previewResolvingKey = null
+                } else {
+                    preview.toggle(
+                        id = hit.id,
+                        pageUrl = hit.url,
+                        engine = engine,
+                        stateId = k
+                    )
+                    previewResolvingKey = null
+                }
             }
         }
     }
+
+    val previewItem = items.firstOrNull { key(it) == previewKey }
 
     val visible = remember(items, query, sourceFilter) {
         items.filter { item ->
@@ -193,6 +290,17 @@ fun DiscoverScreen(
                 )
             }
         }
+        previewItem?.let { item ->
+            DiscoverPreviewBar(
+                item = item,
+                state = previewState,
+                resolving = previewResolvingKey == key(item),
+                onStop = { stopPreview() }
+            )
+        }
+        previewError?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
         error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         when {
             loading -> Text("Loading recommendations…", style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
@@ -208,10 +316,14 @@ fun DiscoverScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(visible, key = { key(it) }) { item ->
+                    val k = key(item)
+                    val state = previewState
                     DiscoverCard(
                         item = item,
-                        busy = key(item) in busyKeys,
-                        previewing = previewKey == key(item),
+                        busy = k in busyKeys,
+                        previewLoading = previewResolvingKey == k ||
+                            (state is PreviewPlayer.State.Loading && state.id == k),
+                        previewPlaying = state is PreviewPlayer.State.Playing && state.id == k,
                         onDownload = {
                             val owned = metadata.library.value.firstOrNull { song ->
                                 FuzzySearch.matchesFields(listOf(song.title, song.artist), item.title)
@@ -220,7 +332,7 @@ fun DiscoverScreen(
                         },
                         onPreview = { preview(item) },
                         onDismiss = {
-                            items = items.filterNot { key(it) == key(item) }
+                            items = items.filterNot { key(it) == k }
                             scope.launch { runCatching { DiscoverApi.feedback(item, "dismiss") } }
                         }
                     )
@@ -255,16 +367,100 @@ fun DiscoverScreen(
 }
 
 @Composable
+private fun DiscoverPreviewBar(
+    item: DiscoverItem,
+    state: PreviewPlayer.State,
+    resolving: Boolean,
+    onStop: () -> Unit
+) {
+    val playing = state is PreviewPlayer.State.Playing
+    val loading = resolving || state is PreviewPlayer.State.Loading
+    Row(
+        modifier = Modifier.fillMaxWidth().hathorGlass().padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            UrlThumb(url = item.artworkUrl.ifBlank { null }, size = 44.dp)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(item.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+            Text(item.artist, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint, maxLines = 1)
+            Text(
+                when {
+                    loading -> "Finding preview…"
+                    playing -> "Playing preview"
+                    else -> "Preview"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (playing) HathorColors.AccentBright else HathorColors.TextHint
+            )
+        }
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = HathorColors.AccentBright
+            )
+        }
+        IconButton(onClick = onStop) {
+            Icon(Icons.Filled.Stop, contentDescription = "Stop preview", tint = HathorColors.TextBody)
+        }
+    }
+}
+
+@Composable
 private fun DiscoverCard(
     item: DiscoverItem,
     busy: Boolean,
-    previewing: Boolean,
+    previewLoading: Boolean,
+    previewPlaying: Boolean,
     onDownload: () -> Unit,
     onPreview: () -> Unit,
     onDismiss: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        UrlThumb(url = item.artworkUrl.ifBlank { null }, size = 140.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onPreview),
+            contentAlignment = Alignment.Center
+        ) {
+            UrlThumb(url = item.artworkUrl.ifBlank { null }, size = 140.dp)
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(HathorColors.Accent.copy(alpha = 0.92f)),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(onClick = onPreview, modifier = Modifier.size(48.dp)) {
+                    when {
+                        previewLoading -> CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        previewPlaying -> Icon(
+                            Icons.Filled.Pause,
+                            contentDescription = "Stop preview",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        else -> Icon(
+                            Icons.Filled.PlayArrow,
+                            contentDescription = "Preview ${item.title}",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
+            }
+        }
         Text(
             SOURCES.firstOrNull { it.first == item.source }?.second ?: item.source,
             style = MaterialTheme.typography.bodySmall,
@@ -286,20 +482,41 @@ private fun DiscoverCard(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onDownload, enabled = !busy) {
-                Icon(
-                    Icons.Filled.Download,
-                    contentDescription = "Download ${item.title}",
-                    tint = if (busy) HathorColors.TextHint else HathorColors.AccentBright,
-                    modifier = Modifier.size(20.dp)
-                )
+                if (busy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = HathorColors.AccentBright
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.Download,
+                        contentDescription = "Download ${item.title}",
+                        tint = HathorColors.AccentBright,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
             IconButton(onClick = onPreview) {
-                Icon(
-                    Icons.Filled.PlayArrow,
-                    contentDescription = "Preview ${item.title}",
-                    tint = if (previewing) HathorColors.AccentBright else HathorColors.TextHint,
-                    modifier = Modifier.size(20.dp)
-                )
+                when {
+                    previewLoading -> CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = HathorColors.AccentBright
+                    )
+                    previewPlaying -> Icon(
+                        Icons.Filled.Pause,
+                        contentDescription = "Stop preview",
+                        tint = HathorColors.AccentBright,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    else -> Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = "Preview ${item.title}",
+                        tint = HathorColors.TextHint,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
             IconButton(onClick = onDismiss) {
                 Icon(

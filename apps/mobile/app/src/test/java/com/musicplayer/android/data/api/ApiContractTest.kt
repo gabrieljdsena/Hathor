@@ -112,6 +112,29 @@ class ApiContractTest {
     }
 
     @Test
+    fun `parses youtube search and preview candidates`() {
+        val hits = YoutubeApi.parseSearch(
+            org.json.JSONArray(
+                """
+                [
+                  {"id":"abc123","title":"A","uploader":"U","durationSec":123.4,"thumbnail":"t"},
+                  {"id":null,"title":"bad"}
+                ]
+                """.trimIndent()
+            )
+        )
+        assertEquals(1, hits.size)
+        assertEquals("abc123", hits[0].id)
+        assertEquals("https://www.youtube.com/watch?v=abc123", hits[0].pageUrl)
+
+        val preview = YoutubeApi.parsePreview(
+            JSONObject("""{"id":"abc123","embeddable":true,"audioUrl":"https://example/audio"}""")
+        )
+        assertTrue(preview.embeddable)
+        assertEquals("https://example/audio", preview.audioUrl)
+    }
+
+    @Test
     fun `treats JSON nulls as absent instead of the string null`() {
         val state = AiDjApi.parse(
             JSONObject(

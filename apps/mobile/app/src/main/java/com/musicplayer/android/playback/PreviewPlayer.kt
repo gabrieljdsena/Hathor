@@ -62,13 +62,19 @@ class PreviewPlayer(appContext: Context) {
      * switch. [onStarted] fires when audio actually starts (used to pause
      * the main player so both never play at once).
      */
-    fun toggle(id: String, pageUrl: String, engine: DownloadEngine, onStarted: () -> Unit = {}) {
+    fun toggle(
+        id: String,
+        pageUrl: String,
+        engine: DownloadEngine,
+        onStarted: () -> Unit = {},
+        stateId: String = id
+    ) {
         when (val cur = _state.value) {
-            is State.Playing -> if (cur.id == id) {
+            is State.Playing -> if (cur.id == stateId) {
                 stop()
                 return
             }
-            is State.Loading -> if (cur.id == id) {
+            is State.Loading -> if (cur.id == stateId) {
                 stop()
                 return
             }
@@ -76,7 +82,7 @@ class PreviewPlayer(appContext: Context) {
         }
         stopInternal()
         resolveEngine = engine
-        _state.value = State.Loading(id)
+        _state.value = State.Loading(stateId)
         task = scope.launch {
             val pid = "preview-$id-${System.currentTimeMillis()}"
             resolveProcessId = pid
@@ -100,17 +106,38 @@ class PreviewPlayer(appContext: Context) {
             if (!isActive) return@launch
             res.fold(
                 onSuccess = { stream ->
-                    startStream(id, stream)
+                    startStream(stateId, stream)
                     onStarted()
                 },
                 onFailure = { e ->
                     // Cancelled by stop()/switch: stay silent, state is Idle.
                     if (e !is CancellationException) {
-                        _state.value = State.Failed(id, e.message ?: e.toString())
+                        _state.value = State.Failed(stateId, e.message ?: e.toString())
                     }
                 }
             )
         }
+    }
+
+    /**
+     * Play a stream URL resolved elsewhere (the Web API preview endpoint).
+     * [stateId] is the caller's row/card key; it need not be the video id.
+     */
+    fun playResolved(stateId: String, audioUrl: String) {
+        when (val cur = _state.value) {
+            is State.Playing -> if (cur.id == stateId) {
+                stop()
+                return
+            }
+            is State.Loading -> if (cur.id == stateId) {
+                stop()
+                return
+            }
+            else -> {}
+        }
+        stopInternal()
+        _state.value = State.Loading(stateId)
+        startStream(stateId, audioUrl)
     }
 
     fun stop() {
