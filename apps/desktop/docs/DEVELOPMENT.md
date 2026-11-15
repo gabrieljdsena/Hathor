@@ -23,6 +23,7 @@ services/
   discover.py         DiscoverService — feed, preview resolution, owned guard, local downloads
   ai_dj.py            AiDjController — Vohithe session, batches, voice, boundary handoff
   player_sync.py      Server player queue/play/next bridge used by AI DJ
+  telemetry.py        Playback segment observer → /player/playback-events
   api_config.py       Runtime Web API URL/key (SQLite + .env fallback)
   hathor_api.py       Shared authenticated HTTP client
   apple.py            AppleService — artist/album artwork lookups
@@ -42,7 +43,7 @@ ui/
   cdn.min.js          Vendored Alpine.js
   notyf.*             Vendored Notyf
   sweetalert2/        Vendored SweetAlert2
-tests/                Python stdlib/pytest tests + JS preview/voice/fuzzy smoke tests
+tests/                Python stdlib/pytest tests (services, lyrics, telemetry) + JS preview/voice/fuzzy/batch smoke tests
 pytest.ini            Test discovery config
 requirements-dev.txt  Test tooling (pytest)
 WEB_PARITY.md         Web -> desktop parity plan/progress

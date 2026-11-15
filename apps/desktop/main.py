@@ -379,6 +379,11 @@ def on_closing():
             api.metadata.apply_pending_edits()
     except Exception as e:
         print(f" [Python] Pending metadata flush on close failed: {e}")
+    try:
+        if getattr(api, 'telemetry', None):
+            api.telemetry.flush(wait=True)
+    except Exception as e:
+        print(f" [Python] Playback telemetry flush on close failed: {e}")
 
 
 if __name__ == '__main__':

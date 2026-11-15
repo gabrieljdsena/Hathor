@@ -84,11 +84,13 @@
     --text-6xl--line-height: 1;
     --text-7xl: 4.5rem;
     --text-7xl--line-height: 1;
+    --font-weight-normal: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
     --font-weight-extrabold: 800;
     --tracking-tight: -0.025em;
+    --tracking-normal: 0em;
     --tracking-wide: 0.025em;
     --tracking-wider: 0.05em;
     --tracking-widest: 0.1em;
@@ -347,6 +349,9 @@
   }
   .top-6 {
     top: calc(var(--spacing) * 6);
+  }
+  .top-16 {
+    top: calc(var(--spacing) * 16);
   }
   .-right-1\/4 {
     right: calc(calc(1 / 4 * 100%) * -1);
@@ -2088,6 +2093,10 @@
     --tw-font-weight: var(--font-weight-medium);
     font-weight: var(--font-weight-medium);
   }
+  .font-normal {
+    --tw-font-weight: var(--font-weight-normal);
+    font-weight: var(--font-weight-normal);
+  }
   .font-semibold {
     --tw-font-weight: var(--font-weight-semibold);
     font-weight: var(--font-weight-semibold);
@@ -2136,6 +2145,10 @@
     --tw-tracking: 0.32em;
     letter-spacing: 0.32em;
   }
+  .tracking-normal {
+    --tw-tracking: var(--tracking-normal);
+    letter-spacing: var(--tracking-normal);
+  }
   .tracking-tight {
     --tw-tracking: var(--tracking-tight);
     letter-spacing: var(--tracking-tight);
@@ -2160,6 +2173,9 @@
   }
   .whitespace-pre-line {
     white-space: pre-line;
+  }
+  .whitespace-pre-wrap {
+    white-space: pre-wrap;
   }
   .text-amber-200 {
     color: var(--color-amber-200);
@@ -2301,6 +2317,9 @@
   }
   .text-zinc-950 {
     color: var(--color-zinc-950);
+  }
+  .normal-case {
+    text-transform: none;
   }
   .uppercase {
     text-transform: uppercase;
@@ -3130,6 +3149,9 @@
     }
     .hover\:text-gray-300:hover {
       color: var(--color-gray-300);
+    }
+    .hover\:text-orange-200:hover {
+      color: var(--color-orange-200);
     }
     .hover\:text-orange-300:hover {
       color: var(--color-orange-300);

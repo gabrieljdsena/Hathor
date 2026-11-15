@@ -44,6 +44,7 @@ Discover shows out-of-library recommendations from the Hathor server. Open **Set
 - **Video (top-right play)** — resolves the first YouTube hit and opens an embedded preview; videos that refuse embedding still offer **Watch on YouTube**.
 - **Download (bottom-right)** — checks the local library first and asks before creating a duplicate. Progress appears as a percentage pill on the card; downloads run through the normal local queue.
 - **Refresh** — asks the server for a fresh daily ranking. **Your signal** (when feedback exists) shows conversion/playback/download stats and can tune the server weights.
+- **Playback signal** — one completion/skip event per music track is sent to the Web API when configured; podcasts are skipped, and telemetry failures never affect playback.
 - Starting any main song or resuming playback stops the preview; previews pause the main player when they start.
 
 ## All Songs
@@ -111,9 +112,11 @@ The lyrics panel shows the current song's lyrics.
 - **Synced** – LRC-style timestamps are translated into per-line highlighting as the song plays.
 - **Plain** – full-text lyrics if no timed version is available.
 - **Local cache** – fetched lyrics are stored in the `Lyrics` table so they work offline.
-- **Unknown artists** – LRCLIB's exact endpoint requires an artist (it answers those requests with HTTP 400), so artist-less songs fall back to a track-only search that is only accepted on an exact track-name match.
-- **Romanization** – for Japanese tracks, a "romaji" toggle converts kana to Hepburn romanization via `pykakasi` (both for timed and plain lyrics).
-- **Highlight timing correction** – if the synced highlighting runs early/late, nudge it with the −1s/−.1s/+.1s/+1s stepper in the lyrics header. Persisted per song (±20 s max) in the `Lyrics` table, so it survives restarts and syncs to other devices.
+- **Unknown artists** — LRCLIB's exact endpoint requires an artist (it answers those requests with HTTP 400), so artist-less songs fall back to a track-only search that is only accepted on an exact track-name match.
+- **Search / Replace** — the **Search** / **Replace** button opens a panel prefilled from the song (or the active podcast chapter, split into title/artist). It asks the Web API `/lyrics/search` first (when configured) and falls back to lrclib. Candidates show track, artist, album, duration and synced/plain availability; you can preview, save/replace, or remove the saved row.
+- **Chapter targets** — for podcasts with chapters, the panel's **Save to chapter** picker defaults to the active chapter and also offers the whole episode. Saving to a different chapter shows a jump banner.
+- **Romanization** — raw lyrics are shown by default. The **Romaji** toggle romanizes on demand via the Web API, with local `pykakasi` fallback, without changing the cached lyrics.
+- **Highlight timing correction** — if the synced highlighting runs early/late, nudge it with the −1s/−.1s/+.1s/+1s stepper in the lyrics header. Persisted per song (±20 s max) in the `Lyrics` table, so it survives restarts and syncs to other devices.
 
 ## History
 

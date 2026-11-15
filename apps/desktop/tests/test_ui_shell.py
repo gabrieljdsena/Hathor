@@ -21,6 +21,9 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn('id="dj-vibe-popover"', index)
         self.assertIn('id="nav-ai-dj-label"', index)
         self.assertIn('id="bento-move-podcast-btn"', index)
+        self.assertIn('id="np-lyrics-search-btn"', index)
+        self.assertIn('id="np-romaji-btn"', index)
+        self.assertIn('id="np-lyrics-search-panel"', index)
         for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js"):
             self.assertTrue((self.root / "ui" / "js" / name).exists(), name)
         for view in ("discover.html", "ai_dj.html"):

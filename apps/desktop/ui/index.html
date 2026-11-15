@@ -407,6 +407,14 @@
                             <button onclick="window.adjustLyricsOffset(1000)" title="+1s"
                                 class="px-1.5 py-1 rounded-lg hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer text-xs font-mono">+1s</button>
                         </div>
+                        <button id="np-lyrics-search-btn" title="Search or replace lyrics"
+                            class="px-3 py-1.5 rounded-full text-xs font-semibold bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                            Search
+                        </button>
+                        <button id="np-romaji-btn" title="Toggle romaji"
+                            class="px-3 py-1.5 rounded-full text-xs font-semibold bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10 transition-all focus:outline-none cursor-pointer">
+                            Romaji
+                        </button>
                         <button id="np-lq-queue-btn" title="Toggle Queue"
                             class="text-zinc-400 hover:text-white transition-all p-2.5 rounded-xl hover:bg-white/10 focus:outline-none cursor-pointer">
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h8m4-4v8m-4-4h8" /></svg>
@@ -421,6 +429,63 @@
                     class="relative w-full max-w-8xl text-center space-y-6 md:space-y-10 overflow-y-auto overflow-x-hidden break-words h-full px-4 md:px-12 scroll-smooth pb-40 pt-32 custom-scrollbar">
                     <p class="text-zinc-500 text-2xl md:text-xl font-semibold animate-pulse">Select a song to load
                         lyrics...</p>
+                </div>
+
+                <!-- Lyrics Search / Replace panel -->
+                <div id="np-lyrics-search-panel"
+                    class="hidden absolute inset-x-0 top-16 bottom-0 z-30 overflow-y-auto custom-scrollbar px-4 sm:px-8 pb-24 bg-zinc-950/95 backdrop-blur-xl">
+                    <div class="mx-auto w-full max-w-2xl flex flex-col gap-3 py-4 text-left">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <div class="font-mono text-[10px] uppercase tracking-[0.24em] text-orange-300/80">Lyrics</div>
+                                <h2 class="text-xl font-semibold text-zinc-100">Search / replace</h2>
+                            </div>
+                            <button id="np-lyrics-search-close" type="button" title="Close search"
+                                class="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer">
+                                Close
+                            </button>
+                        </div>
+
+                        <label id="np-lyrics-chapter-wrap" class="hidden flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                            Save to chapter
+                            <select id="np-lyrics-chapter-select"
+                                class="w-full px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 rounded-lg cursor-pointer">
+                                <option value="">Episode (whole file)</option>
+                            </select>
+                        </label>
+
+                        <div id="np-lyrics-saved-banner"
+                            class="hidden items-center gap-3 text-sm text-orange-200 bg-orange-500/10 border border-orange-500/30 rounded-xl px-3 py-2">
+                            <span id="np-lyrics-saved-text" class="flex-1"></span>
+                            <button id="np-lyrics-jump-btn" type="button"
+                                class="px-2 py-1 rounded-md text-xs font-semibold text-orange-300 hover:text-orange-200 hover:bg-orange-500/10 transition-colors cursor-pointer whitespace-nowrap">
+                                Jump to chapter
+                            </button>
+                        </div>
+
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <input id="np-lyrics-track-input" type="text" spellcheck="false" placeholder="Track name"
+                                class="w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 rounded-lg placeholder:text-zinc-600">
+                            <input id="np-lyrics-artist-input" type="text" spellcheck="false" placeholder="Artist (optional)"
+                                class="w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 rounded-lg placeholder:text-zinc-600">
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button id="np-lyrics-search-go" type="button"
+                                class="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium transition-colors cursor-pointer disabled:opacity-50">
+                                Search
+                            </button>
+                            <button id="np-lyrics-remove" type="button"
+                                class="hidden px-4 py-2 rounded-lg bg-white/5 text-red-400 hover:text-red-300 hover:bg-red-500/10 text-sm transition-colors cursor-pointer disabled:opacity-50">
+                                Remove saved
+                            </button>
+                            <span id="np-lyrics-search-status" class="text-xs text-zinc-500"></span>
+                        </div>
+
+                        <div id="np-lyrics-search-notice"
+                            class="hidden text-sm text-orange-200 bg-orange-500/10 border border-orange-500/30 rounded-lg px-3 py-2"></div>
+                        <div id="np-lyrics-search-results" class="flex flex-col gap-2"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2456,6 +2521,338 @@
 
         // --- Global Lyrics Logic ---
         window.parsedLyrics = [];
+        window.lyricsRaw = null;
+        window.lyricsRawKey = '';
+        window.lyricsRomanized = null;
+        window.lyricsRomanizedFor = '';
+        window.lyricsRomaji = false;
+        window.lyricsChapterName = '';
+        window._lyricsPanelChapters = [];
+        window._lyricsSavedChapter = null;
+
+        window.paintLyricsRomajiButton = function () {
+            const btn = document.getElementById('np-romaji-btn');
+            if (!btn) return;
+            btn.classList.toggle('bg-orange-500', !!window.lyricsRomaji);
+            btn.classList.toggle('text-white', !!window.lyricsRomaji);
+            btn.classList.toggle('bg-white/5', !window.lyricsRomaji);
+            btn.classList.toggle('text-zinc-400', !window.lyricsRomaji);
+        };
+
+        window.paintLyricsSearchButton = function () {
+            const btn = document.getElementById('np-lyrics-search-btn');
+            if (!btn) return;
+            const song = window.current_playing_song || null;
+            btn.disabled = !song;
+            btn.classList.toggle('opacity-40', !song);
+            btn.classList.toggle('cursor-not-allowed', !song);
+            const raw = window.lyricsRaw;
+            btn.textContent = (raw && (raw.synced || raw.plain)) ? 'Replace' : 'Search';
+        };
+
+        window.lyricsDisplayText = function () {
+            const useRoman = !!(window.lyricsRomaji && window.lyricsRomanized &&
+                window.lyricsRomanizedFor === window.lyricsRawKey);
+            const raw = window.lyricsRaw || {};
+            if (!useRoman) return raw;
+            return {
+                synced: (window.lyricsRomanized.synced || raw.synced || null),
+                plain: (window.lyricsRomanized.plain || raw.plain || null),
+            };
+        };
+
+        window.applyLyricsDisplay = function () {
+            const raw = window.lyricsRaw;
+            if (!raw) return;
+            const display = window.lyricsDisplayText() || raw;
+            const synced = display.synced || null;
+            const plain = display.plain || null;
+            const container = document.getElementById('lyrics-container');
+            if (!container) return;
+            if (synced) {
+                window.parsedLyrics = window.parseLRC(synced);
+                window.renderLyrics();
+            } else if (plain) {
+                window.parsedLyrics = [];
+                container.innerHTML = `<div class="text-zinc-300 text-md md:text-xl lg:text-2xl font-bold whitespace-pre-line leading-relaxed md:leading-loose pt-8 pb-16">${plain}</div>`;
+            }
+            window.paintLyricsSearchButton();
+        };
+
+        window.romanizeCurrentLyrics = async function () {
+            const raw = window.lyricsRaw;
+            if (!raw || (!raw.synced && !raw.plain)) return;
+            const key = window.lyricsRawKey;
+            const fetchId = window.lyricsFetchId;
+            try {
+                const api = window.pywebview && window.pywebview.api;
+                if (!api || !api.romanize_text) return;
+                const [synced, plain] = await Promise.all([
+                    raw.synced ? api.romanize_text(raw.synced, true) : Promise.resolve(null),
+                    raw.plain ? api.romanize_text(raw.plain, false) : Promise.resolve(null),
+                ]);
+                if (window.lyricsFetchId !== fetchId || window.lyricsRawKey !== key) return;
+                window.lyricsRomanized = { synced: synced || null, plain: plain || null };
+                window.lyricsRomanizedFor = key;
+            } catch (e) {
+                window.lyricsRomanized = null;
+                window.lyricsRomanizedFor = '';
+            }
+        };
+
+        window.toggleLyricsRomaji = async function () {
+            window.lyricsRomaji = !window.lyricsRomaji;
+            window.paintLyricsRomajiButton();
+            if (window.lyricsRomaji) await window.romanizeCurrentLyrics();
+            window.applyLyricsDisplay();
+        };
+
+        window.splitLyricsChapterName = function (name) {
+            const text = String(name || '').replace(/\s*[\(\[].*?(remaster|mix|version|edit|live|feat\.?|ft\.?).*?[\)\]]/gi, '').trim();
+            const idx = text.indexOf(' - ');
+            if (idx < 0) return { title: text, artist: '' };
+            return { title: text.slice(0, idx).trim(), artist: text.slice(idx + 3).trim() };
+        };
+
+        window._lyricsPanelTargetChapter = function () {
+            const select = document.getElementById('np-lyrics-chapter-select');
+            if (!select || !select.value) return null;
+            const id = Number(select.value);
+            return (window._lyricsPanelChapters || []).find(c => Number(c.id) === id) || null;
+        };
+
+        window._lyricsPanelPrefill = function () {
+            const song = window.current_playing_song || {};
+            const chapter = window._lyricsPanelTargetChapter();
+            const trackInput = document.getElementById('np-lyrics-track-input');
+            const artistInput = document.getElementById('np-lyrics-artist-input');
+            if (!trackInput || !artistInput) return;
+            if (chapter) {
+                const split = window.splitLyricsChapterName(chapter.name);
+                trackInput.value = split.title || '';
+                artistInput.value = split.artist || '';
+            } else {
+                trackInput.value = song.Title || '';
+                artistInput.value = (song.Artist && song.Artist !== 'Unknown') ? song.Artist : '';
+            }
+        };
+
+        window._lyricsPanelNotice = function (message) {
+            const notice = document.getElementById('np-lyrics-search-notice');
+            if (!notice) return;
+            notice.textContent = message || '';
+            notice.classList.toggle('hidden', !message);
+        };
+
+        window._lyricsPanelRenderHits = function (hits) {
+            const list = document.getElementById('np-lyrics-search-results');
+            if (!list) return;
+            list.innerHTML = '';
+            if (!hits || !hits.length) {
+                list.innerHTML = '<p class="text-sm text-zinc-500 py-2">No candidates. Try a different spelling or remove the artist.</p>';
+                return;
+            }
+            hits.forEach((hit, index) => {
+                const card = document.createElement('div');
+                card.className = 'flex flex-col gap-2 bg-white/5 border border-white/10 rounded-xl p-3';
+                const row = document.createElement('div');
+                row.className = 'flex items-center gap-3';
+                const info = document.createElement('div');
+                info.className = 'flex-1 min-w-0';
+                const title = document.createElement('div');
+                title.className = 'text-sm text-zinc-100 truncate';
+                title.textContent = `${hit.trackName || 'Unknown'} \u2014 ${hit.artistName || ''}`;
+                const sub = document.createElement('div');
+                sub.className = 'text-xs text-zinc-500';
+                let meta = `${hit.syncedLyrics ? 'Synced' : 'Plain'} available`;
+                if (hit.albumName) meta += ' \u00b7 ' + hit.albumName;
+                const duration = Number(hit.duration) || 0;
+                if (duration > 0) {
+                    const mins = Math.floor(duration / 60);
+                    const secs = String(Math.floor(duration % 60)).padStart(2, '0');
+                    meta += ' \u00b7 ' + mins + ':' + secs;
+                }
+                sub.textContent = meta;
+                info.appendChild(title);
+                info.appendChild(sub);
+                const preview = document.createElement('button');
+                preview.type = 'button';
+                preview.className = 'px-3 py-1.5 rounded-lg bg-white/5 text-zinc-300 hover:text-white hover:bg-white/10 text-xs font-medium transition-colors cursor-pointer';
+                preview.textContent = 'Preview';
+                const save = document.createElement('button');
+                save.type = 'button';
+                save.className = 'px-3 py-1.5 rounded-lg bg-orange-500/15 text-orange-400 hover:bg-orange-500 hover:text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50';
+                save.textContent = (window.lyricsRaw && (window.lyricsRaw.synced || window.lyricsRaw.plain)) ? 'Replace' : 'Save';
+                const pre = document.createElement('pre');
+                pre.className = 'hidden text-xs text-zinc-300 whitespace-pre-wrap max-h-48 overflow-y-auto bg-black/40 rounded-lg p-3 font-sans';
+                pre.textContent = hit.syncedLyrics || hit.plainLyrics || '(empty)';
+                preview.addEventListener('click', () => {
+                    const open = pre.classList.toggle('hidden') === false;
+                    preview.textContent = open ? 'Hide' : 'Preview';
+                });
+                save.addEventListener('click', () => window.saveLyricsHit(hit, index, save));
+                row.appendChild(info);
+                row.appendChild(preview);
+                row.appendChild(save);
+                card.appendChild(row);
+                card.appendChild(pre);
+                list.appendChild(card);
+            });
+        };
+
+        window._lyricsPanelSearch = async function () {
+            const trackInput = document.getElementById('np-lyrics-track-input');
+            const artistInput = document.getElementById('np-lyrics-artist-input');
+            const status = document.getElementById('np-lyrics-search-status');
+            const track = (trackInput && trackInput.value || '').trim();
+            const artist = (artistInput && artistInput.value || '').trim();
+            if (!track) {
+                window._lyricsPanelNotice('Enter a track name to search.');
+                return;
+            }
+            window._lyricsPanelNotice('');
+            if (status) status.textContent = 'Searching...';
+            const song = window.current_playing_song || {};
+            try {
+                const hits = await window.pywebview.api.search_lyrics_candidates(
+                    track, artist, song.Album, song.Duration
+                );
+                if (status) status.textContent = '';
+                window._lyricsPanelRenderHits(hits || []);
+            } catch (e) {
+                if (status) status.textContent = '';
+                window._lyricsPanelNotice('Lyrics search failed. Try again.');
+            }
+        };
+
+        window.saveLyricsHit = async function (hit, index, button) {
+            const chapter = window._lyricsPanelTargetChapter();
+            const chapterId = chapter ? Number(chapter.id) : null;
+            if (button) button.disabled = true;
+            window._lyricsPanelNotice('');
+            try {
+                const ok = await window.pywebview.api.save_lyrics(
+                    hit.syncedLyrics || null,
+                    hit.plainLyrics || null,
+                    chapterId
+                );
+                if (ok === false) {
+                    window._lyricsPanelNotice('Lyrics could not be saved for that target.');
+                    return;
+                }
+                const activeId = (window.lyricsChapterId != null) ? Number(window.lyricsChapterId) : null;
+                const targetId = chapter ? Number(chapter.id) : null;
+                if ((targetId === null && activeId === null) || targetId === activeId) {
+                    window.closeLyricsSearchPanel();
+                    await window.fetchLyricsForCurrentSong(window.current_playing_song);
+                    return;
+                }
+                if (chapter) {
+                    window._lyricsSavedChapter = chapter;
+                    const banner = document.getElementById('np-lyrics-saved-banner');
+                    const text = document.getElementById('np-lyrics-saved-text');
+                    if (text) text.textContent = `Saved for "${chapter.name}" \u2014 seek there to view it.`;
+                    if (banner) {
+                        banner.classList.remove('hidden');
+                        banner.classList.add('flex');
+                    }
+                    window._lyricsPanelNotice('Lyrics saved for the selected chapter.');
+                } else {
+                    window._lyricsPanelNotice('Saved for the whole episode. This chapter keeps its own row.');
+                }
+            } catch (e) {
+                window._lyricsPanelNotice('Lyrics could not be saved.');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        };
+
+        window.openLyricsSearchPanel = async function () {
+            const song = window.current_playing_song;
+            if (!song) return;
+            const panel = document.getElementById('np-lyrics-search-panel');
+            if (!panel) return;
+            panel.classList.remove('hidden');
+            window._lyricsPanelNotice('');
+            const banner = document.getElementById('np-lyrics-saved-banner');
+            if (banner) {
+                banner.classList.add('hidden');
+                banner.classList.remove('flex');
+            }
+            window._lyricsSavedChapter = null;
+            const remove = document.getElementById('np-lyrics-remove');
+            if (remove) remove.classList.toggle('hidden', !song);
+
+            const chapterWrap = document.getElementById('np-lyrics-chapter-wrap');
+            const select = document.getElementById('np-lyrics-chapter-select');
+            window._lyricsPanelChapters = [];
+            if (chapterWrap) chapterWrap.classList.add('hidden');
+            if (select) select.innerHTML = '<option value="">Episode (whole file)</option>';
+            if (song.IsPodcast && window.pywebview && window.pywebview.api && window.pywebview.api.get_podcast_chapters) {
+                try {
+                    const chapters = (await window.pywebview.api.get_podcast_chapters(song.File)) || [];
+                    window._lyricsPanelChapters = chapters.slice().sort(
+                        (a, b) => Number(a.startSecs || 0) - Number(b.startSecs || 0));
+                    if (window._lyricsPanelChapters.length) {
+                        if (chapterWrap) chapterWrap.classList.remove('hidden');
+                        window._lyricsPanelChapters.forEach((chapter) => {
+                            const option = document.createElement('option');
+                            option.value = String(chapter.id);
+                            option.textContent = `${window.formatLyricsChapterTime(chapter.startSecs || 0)} \u00b7 ${chapter.name}`;
+                            select.appendChild(option);
+                        });
+                        const activeId = (window.lyricsChapterId != null) ? String(window.lyricsChapterId) : '';
+                        select.value = activeId;
+                    }
+                } catch (e) { /* chapter picker is best-effort */ }
+            }
+            window._lyricsPanelPrefill();
+            const artistInput = document.getElementById('np-lyrics-artist-input');
+            const trackInput = document.getElementById('np-lyrics-track-input');
+            if (artistInput) artistInput.value = artistInput.value || '';
+            if (trackInput) trackInput.value = trackInput.value || song.Title || '';
+            await window._lyricsPanelSearch();
+        };
+
+        window.closeLyricsSearchPanel = function () {
+            const panel = document.getElementById('np-lyrics-search-panel');
+            if (panel) panel.classList.add('hidden');
+        };
+
+        window.formatLyricsChapterTime = function (seconds) {
+            const total = Math.max(0, Math.floor(Number(seconds) || 0));
+            const h = Math.floor(total / 3600);
+            const m = Math.floor((total % 3600) / 60);
+            const s = total % 60;
+            if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            return `${m}:${String(s).padStart(2, '0')}`;
+        };
+
+        window.jumpToSavedLyricsChapter = function () {
+            const chapter = window._lyricsSavedChapter;
+            if (!chapter) return;
+            const start = Number(chapter.startSecs || 0);
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.progress_slider_click) {
+                window.pywebview.api.progress_slider_click(start);
+            }
+            window.closeLyricsSearchPanel();
+            setTimeout(() => {
+                if (window.current_playing_song) window.fetchLyricsForCurrentSong(window.current_playing_song);
+            }, 500);
+        };
+
+        window.removeSavedLyrics = async function () {
+            const chapter = window._lyricsPanelTargetChapter();
+            const chapterId = chapter ? Number(chapter.id) : null;
+            try {
+                const removed = await window.pywebview.api.delete_lyrics(chapterId);
+                window._lyricsPanelNotice(removed ? 'Saved lyrics removed.' : 'No saved lyrics for that target.');
+                window.closeLyricsSearchPanel();
+                await window.fetchLyricsForCurrentSong(window.current_playing_song);
+            } catch (e) {
+                window._lyricsPanelNotice('Lyrics could not be removed.');
+            }
+        };
 
         window.parseLRC = function (lrcText) {
             const lines = lrcText.split('\n');
@@ -2610,6 +3007,12 @@
             window.lyricsChapterId = null;
             window.lyricsChapterStart = 0;
             window.lyricsChapterFile = songData.File || null;
+            window.lyricsChapterName = '';
+            window.lyricsRaw = null;
+            window.lyricsRawKey = '';
+            window.lyricsRomanized = null;
+            window.lyricsRomanizedFor = '';
+            window.paintLyricsSearchButton();
             try {
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.get_lyrics_offset && songData.File) {
                     const off = await window.pywebview.api.get_lyrics_offset(songData.File);
@@ -2619,6 +3022,21 @@
                 }
             } catch (e) { /* offset stays 0 */ }
             window.paintLyricsOffset();
+
+            // Resolve the active chapter up front so the search panel can
+            // prefill and the picker defaults correctly even when no lyrics
+            // are cached yet.
+            try {
+                if (songData.IsPodcast && window.pywebview && window.pywebview.api &&
+                    typeof window.pywebview.api.get_active_chapter === 'function') {
+                    const active = await window.pywebview.api.get_active_chapter();
+                    if (window.lyricsFetchId === currentFetchId && active) {
+                        window.lyricsChapterId = active.id;
+                        window.lyricsChapterStart = Number(active.start_secs) || 0;
+                        window.lyricsChapterName = active.name || '';
+                    }
+                }
+            } catch (e) { /* chapter context is best-effort */ }
 
             container.innerHTML = `<p class="text-zinc-500 text-2xl md:text-4xl font-semibold animate-pulse">Loading lyrics for ${songData.Title}...</p>`;
             window.parsedLyrics = [];
@@ -2638,14 +3056,24 @@
                 if (lyricsData && lyricsData.chapter_id != null) {
                     window.lyricsChapterId = lyricsData.chapter_id;
                     window.lyricsChapterStart = Number(lyricsData.chapter_start_secs) || 0;
+                    window.lyricsChapterName = lyricsData.chapter_name || window.lyricsChapterName;
                 }
 
-                if (lyricsData && lyricsData.synced) {
-                    window.parsedLyrics = window.parseLRC(lyricsData.synced);
-                    window.renderLyrics();
-                } else if (lyricsData && lyricsData.plain) {
-                    container.innerHTML = `<div class="text-zinc-300 text-md md:text-xl lg:text-2xl font-bold whitespace-pre-line leading-relaxed md:leading-loose pt-8 pb-16">${lyricsData.plain}</div>`;
+                if (lyricsData && (lyricsData.synced || lyricsData.plain)) {
+                    window.lyricsRaw = {
+                        synced: lyricsData.synced || null,
+                        plain: lyricsData.plain || null,
+                    };
+                    window.lyricsRawKey = `${songData.File || ''}::${window.lyricsChapterId != null ? window.lyricsChapterId : ''}`;
+                    if (window.lyricsRomaji) {
+                        await window.romanizeCurrentLyrics();
+                        if (window.lyricsFetchId !== currentFetchId) return;
+                    }
+                    window.applyLyricsDisplay();
                 } else {
+                    window.lyricsRaw = null;
+                    window.lyricsRawKey = '';
+                    window.paintLyricsSearchButton();
                     container.innerHTML = '<p class="text-zinc-500 text-2xl md:text-4xl font-semibold">No exact lyrics found.</p><p class="text-zinc-400 text-xl md:text-2xl mt-2 animate-pulse">Searching for alternatives...</p>';
                     try {
                         const suggestions = await window.pywebview.api.search_lyrics(
@@ -2670,6 +3098,9 @@
                     }
                 }
             } catch (error) {
+                window.lyricsRaw = null;
+                window.lyricsRawKey = '';
+                window.paintLyricsSearchButton();
                 container.innerHTML = '<p class="text-red-400 text-2xl md:text-4xl font-semibold">Failed to load lyrics.</p>';
             }
         };
@@ -2716,6 +3147,39 @@
                 }
             } catch (e) { /* chapter poll is best-effort */ }
         };
+
+        if (!window._lyricsExtrasBound) {
+            window._lyricsExtrasBound = true;
+            const searchBtn = document.getElementById('np-lyrics-search-btn');
+            if (searchBtn) searchBtn.addEventListener('click', () => {
+                const panel = document.getElementById('np-lyrics-search-panel');
+                if (!panel) return;
+                if (panel.classList.contains('hidden')) window.openLyricsSearchPanel();
+                else window.closeLyricsSearchPanel();
+            });
+            const romajiBtn = document.getElementById('np-romaji-btn');
+            if (romajiBtn) romajiBtn.addEventListener('click', () => window.toggleLyricsRomaji());
+            const panelClose = document.getElementById('np-lyrics-search-close');
+            if (panelClose) panelClose.addEventListener('click', window.closeLyricsSearchPanel);
+            const searchGo = document.getElementById('np-lyrics-search-go');
+            if (searchGo) searchGo.addEventListener('click', () => window._lyricsPanelSearch());
+            const removeBtn = document.getElementById('np-lyrics-remove');
+            if (removeBtn) removeBtn.addEventListener('click', () => window.removeSavedLyrics());
+            const jumpBtn = document.getElementById('np-lyrics-jump-btn');
+            if (jumpBtn) jumpBtn.addEventListener('click', window.jumpToSavedLyricsChapter);
+            const chapterSelect = document.getElementById('np-lyrics-chapter-select');
+            if (chapterSelect) chapterSelect.addEventListener('change', () => {
+                const banner = document.getElementById('np-lyrics-saved-banner');
+                if (banner) {
+                    banner.classList.add('hidden');
+                    banner.classList.remove('flex');
+                }
+                window._lyricsSavedChapter = null;
+                window._lyricsPanelPrefill();
+            });
+        }
+        window.paintLyricsRomajiButton();
+        window.paintLyricsSearchButton();
 
         window.update_queue_ui = function () {
             const queueBody = document.getElementById("queue-body");
@@ -2819,6 +3283,7 @@
                     lyricsView.classList.add("hidden");
                     lyricsView.classList.remove("flex");
                     document.body.classList.remove("lyrics-active");
+                    if (typeof window.closeLyricsSearchPanel === 'function') window.closeLyricsSearchPanel();
                     toggleLyricsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>`;
                     toggleLyricsBtn.classList.remove("text-orange-500", "hover:text-orange-400");
                     toggleLyricsBtn.classList.add("text-zinc-400", "hover:text-white");

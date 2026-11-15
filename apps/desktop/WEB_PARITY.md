@@ -87,9 +87,9 @@ These are working and should be preserved:
 | D14 | **Fuzzy/typo-tolerant search** — diacritics, tokens, Damerau-Levenshtein | `utils/fuzzy.ts` | Done | 3 |
 | D15 | **Download already-owned guard** — confirm before creating `(1)` twins | `views/Download.tsx`, `api.checkDownload` | Done | 3 |
 | D16 | **Pending metadata edits** — edit the playing file without rewriting it under the player | `pendingedit.test.tsx`, web client | Done | 3 |
-| D17 | **Lyrics search/replace/delete** — explicit Search/Replace panel, chapter save target, delete cached lyrics | `components/LyricsSheet.tsx` | Partial — only suggestions when nothing is found; no delete/target picker | 4 |
-| D18 | **Romaji toggle** | `components/LyricsSheet.tsx` | Partial — pykakasi output is always applied | 4 |
-| D19 | **Playback telemetry** — completion/skip segments for Discover quality | `audio/telemetry.ts`, `POST /player/playback-events` | Missing (optional; `Music_History` inference covers desktop for now) | 4 |
+| D17 | **Lyrics search/replace/delete** — explicit Search/Replace panel, chapter save target, delete cached lyrics | `components/LyricsSheet.tsx` | Done | 4 |
+| D18 | **Romaji toggle** | `components/LyricsSheet.tsx` | Done | 4 |
+| D19 | **Playback telemetry** — completion/skip segments for Discover quality | `audio/telemetry.ts`, `POST /player/playback-events` | Done | 4 |
 | D20 | **Live cross-device player hub** — real-time play/pause/next/seek convergence and remote control | `playerHub.ts` | Partial — resume spot only | 5 |
 
 ### 2.2 Smaller actions inside existing screens
@@ -198,7 +198,7 @@ independent of each other.
   - **Done:** `pytest.ini`, `requirements-dev.txt`, `apps/desktop/tests/` and
     `.github/workflows/desktop-tests.yml` (Python 3.12 + `pytest`, Node 20 +
     `npm ci` + Tailwind build). The suite is stdlib-compatible for local runs
-    without pygame/pywebview; 57 Python tests + Discover/voice/fuzzy/batch JS smoke tests pass.
+    without pygame/pywebview; 70 Python tests + Discover/voice/fuzzy/batch JS smoke tests pass.
 
 ### Phase 1 — Discover
 
@@ -525,7 +525,7 @@ independent of each other.
 
 ### Phase 4 — Lyrics and playback polish
 
-- [ ] **P4.1 — Lyrics search/replace/delete (D17)**
+- [x] **P4.1 — Lyrics search/replace/delete (D17)**
   - Add a `Search/Replace` panel to the lyrics view:
     - Prefill track/artist (chapter-aware split, same as web).
     - Call the Web API `/lyrics/search` when configured, with the same
@@ -538,8 +538,13 @@ independent of each other.
   - Acceptance: search/replace/delete work for songs and chapters; cache and
     sync reflect the change; no duplicate rows.
   - Tests: cleaning/filtering, chapter key, delete; fake-server contract.
+  - **Done:** the lyrics overlay has a `Search / Replace` panel with chapter
+    prefill, Web API `/lyrics/search` with lrclib fallback, normalized
+    candidates (instrumental/empty/duplicates filtered), preview, save/replace,
+    remove-saved, and chapter-aware delete. Candidate cards show
+    track/artist/album/duration and synced/plain availability.
 
-- [ ] **P4.2 — Romaji toggle and chapter save target (D18)**
+- [x] **P4.2 — Romaji toggle and chapter save target (D18)**
   - Stop romanizing unconditionally in `_lyrics_payload`; add a view toggle
     ("Romaji") that romanizes on demand (local pykakasi fallback).
   - Add a chapter target picker in the search panel: active chapter by default,
@@ -548,8 +553,13 @@ independent of each other.
   - Acceptance: raw Japanese is the default; toggle is instant and does not
     mutate the cache; chapter saves land on the right key and highlight clock.
   - Tests: romanizer output handling, chapter target selection.
+  - **Done:** `_lyrics_payload` no longer romanizes; the topbar `Romaji`
+    toggle calls the Web API romanizer (local pykakasi fallback) without
+    changing cached lyrics. The search panel's chapter picker defaults to the
+    active chapter, offers the whole episode, and shows a jump banner after
+    saving to a different chapter.
 
-- [ ] **P4.3 — Playback telemetry (D19, optional)**
+- [x] **P4.3 — Playback telemetry (D19, optional)**
   - Report one segment per music track: `{segmentId, file, positionSec,
     durationSec, completed, skipped, startedAtUtc}` to
     `POST /player/playback-events`; client-generated id; report on natural end,
@@ -558,6 +568,10 @@ independent of each other.
   - Acceptance: one event per play, no duplicates on retry; Discover's quality
     stats improve; no network failures surface as playback errors.
   - Tests: segment lifecycle with a fake server.
+  - **Done:** `services/telemetry.py` observes track changes/positions and
+    posts one client-id segment per music track; natural ends report
+    completed, manual skips report skipped, podcasts are ignored, and close
+    flushes synchronously. Network/config failures are swallowed.
 
 ### Phase 5 — Cross-device and quality
 
@@ -707,3 +721,6 @@ Suggested test matrix:
 | 2026-11-15 | **P3.6 — fuzzy search** | `ui/js/fuzzy.js` ported and applied across library, detail, podcast and Discover searches. |
 | 2026-11-15 | **P3.7 — download guard** | Direct/batch owned checks for Songs/Podcasts and queued/duplicate/failed summaries. |
 | 2026-11-15 | **P3.8 — pending edits** | Pending map for playing files, flush on track/stop/close, editor notice and delete/move cancellation. |
+| 2026-11-15 | **P4.1 — lyrics panel** | Search/Replace panel, Web API candidates + lrclib fallback, preview/save/remove and chapter-aware delete. |
+| 2026-11-15 | **P4.2 — romaji/chapter target** | Raw lyrics by default, on-demand server/local romanization, active-chapter picker and jump banner. |
+| 2026-11-15 | **P4.3 — playback telemetry** | Segment observer, completed/skipped classification, podcast exclusion, close flush and fake-server contract. |

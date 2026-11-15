@@ -27,6 +27,7 @@ from services import (
 from services.discover import DiscoverService
 from services.ai_dj import AiDjController
 from services.images import normalize_image_data_uri
+from services.telemetry import PlaybackTelemetry
 
 # ==========================================================================
 # Native Windows window chrome
@@ -178,6 +179,7 @@ class Api:
         self.download_manager = DownloadManager(self)
         self.discover = DiscoverService(self)
         self.ai_dj = AiDjController(self)
+        self.telemetry = PlaybackTelemetry(self)
         self._suppress_preview_stop = False
 
     def _ensure_schema(self):
@@ -539,13 +541,18 @@ class Api:
     # Lyrics Wrappers
     # ==========================
     def romanize_text(self, text, is_lrc=False):
-        return self.lyrics.romanize_text(text, is_lrc)
+        return self.lyrics.romanize_with_server(text, is_lrc)
 
     def get_lyrics(self, track_name, artist_name, album_name=None, duration_seconds=None):
         return self.lyrics.get_lyrics(track_name, artist_name, album_name, duration_seconds)
 
     def search_lyrics(self, track_name, artist_name, album_name=None, duration_seconds=None):
         return self.lyrics.search_lyrics(track_name, artist_name, album_name, duration_seconds)
+
+    def search_lyrics_candidates(self, track_name, artist_name, album_name=None, duration_seconds=None):
+        """Explicit-context candidate search for the lyrics Search/Replace panel."""
+        return self.lyrics.search_lyrics_candidates(
+            track_name, artist_name, album_name, duration_seconds)
 
     def save_lyrics(self, synced, plain, chapter_id=None):
         return self.lyrics.save_lyrics_for_current(synced, plain, chapter_id)
