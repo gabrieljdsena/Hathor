@@ -51,9 +51,16 @@ class PreviewPlayer(appContext: Context) {
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    private val _positionMs = MutableStateFlow(0L)
+    val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
+
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
+
     private var player: ExoPlayer? = null
     private var task: Job? = null
     private var readyWatchdog: Job? = null
+    private var progressTicker: Job? = null
     private var resolveEngine: DownloadEngine? = null
     private var resolveProcessId: String? = null
 
@@ -187,6 +194,9 @@ class PreviewPlayer(appContext: Context) {
             exo.setMediaItem(MediaItem.fromUri(streamUrl))
             exo.prepare()
             exo.play()
+            _positionMs.value = 0L
+            _durationMs.value = 0L
+            startProgressTicker()
             // Watchdog: a stream that never becomes ready (and never errors)
             // must not spin the row forever.
             readyWatchdog?.cancel()
@@ -222,6 +232,7 @@ class PreviewPlayer(appContext: Context) {
     }
 
     private fun stopPlayer() {
+        stopProgressTicker()
         val exo = player
         player = null
         if (exo == null) return
@@ -233,6 +244,32 @@ class PreviewPlayer(appContext: Context) {
             exo.release()
         } catch (_: Exception) {
         }
+    }
+
+    private fun startProgressTicker() {
+        stopProgressTicker()
+        progressTicker = scope.launch {
+            while (isActive) {
+                val exo = player ?: break
+                try {
+                    if (exo.isPlaying) {
+                        val pos = exo.currentPosition
+                        if (pos >= 0) _positionMs.value = pos
+                        val dur = exo.duration
+                        if (dur > 0) _durationMs.value = dur
+                    }
+                } catch (_: Exception) {
+                }
+                delay(250)
+            }
+        }
+    }
+
+    private fun stopProgressTicker() {
+        progressTicker?.cancel()
+        progressTicker = null
+        _positionMs.value = 0L
+        _durationMs.value = 0L
     }
 
     companion object {

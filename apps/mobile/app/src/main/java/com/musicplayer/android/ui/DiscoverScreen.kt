@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -32,6 +33,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -293,6 +295,7 @@ fun DiscoverScreen(
         previewItem?.let { item ->
             DiscoverPreviewBar(
                 item = item,
+                preview = preview,
                 state = previewState,
                 resolving = previewResolvingKey == key(item),
                 onStop = { stopPreview() }
@@ -369,45 +372,64 @@ fun DiscoverScreen(
 @Composable
 private fun DiscoverPreviewBar(
     item: DiscoverItem,
+    preview: PreviewPlayer,
     state: PreviewPlayer.State,
     resolving: Boolean,
     onStop: () -> Unit
 ) {
     val playing = state is PreviewPlayer.State.Playing
     val loading = resolving || state is PreviewPlayer.State.Loading
-    Row(
-        modifier = Modifier.fillMaxWidth().hathorGlass().padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    val positionMs by preview.positionMs.collectAsState()
+    val durationMs by preview.durationMs.collectAsState()
+    val fraction = if (durationMs > 0) {
+        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().hathorGlass().padding(10.dp)
     ) {
-        Box(
-            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            UrlThumb(url = item.artworkUrl.ifBlank { null }, size = 44.dp)
+            Box(
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                UrlThumb(url = item.artworkUrl.ifBlank { null }, size = 44.dp)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                Text(item.artist, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint, maxLines = 1)
+                Text(
+                    when {
+                        loading -> "Finding preview…"
+                        playing -> "Playing preview"
+                        else -> "Preview"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (playing) HathorColors.AccentBright else HathorColors.TextHint
+                )
+            }
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = HathorColors.AccentBright
+                )
+            }
+            IconButton(onClick = onStop) {
+                Icon(Icons.Filled.Stop, contentDescription = "Stop preview", tint = HathorColors.TextBody)
+            }
         }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(item.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-            Text(item.artist, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint, maxLines = 1)
-            Text(
-                when {
-                    loading -> "Finding preview…"
-                    playing -> "Playing preview"
-                    else -> "Preview"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = if (playing) HathorColors.AccentBright else HathorColors.TextHint
+        if (playing && durationMs > 0) {
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(3.dp),
+                color = HathorColors.Accent,
+                trackColor = Color.White.copy(alpha = 0.08f)
             )
-        }
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                strokeWidth = 2.dp,
-                color = HathorColors.AccentBright
-            )
-        }
-        IconButton(onClick = onStop) {
-            Icon(Icons.Filled.Stop, contentDescription = "Stop preview", tint = HathorColors.TextBody)
         }
     }
 }
