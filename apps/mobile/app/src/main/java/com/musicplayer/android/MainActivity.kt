@@ -136,13 +136,6 @@ class MainActivity : ComponentActivity() {
         // the player caches marks per track, so it needs the pref + a
         // resolver + a podcast classifier, all wired here (it owns both).
         player.chapterProvider = { fileName -> podcastRepo.chaptersFor(fileName) }
-        player.isPodcastFile = { f ->
-            try {
-                f.canonicalPath.startsWith(PlayerApp.instance.podcastsDir.canonicalPath)
-            } catch (_: Exception) {
-                false
-            }
-        }
         player.onPauseSpot = { file, posMs, isPodcast ->
             if (SyncConfig.isConfigured()) {
                 CoroutineScope(Dispatchers.IO).launch {

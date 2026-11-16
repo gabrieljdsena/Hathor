@@ -21,7 +21,9 @@ files, acceptance criteria and a suggested phase. Check items off as they land.
 AI DJ are consumed through the Hathor Web API with a runtime server URL + API
 key configured in Settings (no mobile login, no server logic on-device).
 Mobile's key needs `library:read` + `library:write` for sync/Discover, and
-`player:read` + `player:control` for AI DJ / cross-device playback.
+`player:read` + `player:control` for AI DJ / cross-device playback / playback
+telemetry. Playback completion/skip segments are posted automatically to
+`/player/playback-events`; they never block local playback.
 
 ---
 
@@ -396,6 +398,20 @@ every feature below requires rebuilding the APK.
   - **Decision:** no mobile login. The app uses a runtime `hth_` API key entered
     in Settings; account/API-key management stays in the web UI.
 
+- [x] **P4.6 — Playback telemetry (D19)**
+  - Report one segment per non-podcast music track to
+    `POST /player/playback-events` with a client-generated id, position,
+    duration and completed/skipped flags.
+  - Close a segment on track change, repeat, queue exhaustion and service
+    shutdown; keep pause/resume as one segment.
+  - Best-effort delivery only: a missing/offline Web API must never affect
+    local playback.
+  - **Done:** `PlaybackTelemetry` observes `PlayerManager` ticks and lifecycle
+    events; `PlaybackEventsApi` posts the same contract as web/desktop.
+    Podcasts are excluded. `PlaybackTelemetryTest` covers classification and
+    segment boundaries; `PlaybackEventsApiTest` covers the POST path, bearer
+    auth and JSON body.
+
 ---
 
 ## 3. Verification
@@ -420,6 +436,7 @@ Add tests alongside the feature:
 | Fuzzy search | table-driven Kotlin tests |
 | Lyrics | chapter key/offset parser tests; existing `SyncApiTest` |
 | Discover/AI DJ | JSON contract tests (Robolectric), state-machine tests |
+| Playback telemetry | segment classification/boundary unit tests; POST path/auth contract test |
 | Runtime config | settings persistence + fake-server connection test |
 
 Manual smoke pass on BlueStacks: install the debug APK and exercise the new
@@ -480,3 +497,4 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **P4.4 — cross-device resume** | Pause pushes a spot to `/sync/playback`; Home shows a “Continue on …” card that restores queue + position. |
 | 2026-11-14 | **P4.5 — accounts** | Dropped by product decision: API-key entry only, no mobile login. |
 | 2026-11-14 | **Test runner** | `scripts/test.ps1` now tolerates Gradle/adb stderr warnings, so it no longer aborts on the SDK XML warning. |
+| 2026-11-16 | **P4.6 — playback telemetry** | Mobile posts one completion/skip segment per non-podcast track; pause/resume stays one segment, repeat/track change/queue end flush. `PlaybackTelemetryTest` + `PlaybackEventsApiTest` added. |

@@ -28,6 +28,10 @@ background, glass surfaces, orange accent.
   plays returned files. Vohithe's commentary clips are played over ducked
   music, and the vibe can be typed or spoken (server transcription). No login
   is required — configure a scoped `hth_` key in Settings.
+- **Playback telemetry** — every non-podcast track play posts one
+  completion/skip segment to `/player/playback-events` in the background, so
+  the server's Discover quality weighting reflects phone listening. Delivery
+  is best-effort and never blocks local playback.
 - **Server sync** — pulls the library from the Hathor server over the LAN
   (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast
@@ -59,8 +63,9 @@ background, glass surfaces, orange accent.
    These are **build-time defaults**. You can also set the server URL and API
    key at runtime under **Settings → Web API** (no rebuild, no login). Keys for
    Discover/sync need `library:read` + `library:write`; add `player:read` +
-   `player:control` for AI DJ. Leaving both empty disables server features —
-   the app still runs offline with local downloads and playback.
+   `player:control` for AI DJ, cross-device playback and playback telemetry.
+   Leaving both empty disables server features — the app still runs offline
+   with local downloads and playback.
 3. **Run ▶** on a phone or emulator.
 
 ## Develop & test
@@ -139,6 +144,10 @@ Coverage today:
   filtering, `missingFiles` casings, ISO timestamps).
 - `SongDaoTest` — Room schema/DAO contract (upsert-ignore, ordering, deletes,
   playlist links) on an in-memory database.
+- `PlaybackTelemetryTest` — completed/skipped classification, podcast exclusion,
+  track changes and pause/resume segment handling.
+- `PlaybackEventsApiTest` — POST path, bearer auth and JSON body against a local
+  socket server.
 - `MainActivityTest` (`androidTest`) — shell renders every rail destination and
   Settings opens.
 
@@ -159,7 +168,7 @@ apps/mobile/
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
       engine/DownloadEngine.kt       YouTube → MP3 download engine (yt-dlp options mirror desktop Download.py)
-      playback/                      PlayerService, PlayerManager, PlaybackSource, PreviewPlayer
+      playback/                      PlayerService, PlayerManager, PlaybackTelemetry, PlaybackSource, PreviewPlayer
       ui/                            Compose screens: Home, Library/AllSongs, DailyMix, Download,
                                      Podcasts, Playlists, History, Settings, NowPlayingSheet,
                                      SongRow, VisualizerBars

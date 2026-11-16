@@ -24,8 +24,9 @@ public sealed class DapperDiscoverTasteReadModel(
         "/ 86400.0 / @HalfLifeDays)";
 
     // Playback-quality multiplier per file: 1.0 with no recent telemetry
-    // (desktop/mobile clients), 0.2..1.0 from completed/partial/skipped web
-    // segments. It multiplies the recency decay of every history play.
+    // (legacy plays / not-yet-synced clients), 0.2..1.0 from completed /
+    // partial / skipped segments. It multiplies the recency decay of every
+    // history play.
     private string PlaybackQuality()
     {
         var explicitEvents =

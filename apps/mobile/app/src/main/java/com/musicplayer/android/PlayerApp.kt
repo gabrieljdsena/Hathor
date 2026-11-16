@@ -9,6 +9,7 @@ import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.AiDjController
+import com.musicplayer.android.playback.PlaybackTelemetry
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.yausername.ffmpeg.FFmpeg
@@ -40,6 +41,8 @@ class PlayerApp : Application() {
         private set
     lateinit var player: PlayerManager
         private set
+    // Discover playback-quality telemetry (one segment per music track).
+    private lateinit var playbackTelemetry: PlaybackTelemetry
     // App-scoped so Vohithe keeps talking across navigation/screen rotation.
     lateinit var aiDjController: AiDjController
         private set
@@ -94,6 +97,15 @@ class PlayerApp : Application() {
         if (!podcastsDir.exists()) podcastsDir.mkdirs()
         downloadEngine = DownloadEngine(this)
         player = PlayerManager(this) { downloadEngine.outputDir() }
+        player.isPodcastFile = { f ->
+            try {
+                f.canonicalPath.startsWith(podcastsDir.canonicalPath)
+            } catch (_: Exception) {
+                false
+            }
+        }
+        playbackTelemetry = PlaybackTelemetry()
+        player.playbackObserver = playbackTelemetry
         previewPlayer = PreviewPlayer(this)
         aiDjController = AiDjController(this, player) { name ->
             java.io.File(downloadEngine.outputDir(), name)

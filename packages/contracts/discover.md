@@ -151,8 +151,8 @@ share this wire shape and these rules.
    (default 90). Feedback never affects another user, and cached responses
    are filtered on read so dismissals/downloads disappear immediately.
 10. **Playback telemetry** (`POST /player/playback-events`, `player:control`):
-    the web player reports one segment per music track play with
-    `{segmentId, file, positionSec, durationSec, completed, skipped,
+    the web, desktop and mobile players report one segment per music track play
+    with `{segmentId, file, positionSec, durationSec, completed, skipped,
     startedAtUtc}`. `SegmentId` is client-generated and unique per user, so
     unload/retry reports are idempotent. Events are server-only (not synced)
     and feed the taste weighting; podcasts are not reported.
@@ -184,11 +184,12 @@ share this wire shape and these rules.
     populated for every source the same way. The ranker compares log10
     counts to the user's median historical band; unknown values stay
     neutral. The top-track popularity profile is cached per user/track set.
-15. **Cross-client playback quality**: explicit `Playback_Events` (web) take
-    precedence. For files with no events (desktop/mobile), completion/skip is
-    inferred from `Music_History` start-to-start gaps versus
-    `Songs.DurationSecs`: a gap of at least 90% of duration counts as
-    completed; gaps over `duration + 60s` are unknown and skipped. Set
+15. **Cross-client playback quality**: explicit `Playback_Events`
+    (web/desktop/mobile) take precedence. For files with no events (legacy
+    plays or a client that has not synced yet), completion/skip is inferred
+    from `Music_History` start-to-start gaps versus `Songs.DurationSecs`: a gap
+    of at least 90% of duration counts as completed; gaps over
+    `duration + 60s` are unknown and skipped. Set
     `InferPlaybackQuality=false` to disable.
 16. **Evaluation-driven tuning**: `POST /discover/tuning` compares the current
     order and preset weight vectors on stored snapshot features, using
