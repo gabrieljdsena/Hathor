@@ -85,6 +85,8 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     // already be released, so ticker/telemetry work must wait for the new
     // player to become current.
     private var switchingTrack: Boolean = false
+    // Invalidates an in-flight prepare when a newer play/restore starts.
+    private var prepareGen: Int = 0
     // Wall-clock play-time base for end guards (desktop last_play_time).
     private var trackStartWallMs: Long = 0L
     private var startOffsetMs: Int = 0
@@ -507,6 +509,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     fun release() {
         notifyPlaybackStopped()
         switchingTrack = false
+        prepareGen++
         stopTicker()
         cancelCrossfade()
         try {
@@ -605,6 +608,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
 
     private fun playAt(i: Int) {
         val file = queue.getOrNull(i) ?: return
+        val prepare = ++prepareGen
         notifyPlaybackStopped()
         switchingTrack = true
         onPlaybackStarting?.invoke()
@@ -623,12 +627,22 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                 mp.prepare()
                 mp.setOnCompletionListener { guardedOnCompletion(it) }
                 withContext(Dispatchers.Main) {
-                    // A manual action during prepare wins: drop this instance.
+                    // A newer play/restore wins; release this stale instance.
+                    if (prepare != prepareGen) {
+                        try {
+                            mp.release()
+                        } catch (_: Exception) {
+                        }
+                        return@withContext
+                    }
                     if (index != i) {
                         try {
                             mp.release()
                         } catch (_: Exception) {
                         }
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
                         return@withContext
                     }
                     player = mp
@@ -658,9 +672,11 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             } catch (e: Exception) {
                 Log.e(TAG, "play failed: ${file.name}", e)
                 withContext(Dispatchers.Main) {
-                    switchingTrack = false
-                    _playing.value = false
-                    stopTicker()
+                    if (prepare == prepareGen) {
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
+                    }
                 }
             }
         }
@@ -669,6 +685,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     /** Load a track without starting it (launch restore path). */
     private fun prepareAt(i: Int) {
         val file = queue.getOrNull(i) ?: return
+        val prepare = ++prepareGen
         notifyPlaybackStopped()
         switchingTrack = true
         cancelCrossfade()
@@ -685,11 +702,21 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                 mp.prepare()
                 mp.setOnCompletionListener { guardedOnCompletion(it) }
                 withContext(Dispatchers.Main) {
+                    if (prepare != prepareGen) {
+                        try {
+                            mp.release()
+                        } catch (_: Exception) {
+                        }
+                        return@withContext
+                    }
                     if (index != i) {
                         try {
                             mp.release()
                         } catch (_: Exception) {
                         }
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
                         return@withContext
                     }
                     player = mp
@@ -705,9 +732,11 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             } catch (e: Exception) {
                 Log.e(TAG, "prepare failed: ${file.name}", e)
                 withContext(Dispatchers.Main) {
-                    switchingTrack = false
-                    _playing.value = false
-                    stopTicker()
+                    if (prepare == prepareGen) {
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
+                    }
                 }
             }
         }
