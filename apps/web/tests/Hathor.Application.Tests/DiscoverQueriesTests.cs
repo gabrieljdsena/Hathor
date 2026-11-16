@@ -1,8 +1,10 @@
 using FluentAssertions;
 using Hathor.Application.Discover;
 using Hathor.Domain.Entities;
+using Hathor.Infrastructure.Dapper;
 using Hathor.Infrastructure.Ef;
 using Hathor.Infrastructure.Library;
+using Hathor.Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
@@ -33,7 +35,7 @@ public sealed class DiscoverQueriesTests : IAsyncLifetime
         await TestPostgres.DropDatabaseAsync(_database);
     }
 
-    private DapperDiscoverTasteReadModel ReadModel()
+    private DapperConnectionFactory Factory()
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -42,10 +44,15 @@ public sealed class DiscoverQueriesTests : IAsyncLifetime
                 ["Database:ConnectionString"] = _connectionString,
             })
             .Build();
-        return new DapperDiscoverTasteReadModel(
-            new Hathor.Infrastructure.Dapper.DapperConnectionFactory(config),
-            new DiscoveryOptions { ArtistHalfLifeDays = 60 });
+        return new DapperConnectionFactory(config);
     }
+
+    private DapperDiscoverTasteReadModel ReadModel() =>
+        new(Factory(), new DiscoveryOptions { ArtistHalfLifeDays = 60 });
+
+    private DapperAiDjReadModel AiDjModel() => new(Factory());
+
+    private EfDailyMixRepository DailyMix() => new(_db, Factory());
 
     private async Task SeedAsync(params (string File, string Title, string Artist,
         string Genre, DateTime PlayedAt)[] rows)
@@ -285,6 +292,263 @@ public sealed class DiscoverQueriesTests : IAsyncLifetime
 
         artists[0].Artist.Should().Be("Done Artist");
         artists[0].Weight.Should().BeGreaterThan(artists[1].Weight);
+    }
+
+    [Fact]
+    public async Task TopArtists_UsesEventOnlyPlays()
+    {
+        var now = DateTime.UtcNow;
+        _db.Songs.Add(new Song
+        {
+            UserId = _userId,
+            File = "event-only.mp3",
+            Title = "Event Only",
+            Artist = "Event Artist",
+            Genre = "Electronic",
+            DurationSecs = 200,
+            DateDownloadUtc = now.AddDays(-1),
+        });
+        _db.PlaybackEvents.Add(new PlaybackEvent
+        {
+            UserId = _userId,
+            SegmentId = "event-only-1",
+            SongFile = "event-only.mp3",
+            PositionSec = 200,
+            DurationSec = 200,
+            Completed = true,
+            StartedAtUtc = now.AddHours(-1),
+            CreatedAtUtc = now,
+        });
+        await _db.SaveChangesAsync();
+
+        var artists = await ReadModel().GetTopArtistsAsync(_userId, 10);
+
+        var artist = artists.Single(a => a.Artist == "Event Artist");
+        artist.Plays.Should().Be(1);
+        artist.Weight.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task TopTracksTagsAndFiles_UseEventOnlyPlays()
+    {
+        var now = DateTime.UtcNow;
+        _db.Songs.Add(new Song
+        {
+            UserId = _userId,
+            File = "event-signals.mp3",
+            Title = "Event Signals",
+            Artist = "Event Artist",
+            Genre = "Shoegaze",
+            DurationSecs = 200,
+            DateDownloadUtc = now.AddDays(-1),
+        });
+        _db.PlaybackEvents.Add(new PlaybackEvent
+        {
+            UserId = _userId,
+            SegmentId = "event-signals-1",
+            SongFile = "event-signals.mp3",
+            PositionSec = 200,
+            DurationSec = 200,
+            Completed = true,
+            StartedAtUtc = now.AddHours(-1),
+            CreatedAtUtc = now,
+        });
+        await _db.SaveChangesAsync();
+
+        var model = ReadModel();
+        var tracks = await model.GetTopTracksAsync(_userId, 10);
+        var tags = await model.GetTopTagsAsync(_userId, 10);
+        var files = await model.GetTopPlayedFilesAsync(_userId, 10);
+
+        tracks.Should().ContainSingle(t => t.Title == "Event Signals");
+        tracks[0].Plays.Should().Be(1);
+        tags.Should().Contain("Shoegaze");
+        files.Should().ContainSingle(f => f.File == "event-signals.mp3");
+    }
+
+    [Fact]
+    public async Task TopArtists_DoesNotDoubleCountMatchingHistoryAndEvent()
+    {
+        var at = DateTime.UtcNow.AddHours(-2);
+        _db.Songs.Add(new Song
+        {
+            UserId = _userId,
+            File = "matched.mp3",
+            Title = "Matched",
+            Artist = "Matched Artist",
+            Genre = "Rock",
+            DurationSecs = 200,
+            DateDownloadUtc = at.AddDays(-1),
+        });
+        _db.MusicHistory.Add(new MusicHistoryEntry
+        {
+            UserId = _userId,
+            SongFile = "matched.mp3",
+            DatePlayedUtc = at,
+        });
+        _db.PlaybackEvents.Add(new PlaybackEvent
+        {
+            UserId = _userId,
+            SegmentId = "matched-1",
+            SongFile = "matched.mp3",
+            PositionSec = 200,
+            DurationSec = 200,
+            Completed = true,
+            StartedAtUtc = at.AddSeconds(1),
+            CreatedAtUtc = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        var artist = (await ReadModel().GetTopArtistsAsync(_userId, 10))
+            .Single(a => a.Artist == "Matched Artist");
+
+        artist.Plays.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task TopArtists_KeepsOlderHistoryBesideRecentEvent()
+    {
+        var now = DateTime.UtcNow;
+        _db.Songs.Add(new Song
+        {
+            UserId = _userId,
+            File = "mixed.mp3",
+            Title = "Mixed",
+            Artist = "Mixed Artist",
+            Genre = "Rock",
+            DurationSecs = 200,
+            DateDownloadUtc = now.AddDays(-30),
+        });
+        _db.MusicHistory.Add(new MusicHistoryEntry
+        {
+            UserId = _userId,
+            SongFile = "mixed.mp3",
+            DatePlayedUtc = now.AddDays(-20),
+        });
+        _db.PlaybackEvents.Add(new PlaybackEvent
+        {
+            UserId = _userId,
+            SegmentId = "mixed-1",
+            SongFile = "mixed.mp3",
+            PositionSec = 200,
+            DurationSec = 200,
+            Completed = true,
+            StartedAtUtc = now.AddHours(-1),
+            CreatedAtUtc = now,
+        });
+        await _db.SaveChangesAsync();
+
+        var artist = (await ReadModel().GetTopArtistsAsync(_userId, 10))
+            .Single(a => a.Artist == "Mixed Artist");
+
+        artist.Plays.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task AiDjCandidates_UseEventOnlyPlays()
+    {
+        var now = DateTime.UtcNow;
+        _db.Songs.AddRange(
+            new Song
+            {
+                UserId = _userId, File = "dj-a.mp3", Title = "DJ A",
+                Artist = "DJ Artist A", Genre = "Rock", DurationSecs = 200,
+                DateDownloadUtc = now.AddDays(-1),
+            },
+            new Song
+            {
+                UserId = _userId, File = "dj-b.mp3", Title = "DJ B",
+                Artist = "DJ Artist B", Genre = "Rock", DurationSecs = 200,
+                DateDownloadUtc = now.AddDays(-1),
+            });
+        _db.PlaybackEvents.AddRange(
+            new PlaybackEvent
+            {
+                UserId = _userId, SegmentId = "dj-a-1", SongFile = "dj-a.mp3",
+                PositionSec = 200, DurationSec = 200, Completed = true,
+                StartedAtUtc = now.AddHours(-3), CreatedAtUtc = now,
+            },
+            new PlaybackEvent
+            {
+                UserId = _userId, SegmentId = "dj-a-2", SongFile = "dj-a.mp3",
+                PositionSec = 200, DurationSec = 200, Completed = true,
+                StartedAtUtc = now.AddHours(-2), CreatedAtUtc = now,
+            },
+            new PlaybackEvent
+            {
+                UserId = _userId, SegmentId = "dj-b-1", SongFile = "dj-b.mp3",
+                PositionSec = 10, DurationSec = 200, Skipped = true,
+                StartedAtUtc = now.AddHours(-1), CreatedAtUtc = now,
+            });
+        await _db.SaveChangesAsync();
+
+        var rows = await AiDjModel().GetCandidatesAsync(_userId, 10);
+        var preferred = rows.Single(r => r.File == "dj-a.mp3");
+        var skipped = rows.Single(r => r.File == "dj-b.mp3");
+
+        preferred.PlayCount.Should().Be(2);
+        preferred.Events.Should().Be(2);
+        preferred.Completions.Should().Be(2);
+        preferred.LastPlayedUtc.Should().NotBeNull();
+        skipped.PlayCount.Should().Be(1);
+        skipped.Completions.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DailyMix_RanksEventOnlyPlays()
+    {
+        var now = DateTime.UtcNow;
+        _db.Songs.AddRange(
+            new Song
+            {
+                UserId = _userId, File = "mix-a.mp3", Title = "Mix A",
+                Artist = "Mix Artist", Genre = "Rock", DurationSecs = 200,
+                DateDownloadUtc = now.AddDays(-1),
+            },
+            new Song
+            {
+                UserId = _userId, File = "mix-b.mp3", Title = "Mix B",
+                Artist = "Mix Artist", Genre = "Rock", DurationSecs = 200,
+                DateDownloadUtc = now.AddDays(-1),
+            });
+        _db.PlaybackEvents.AddRange(
+            new PlaybackEvent
+            {
+                UserId = _userId, SegmentId = "mix-a-1", SongFile = "mix-a.mp3",
+                PositionSec = 200, DurationSec = 200, Completed = true,
+                StartedAtUtc = now.AddHours(-3), CreatedAtUtc = now,
+            },
+            new PlaybackEvent
+            {
+                UserId = _userId, SegmentId = "mix-a-2", SongFile = "mix-a.mp3",
+                PositionSec = 200, DurationSec = 200, Completed = true,
+                StartedAtUtc = now.AddHours(-2), CreatedAtUtc = now,
+            },
+            new PlaybackEvent
+            {
+                UserId = _userId, SegmentId = "mix-b-1", SongFile = "mix-b.mp3",
+                PositionSec = 200, DurationSec = 200, Completed = true,
+                StartedAtUtc = now.AddHours(-1), CreatedAtUtc = now,
+            });
+        await _db.SaveChangesAsync();
+
+        var ranked = await DailyMix().GetRankedFilesAsync(_userId);
+
+        ranked.Should().StartWith("mix-a.mp3");
+    }
+
+    [Fact]
+    public async Task DailyMix_KeepsHistoryOnlyPlays()
+    {
+        var now = DateTime.UtcNow;
+        await SeedAsync(
+            ("history-a.mp3", "History A", "History Artist", "Rock", now.AddDays(-2)),
+            ("history-a.mp3", "History A", "History Artist", "Rock", now.AddHours(-1)),
+            ("history-b.mp3", "History B", "History Artist", "Rock", now.AddDays(-3)));
+
+        var ranked = await DailyMix().GetRankedFilesAsync(_userId);
+
+        ranked.Should().StartWith("history-a.mp3");
     }
 
     [Fact]

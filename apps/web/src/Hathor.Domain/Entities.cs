@@ -194,9 +194,11 @@ public sealed class MusicHistoryEntry
     public DateTime DatePlayedUtc { get; set; }
 }
 
-// One row per client playback segment (web player telemetry). Music_History
-// remains the "played" event feed; this adds completion/skip quality used by
-// the Discover taste profile. SegmentId makes unload/retry reports idempotent.
+// One row per client playback segment (web/desktop/mobile telemetry).
+// Music_History remains the synced "played" feed; recommendation read models
+// merge both, preferring events, so a segment can contribute recency and
+// completion/skip quality without double-counting the matching history row.
+// SegmentId makes unload/retry reports idempotent.
 public sealed class PlaybackEvent
 {
     public long Id { get; set; }

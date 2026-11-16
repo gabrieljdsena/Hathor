@@ -1,6 +1,9 @@
+using Dapper;
 using Hathor.Domain.Entities;
 using Hathor.Domain.Repositories;
+using Hathor.Infrastructure.Dapper;
 using Hathor.Infrastructure.Ef;
+using Hathor.Infrastructure.Library;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -378,7 +381,9 @@ public sealed class EfSongRecordRepository(HathorDbContext db) : ISongRecordRepo
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }
 
-public sealed class EfDailyMixRepository(HathorDbContext db) : IDailyMixRepository
+public sealed class EfDailyMixRepository(
+    HathorDbContext db,
+    DapperConnectionFactory factory) : IDailyMixRepository
 {    public Task<DailyMix?> GetAsync(Guid userId, string date, CancellationToken ct = default) =>
         db.DailyMixes.FirstOrDefaultAsync(m => m.UserId == userId && m.MixDate == date, ct);
 
@@ -402,14 +407,25 @@ public sealed class EfDailyMixRepository(HathorDbContext db) : IDailyMixReposito
             .Where(m => m.UserId == userId && m.MixDate != today)
             .ExecuteDeleteAsync(ct);
 
-    public async Task<IReadOnlyList<string>> GetRankedFilesAsync(Guid userId, CancellationToken ct = default) =>
-        await db.MusicHistory
-            .Where(h => h.UserId == userId)
-            .GroupBy(h => h.SongFile)
-            .OrderByDescending(g => g.Count())
-            .ThenByDescending(g => g.Max(h => h.DatePlayedUtc))
-            .Select(g => g.Key)
-            .ToListAsync(ct);
+    public async Task<IReadOnlyList<string>> GetRankedFilesAsync(Guid userId, CancellationToken ct = default)
+    {
+        var songs = factory.Quote("Songs");
+        var sql = $"{EffectivePlayQueries.Cte(factory, inferHistoryQuality: true)} " +
+            $"SELECT p.{EffectivePlayQueries.FileColumn} FROM plays p " +
+            $"JOIN {songs} s ON s.{factory.Quote("File")} = p.{EffectivePlayQueries.FileColumn} " +
+            $"AND {factory.UserIdPredicate("s")} " +
+            $"GROUP BY p.{EffectivePlayQueries.FileColumn} " +
+            $"ORDER BY COUNT(*) DESC, MAX(p.{EffectivePlayQueries.PlayedAtColumn}) DESC";
+        using var conn = factory.Create();
+        var rows = await conn.QueryAsync<string>(new CommandDefinition(sql,
+            new
+            {
+                UserId = DapperConnectionFactory.UserKey(userId),
+                // Daily Mix is intentionally all-time, matching the desktop.
+                PlaybackSince = DateTime.UtcNow.AddYears(-50),
+            }, cancellationToken: ct));
+        return rows.ToList();
+    }
 
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }

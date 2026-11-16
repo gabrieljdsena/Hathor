@@ -30,8 +30,8 @@ background, glass surfaces, orange accent.
   is required — configure a scoped `hth_` key in Settings.
 - **Playback telemetry** — every non-podcast track play posts one
   completion/skip segment to `/player/playback-events` in the background, so
-  the server's Discover quality weighting reflects phone listening. Delivery
-  is best-effort and never blocks local playback.
+  Discover/AI DJ recommendations reflect phone listening. Delivery is
+  best-effort and never blocks local playback.
 - **Server sync** — pulls the library from the Hathor server over the LAN
   (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast

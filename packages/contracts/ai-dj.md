@@ -55,8 +55,8 @@ The client starts playback after `start` with:
 
 Hathor builds the candidate pool and taste snapshot from:
 
-- `Music_History` (recency/frequency),
-- `Playback_Events` (completion/skip quality),
+- `Playback_Events` (recency/frequency + completion/skip quality),
+- `Music_History` (legacy/offline plays; merged with events, no double count),
 - `Song_Playlist` + `Playlists` (curation),
 - `Rec_Feedback` (discover signals),
 - `Daily_Mix` and library metadata,

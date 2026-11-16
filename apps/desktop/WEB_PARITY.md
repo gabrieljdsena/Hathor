@@ -701,7 +701,7 @@ Suggested test matrix:
 | 7 | **Move to Songs/Podcasts is local + tombstones.** Do not depend on the server move endpoint. | Keeps the action working offline and consistent with desktop's sync model. |
 | 8 | **Live player hub starts as polling.** SignalR is optional. | No extra dependency/complexity; polling covers pause/next/seek convergence. |
 | 9 | **Discover insight tuning is optional after core Discover.** | Core recommendations/downloads deliver the value; tuning needs accumulated feedback. |
-| 10 | **Playback telemetry is optional.** Desktop's `Music_History` inference is an acceptable fallback. | Avoid blocking Discover on a new event pipeline. |
+| 10 | **Playback telemetry is part of the recommendation feed.** Desktop sends completion/skip segments automatically; the server merges events with `Music_History` fallback. | Keeps Discover/AI DJ current without waiting for a manual history push. |
 
 ---
 

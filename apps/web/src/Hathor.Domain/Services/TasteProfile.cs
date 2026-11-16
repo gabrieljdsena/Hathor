@@ -1,8 +1,8 @@
 namespace Hathor.Domain.Services;
 
 // Local-only taste profile (packages/contracts/discover.md): recency-weighted
-// artists/tracks/tags built from Music_History + Songs. No external profile
-// data ever flows in here.
+// artists/tracks/tags built from the shared play stream (Playback_Events with
+// Music_History fallback) + Songs. No external profile data ever flows in here.
 // Parameter order matches the Dapper column order in DiscoverQueries
 // (Artist, Plays, Weight) so constructor materialization needs no shims.
 public sealed record TasteArtist(string Artist, long Plays, double Weight);
