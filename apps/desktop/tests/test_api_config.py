@@ -75,6 +75,24 @@ class ApiConfigTests(unittest.TestCase):
             self.assertEqual(info.source, "settings")
             self.assertEqual(info.url, "http://runtime:5051")
 
+    def test_web_api_env_alias_and_url_aliases(self):
+        with patch.dict(os.environ, {
+            "WEB_API": "hth_webapikey1234",
+            "WEB_API_URL": "http://web-env:5051/",
+        }, clear=True):
+            info = api_config.get_api_config_info(self.db_path)
+            self.assertEqual(info.source, "env")
+            self.assertEqual(info.key, "hth_webapikey1234")
+            self.assertEqual(info.url, "http://web-env:5051")
+
+        with patch.dict(os.environ, {
+            "HATHOR_API_KEY": "hth_canonical1234",
+            "WEB_API": "http://web-env:5051",
+        }, clear=True):
+            info = api_config.get_api_config_info(self.db_path)
+            self.assertEqual(info.key, "hth_canonical1234")
+            self.assertEqual(info.url, "http://web-env:5051")
+
     def test_validation(self):
         with self.assertRaises(ValueError):
             api_config.normalize_url("ftp://host")

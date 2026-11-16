@@ -65,6 +65,8 @@ HATHOR_API_URL=http://192.168.1.10:5051
 HATHOR_API_KEY=hth_your-device-key
 ```
 
+Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `WEB_API=hth_...` for the key (or `WEB_API=http://...` when the key uses the canonical name).
+
 > **Security**: `.env` is ignored by `.gitignore` — never commit real credentials.
 
 ### Where the `.env` is read

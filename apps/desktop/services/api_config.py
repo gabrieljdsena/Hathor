@@ -18,6 +18,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 API_URL_ENV = "HATHOR_API_URL"
 API_KEY_ENV = "HATHOR_API_KEY"
+# Compatibility aliases used by some local setups.
+WEB_API_ENV = "WEB_API"
+API_URL_ENV_ALIASES = (API_URL_ENV, "WEB_API_URL")
+API_KEY_ENV_ALIASES = (API_KEY_ENV,)
 
 REQUIRED_SCOPES = (
     "library:read",
@@ -139,6 +143,34 @@ def _write_db_config(db_path, url, key):
             conn.close()
 
 
+def _first_env(names):
+    for name in names:
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _env_api_config():
+    """Read canonical env vars plus the single-line WEB_API compatibility alias."""
+    raw_url = _first_env(API_URL_ENV_ALIASES)
+    raw_key = _first_env(API_KEY_ENV_ALIASES)
+    web_api = (os.getenv(WEB_API_ENV) or "").strip()
+    if web_api:
+        lowered = web_api.lower()
+        if not raw_key and lowered.startswith("hth_"):
+            raw_key = web_api
+        elif not raw_url and lowered.startswith(("http://", "https://")):
+            raw_url = web_api
+    try:
+        env_url = normalize_url(raw_url)
+    except ValueError:
+        # A malformed .env value must not prevent the app from starting.
+        env_url = ""
+    env_key = raw_key
+    return env_url, env_key
+
+
 def get_api_config_info(db_path=None):
     """Return the effective config, preferring runtime settings over .env."""
     db_path = db_path or _default_db_path()
@@ -146,13 +178,7 @@ def get_api_config_info(db_path=None):
     if db_url or db_key:
         return ApiConfig(db_url, db_key, "settings")
 
-    env_url = ""
-    try:
-        env_url = normalize_url(os.getenv(API_URL_ENV) or "")
-    except ValueError:
-        # A malformed .env value must not prevent the app from starting.
-        env_url = ""
-    env_key = (os.getenv(API_KEY_ENV) or "").strip()
+    env_url, env_key = _env_api_config()
     if env_url or env_key:
         return ApiConfig(env_url, env_key, "env")
     return ApiConfig()

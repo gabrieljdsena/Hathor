@@ -198,7 +198,7 @@ independent of each other.
   - **Done:** `pytest.ini`, `requirements-dev.txt`, `apps/desktop/tests/` and
     `.github/workflows/desktop-tests.yml` (Python 3.12 + `pytest`, Node 20 +
     `npm ci` + Tailwind build). The suite is stdlib-compatible for local runs
-    without pygame/pywebview; 78 Python tests + Discover/voice/fuzzy/batch/chunk JS smoke tests pass.
+    without pygame/pywebview; 79 Python tests + Discover/voice/fuzzy/batch/chunk JS smoke tests pass.
 
 ### Phase 1 — Discover
 
