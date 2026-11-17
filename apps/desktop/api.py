@@ -1621,6 +1621,10 @@ class Api:
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
         self._push_api_config(config)
+        try:
+            self.history_sync.notify()
+        except Exception:
+            pass
         return {
             "ok": True,
             "message": "Web API settings saved.",

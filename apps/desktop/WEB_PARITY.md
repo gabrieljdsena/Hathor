@@ -750,3 +750,4 @@ Suggested test matrix:
 | 2026-11-15 | **P5.3 — view recovery** | Dynamic view fetch/eval failures render Retry/Home inline without touching the player shell. |
 | 2026-11-15 | **P5.4 — large libraries** | Lazy song rows stay virtualized; artists/albums render 200-name chunks with full-list search and counts. |
 | 2026-11-16 | **Automatic history sync** | Playback enqueues local `Music_History` ids; a debounced worker pushes only those rows via `/sync/import`. Pull dedupes by natural key/re-keys id collisions; manual Push clears only the snapshot it sent. |
+| 2026-11-16 | **Live pipeline validation** | Deployed server health/readiness OK. A synthetic song+history probe confirmed natural-key dedupe, and a temp-DB run of `push_pending_history` pushed and cleared its outbox; probe rows were removed with tombstones. |

@@ -156,7 +156,8 @@ fun SettingsScreen(
                         SyncConfig.save(apiUrl, apiToken)
                         apiUrl = SyncConfig.baseUrl()
                         apiToken = SyncConfig.token()
-                        apiMessage = "Saved. Pull/push and Discover/AI DJ use this server."
+                        sync.scheduleHistoryPush()
+                        apiMessage = "Saved. Pull/push and Discover/AI DJ use this server; pending history syncs automatically."
                     },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(

@@ -425,7 +425,8 @@ every feature below requires rebuilding the APK.
   - **Done:** `HistoryRepository` enqueues; `SyncRepository.pushPendingHistory`
     flushes; `RemoteWriter.historyPayload` emits the scoped payload;
     `RemoteSync` natural-key dedupe/re-key; `HistorySyncOutboxTest` covers the
-    queue, natural key and bounded manual-push clearing.
+    queue, natural key and bounded manual-push clearing. Saving Web API
+    settings also triggers a pending flush.
 
 ---
 
@@ -515,3 +516,4 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **Test runner** | `scripts/test.ps1` now tolerates Gradle/adb stderr warnings, so it no longer aborts on the SDK XML warning. |
 | 2026-11-16 | **P4.6 — playback telemetry** | Mobile posts one completion/skip segment per non-podcast track; pause/resume stays one segment, repeat/track change/queue end flush. `PlaybackTelemetryTest` + `PlaybackEventsApiTest` added. |
 | 2026-11-16 | **P4.7 — automatic history sync** | Durable history outbox + debounced scoped import; natural-key pull dedupe and id-collision re-key. `HistorySyncOutboxTest` added; Room v10 migration. |
+| 2026-11-16 | **Live pipeline validation** | Deployed server confirmed natural-key dedupe and desktop outbox push/clear; Settings Save now flushes pending history. |
