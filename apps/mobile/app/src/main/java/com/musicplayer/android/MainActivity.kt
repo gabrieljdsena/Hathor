@@ -337,7 +337,10 @@ class MainActivity : ComponentActivity() {
                                         false
                                     }
                                     val meta = metadataRepo.metaFor(f)
-                                    if (!isPod) historyRepo.recordPlayed(f.name)
+                                    if (!isPod) {
+                                        historyRepo.recordPlayed(f.name)
+                                        syncRepo.scheduleHistoryPush()
+                                    }
                                     // File-based lookup resolves each queue
                                     // item to the correct folder's cover.
                                     val cover = metadataRepo.coverArtFor(f, 192)

@@ -495,26 +495,33 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 await FlushAsync();
             }
 
-        // Append-only history: insert-if-absent by id (desktop INSERT IGNORE),
-        // re-keying on cross-user collisions.
+        // Append-only history: natural-key idempotency (same user/file/second)
+        // plus id-collision re-keying. Two devices can generate the same local
+        // autoincrement id; the second row must be inserted under a new id
+        // instead of being dropped.
         if (s.MusicHistory is not null)
             foreach (var r in s.MusicHistory)
             {
-                if (!await db.MusicHistory.AnyAsync(h => h.Id == r.Id, ct))
+                var playedAt = r.DatePlayedUtc.Kind == DateTimeKind.Unspecified
+                    ? DateTime.SpecifyKind(r.DatePlayedUtc, DateTimeKind.Utc)
+                    : r.DatePlayedUtc.ToUniversalTime();
+                var secondStart = playedAt.AddTicks(
+                    -(playedAt.Ticks % TimeSpan.TicksPerSecond));
+                var secondEnd = secondStart.AddSeconds(1);
+                var exists = await db.MusicHistory.AnyAsync(h =>
+                    h.UserId == userId && h.SongFile == r.SongFile &&
+                    h.DatePlayedUtc >= secondStart && h.DatePlayedUtc < secondEnd, ct);
+                if (!exists)
                 {
-                    await db.MusicHistory.AddAsync(new MusicHistoryEntry
+                    var idTaken = await db.MusicHistory.AnyAsync(h => h.Id == r.Id, ct);
+                    var row = new MusicHistoryEntry
                     {
-                        Id = r.Id, UserId = userId, SongFile = r.SongFile, DatePlayedUtc = r.DatePlayedUtc,
-                    }, ct);
-                    counts[7]++;
-                }
-                else if (!await db.MusicHistory.AnyAsync(
-                    h => h.Id == r.Id && h.UserId == userId, ct))
-                {
-                    await db.MusicHistory.AddAsync(new MusicHistoryEntry
-                    {
-                        UserId = userId, SongFile = r.SongFile, DatePlayedUtc = r.DatePlayedUtc,
-                    }, ct);
+                        UserId = userId,
+                        SongFile = r.SongFile,
+                        DatePlayedUtc = playedAt,
+                    };
+                    if (!idTaken) row.Id = r.Id;
+                    await db.MusicHistory.AddAsync(row, ct);
                     counts[7]++;
                 }
                 await FlushAsync();

@@ -1,6 +1,6 @@
 # Database Schema & Remote Sync
 
-Hathor stores everything locally in **SQLite** (`music_player.db`). When configured, the library (songs, podcasts, playlists, lyrics, history, daily mix) can be pushed to / pulled from the **Hathor server** — always manually, via the Settings buttons. There is no background sync thread.
+Hathor stores everything locally in **SQLite** (`music_player.db`). When configured, the library (songs, podcasts, playlists, lyrics, history, daily mix) can be pushed to / pulled from the **Hathor server** — catalog sync is always manual, via the Settings buttons. Playback history additionally flushes automatically through a small durable outbox after each play; there is no background catalog sync thread.
 
 ## Local schema (`database.sql`)
 
@@ -98,6 +98,10 @@ Music_History(                              -- every time a song is played
   date_played DATETIME     DEFAULT CURRENT_TIMESTAMP
 )
 
+History_Sync_Queue(                         -- durable automatic history outbox
+  history_id  INTEGER PRIMARY KEY -> Music_History(id)
+)
+
 Playlist_History(                           -- every time a playlist is played
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   playlist_id BIGINT       NOT NULL,
@@ -122,7 +126,15 @@ The Hathor server (Postgres) is the source of truth — there is no remote datab
 
 ## How the sync works
 
-Sync is **manual-only**: no background thread exists. Two directions, both from Settings buttons (or the first-run prompt):
+Catalog sync is **manual-only**: no background catalog thread exists. Two directions, both from Settings buttons (or the first-run prompt):
+
+### Automatic history outbox
+
+Every non-podcast play inserts `Music_History` and a matching
+`History_Sync_Queue` row. `services/history_sync.py` debounces those rows and
+pushes only the `MusicHistory` section via `POST /api/v1/sync/import`. The
+outbox is cleared only after the server accepts the import, so offline/failed
+pushes retry on the next play or app start. This path never blocks playback.
 
 ### Push — "Push to Server" (`Api.sync_local_to_remote` → `ApiSyncClient.push_once`)
 
@@ -146,4 +158,4 @@ If sync is configured and the local DB is brand new, `main.py` prompts the user.
 
 1. Pulls the server library (songs, podcasts, playlists, lyrics, daily mix, history) into SQLite.
 2. Downloads missing files directly from the server (each into its own folder).
-3. Nothing else starts afterwards — further syncs are manual via the Settings buttons.
+3. Nothing else starts afterwards — further catalog syncs are manual via the Settings buttons; history continues to flush through its outbox.

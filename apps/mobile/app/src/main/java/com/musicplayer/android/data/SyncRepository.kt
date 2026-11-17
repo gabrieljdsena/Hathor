@@ -1,29 +1,47 @@
 package com.musicplayer.android.data
 
 import android.content.Context
+import android.util.Log
 import com.musicplayer.android.data.api.SyncApi
 import com.musicplayer.android.data.api.SyncApiException
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.remote.RemoteWriter
 import com.musicplayer.android.engine.DownloadEngine
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-// Manual-only sync (no background threads/timers): push runs here when the
-// Settings Push button is tapped; pull runs in PullWorker (first-run prompt
-// + Pull button). Semantics mirror desktop api_sync push: rows + tombstones
-// via POST import, missing bytes via PUT, tombstones cleared only on
-// server accept.
+// Manual full sync (Settings Push/Pull) plus an automatic, debounced
+// Music_History outbox flush after each play. The outbox is durable: rows
+// leave it only after the server accepts the import. Pull runs in PullWorker
+// (first-run prompt + Pull button). Semantics mirror desktop api_sync push:
+// rows + tombstones via POST import, missing bytes via PUT, tombstones cleared
+// only on server accept.
 class SyncRepository(
     context: Context,
     private val engine: DownloadEngine,
+    database: AppDatabase? = null,
 ) {
     private val appContext = context.applicationContext
-    private val db: AppDatabase by lazy { AppDatabase.get(appContext) }
+    private val db: AppDatabase by lazy { database ?: AppDatabase.get(appContext) }
+    private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val historyPushMutex = Mutex()
+    private var historyPushJob: Job? = null
+
+    companion object {
+        private const val TAG = "SyncRepository"
+        private const val HISTORY_PUSH_DELAY_MS = 750L
+    }
 
     sealed interface SyncState {
         data object Idle : SyncState
@@ -41,6 +59,57 @@ class SyncRepository(
 
     fun refreshLocalList() {
         _libraryGeneration.value += 1
+    }
+
+    /**
+     * Queue a debounced history flush. Safe to call from playback; it never
+     * blocks audio and no-ops when the Web API is not configured.
+     */
+    fun scheduleHistoryPush(delayMs: Long = HISTORY_PUSH_DELAY_MS) {
+        if (!SyncConfig.isConfigured()) return
+        historyPushJob?.cancel()
+        historyPushJob = historyScope.launch {
+            delay(delayMs)
+            pushPendingHistory()
+        }
+    }
+
+    /**
+     * Push only queued Music_History rows. The outbox is cleared after the
+     * server accepts the import; failures leave it intact for the next
+     * play/startup retry.
+     */
+    suspend fun pushPendingHistory() {
+        if (!SyncConfig.isConfigured()) return
+        historyPushMutex.withLock {
+            val ids = try {
+                db.historySyncQueueDao().pendingIds()
+            } catch (e: Exception) {
+                Log.w(TAG, "history outbox read failed: ${e.message}")
+                return@withLock
+            }
+            if (ids.isEmpty()) return@withLock
+            val rows = try {
+                db.playlistDao().musicHistoryByIds(ids)
+            } catch (e: Exception) {
+                Log.w(TAG, "history row read failed: ${e.message}")
+                return@withLock
+            }
+            val found = rows.map { it.id }.toSet()
+            val missing = ids.filter { it !in found }
+            if (missing.isNotEmpty()) {
+                db.historySyncQueueDao().clear(missing)
+            }
+            if (rows.isEmpty()) return@withLock
+            try {
+                val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
+                api.postImport(RemoteWriter.historyPayload(rows))
+                db.historySyncQueueDao().clear(rows.map { it.id })
+            } catch (e: Exception) {
+                // Best effort: the outbox is durable and will retry.
+                Log.w(TAG, "history push failed: ${e.message}")
+            }
+        }
     }
 
     suspend fun pushToRemote() {

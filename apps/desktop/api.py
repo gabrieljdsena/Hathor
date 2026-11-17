@@ -29,6 +29,7 @@ from services.discover import DiscoverService
 from services.ai_dj import AiDjController
 from services.images import normalize_image_data_uri
 from services.telemetry import PlaybackTelemetry
+from services.history_sync import HistorySync
 from services.player_hub import PlayerHub
 
 # ==========================================================================
@@ -182,6 +183,7 @@ class Api:
         self.discover = DiscoverService(self)
         self.ai_dj = AiDjController(self)
         self.telemetry = PlaybackTelemetry(self)
+        self.history_sync = HistorySync(self.db_path)
         self.player_hub = PlayerHub(self)
         self._volume_publish_timer = None
         self._suppress_preview_stop = False
@@ -223,6 +225,11 @@ class Api:
                         filename TEXT,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS History_Sync_Queue (
+                        history_id INTEGER PRIMARY KEY
                     )
                 """)
                 conn.execute("""

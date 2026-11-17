@@ -25,7 +25,7 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 - **Discover** — server-backed out-of-library recommendations with source filters, YouTube preview queue, feedback/tuning and local downloads. Playback completion/skip segments are reported to the Web API for Discover quality. Configure the Web API in Settings first.
 - **AI DJ (Vohithe)** — server-planned sets with spoken intro/outro commentary, voice ducking, vibe briefs (typed or spoken), batch handoff, feedback and Home/player-bar entry points.
 - **Cross-device playback** — live player-hub polling keeps desktop and web/other clients aligned for play/pause/next/seek/volume, with local audio left untouched when a track is missing. Paused spots from other devices also expose their Up Next queue and resume at the saved position (explicit tap only).
-- **Server sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history with the Hathor server from the Settings buttons, with tombstone-based deletion propagation and first-run library import.
+- **Server sync (optional, manual)** — push/pull songs, podcasts, playlists, lyrics (with highlight offsets), podcast chapters, daily mix, and history with the Hathor server from the Settings buttons, with tombstone-based deletion propagation and first-run library import. Playback history also flushes automatically through a durable outbox; full catalog/files push remains manual.
 
 ## Tech stack
 
@@ -97,6 +97,7 @@ api.py             pywebview JS bridge: every method the UI calls
 Download.py        yt-dlp YouTube downloader + iTunes metadata/artwork lookup
 database.sql       SQLite schema
 services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
+services/history_sync.py  Debounced automatic Music_History outbox flush
 settings.py        Loads persisted settings from the SQLite Settings table
 monitor.py         Debug RAM usage monitor (currently disabled)
 services/          Domain logic: playback (+crossfade), metadata, database, lyrics, windows_media, downloads, apple

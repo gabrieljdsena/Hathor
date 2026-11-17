@@ -89,6 +89,10 @@ create table if not exists Music_History(
     FOREIGN KEY (song_file) REFERENCES Songs(file)
 );
 
+create table if not exists History_Sync_Queue(
+    history_id INTEGER PRIMARY KEY
+);
+
 create table if not exists Playlist_History(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     playlist_id bigint not null,

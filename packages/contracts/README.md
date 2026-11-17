@@ -2,9 +2,9 @@
 
 Single source of truth for cross-device sync. Implementations:
 
-- Desktop: `apps/desktop/database.sql` (SQLite schema) + `apps/desktop/services/api_sync.py` (HTTP delta/files sync; `sync.py` is the retired MySQL leg)
+- Desktop: `apps/desktop/database.sql` (SQLite schema) + `apps/desktop/services/api_sync.py` (HTTP delta/files sync; `services/history_sync.py` auto-flushes the history outbox)
 - Web: `apps/web/src/Hathor.Infrastructure` (EF migrations) + `apps/web/src/Hathor.Api/SyncController.cs` (`export`/`import`/`delta`/`files`)
-- Mobile: Room schema + `data/api/SyncApi.kt` (delta/files client) + `data/remote/PullWorker.kt` / `data/remote/RemoteWriter.kt`
+- Mobile: Room schema + `data/api/SyncApi.kt` (delta/files client) + `data/remote/PullWorker.kt` / `data/remote/RemoteWriter.kt` (`SyncRepository` auto-flushes the history outbox)
 
 Transport: the shared MySQL/TiDB remote is retired. Devices sync over the
 Web API (`HATHOR_API_URL` + per-device `hth_` key, LAN): `GET /api/v1/sync/delta?cursor=`
@@ -21,6 +21,9 @@ Rules all apps follow:
   history stays exact via id comparison; `UpdatedAtUtc` is server-stamped on
   every write (single DbContext hook — no write path sets it manually)
 - History sync is incremental past remote `MAX(id)`
+- Playback history uses a durable client outbox: after each play, only the
+  `MusicHistory` rows are auto-pushed. Imports dedupe by user + file + second
+  and re-key a colliding client id; full Push still covers catalog/files.
 - `Playlists.thumbnail`: TEXT (base64/url), BLOB normalized to UTF-8 text for remote;
   the web API re-encodes data URLs to a max-800px JPEG before storing (sync shape unchanged)
 - Daily mix: newest-wins, prune `< today`

@@ -412,6 +412,21 @@ every feature below requires rebuilding the APK.
     segment boundaries; `PlaybackEventsApiTest` covers the POST path, bearer
     auth and JSON body.
 
+- [x] **P4.7 — Automatic Music_History sync**
+  - Add a durable `History_Sync_Queue` outbox (Room v10); enqueue the local
+    history id on every non-podcast play.
+  - Debounce and push only `MusicHistory` via `POST /sync/import`; clear rows
+    only after server acceptance, so offline/failed pushes retry on the next
+    play or app start.
+  - Dedupe pulled history by `(song_file, date_played)` and re-key a server id
+    that collides with a different local row.
+  - Keep the full Settings Push for catalog/files and clear only outbox rows
+    included in that snapshot.
+  - **Done:** `HistoryRepository` enqueues; `SyncRepository.pushPendingHistory`
+    flushes; `RemoteWriter.historyPayload` emits the scoped payload;
+    `RemoteSync` natural-key dedupe/re-key; `HistorySyncOutboxTest` covers the
+    queue, natural key and bounded manual-push clearing.
+
 ---
 
 ## 3. Verification
@@ -437,6 +452,7 @@ Add tests alongside the feature:
 | Lyrics | chapter key/offset parser tests; existing `SyncApiTest` |
 | Discover/AI DJ | JSON contract tests (Robolectric), state-machine tests |
 | Playback telemetry | segment classification/boundary unit tests; POST path/auth contract test |
+| History sync | outbox/enqueue/natural-key DAO tests; scoped import + clear against a fake server |
 | Runtime config | settings persistence + fake-server connection test |
 
 Manual smoke pass on BlueStacks: install the debug APK and exercise the new
@@ -498,3 +514,4 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **P4.5 — accounts** | Dropped by product decision: API-key entry only, no mobile login. |
 | 2026-11-14 | **Test runner** | `scripts/test.ps1` now tolerates Gradle/adb stderr warnings, so it no longer aborts on the SDK XML warning. |
 | 2026-11-16 | **P4.6 — playback telemetry** | Mobile posts one completion/skip segment per non-podcast track; pause/resume stays one segment, repeat/track change/queue end flush. `PlaybackTelemetryTest` + `PlaybackEventsApiTest` added. |
+| 2026-11-16 | **P4.7 — automatic history sync** | Durable history outbox + debounced scoped import; natural-key pull dedupe and id-collision re-key. `HistorySyncOutboxTest` added; Room v10 migration. |

@@ -18,6 +18,11 @@ class DatabaseSchemaTests(unittest.TestCase):
                 columns = {
                     row[1] for row in conn.execute("PRAGMA table_info(Settings)")
                 }
+                tables = {
+                    row[0] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
             finally:
                 conn.close()
 
@@ -25,6 +30,7 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("hathor_api_key", columns)
         self.assertIn("device_id", columns)
         self.assertIn("device_label", columns)
+        self.assertIn("History_Sync_Queue", tables)
 
 
 if __name__ == "__main__":

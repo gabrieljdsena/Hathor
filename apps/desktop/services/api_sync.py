@@ -46,6 +46,8 @@ import os
 import sqlite3
 import urllib.parse
 
+from contextlib import closing
+
 from .api_config import (
     API_KEY_ENV,
     API_URL_ENV,
@@ -301,6 +303,24 @@ def _iso(dt):
     return s
 
 
+def _local_stamp(dt):
+    """Normalize a local/server datetime to the SQLite history shape.
+
+    Server responses use ISO-8601 while local rows use
+    'YYYY-MM-DD HH:MM:SS'; comparing them raw creates duplicate history
+    rows after a server re-key. History dedupe is second-precision, matching
+    the client-generated values.
+    """
+    if not dt:
+        return None
+    s = str(dt).strip().replace("T", " ", 1)
+    if s.endswith("Z"):
+        s = s[:-1]
+    if len(s) < 19:
+        return s
+    return s[:19]
+
+
 def cursor_path(db_path, library="all"):
     """Each library keeps its own delta cursor so separate Push/Pull buttons
     never skip changes belonging to the other library."""
@@ -508,6 +528,52 @@ class ApiSyncClient:
         return True
 
     # -- push -----------------------------------------------------------
+    def push_pending_history(self, limit=200):
+        """Push only queued Music_History rows (automatic play sync).
+
+        The outbox is cleared only after the server accepts the import, so a
+        failed/offline push retries the same rows on the next notify/startup.
+        Returns the number of rows accepted.
+        """
+        limit = max(1, int(limit or 200))
+        try:
+            with closing(sqlite3.connect(self.db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS History_Sync_Queue ("
+                    "history_id INTEGER PRIMARY KEY)"
+                )
+                conn.execute(
+                    "DELETE FROM History_Sync_Queue WHERE history_id NOT IN "
+                    "(SELECT id FROM Music_History)"
+                )
+                conn.commit()
+                rows = conn.execute(
+                    "SELECT h.id, h.song_file, h.date_played "
+                    "FROM History_Sync_Queue q "
+                    "JOIN Music_History h ON h.id = q.history_id "
+                    "ORDER BY h.id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return 0
+        if not rows:
+            return 0
+        payload = {
+            "MusicHistory": [
+                {"Id": row_id, "SongFile": song_file,
+                 "DatePlayedUtc": _iso(date_played)}
+                for row_id, song_file, date_played in rows
+            ]
+        }
+        self._request("POST", "/import", payload=payload)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                "DELETE FROM History_Sync_Queue WHERE history_id = ?",
+                [(row[0],) for row in rows],
+            )
+            conn.commit()
+        return len(rows)
+
     def push_once(self, library="all"):
         library = normalize_library(library)
         _log.info("push(%s) start", library)
@@ -518,6 +584,10 @@ class ApiSyncClient:
             return f"Error reading local DB: {e}"
         counts = {key: len(value) for key, value in payload.items()
                   if isinstance(value, list)}
+        history_max_id = max(
+            (row.get("Id") or 0 for row in payload.get("MusicHistory") or []),
+            default=0,
+        )
         _log.info("push(%s) payload rows: %s", library, counts)
         try:
             resp = self._request("POST", "/import", payload=payload)
@@ -562,6 +632,22 @@ class ApiSyncClient:
         except Exception as e:
             _log.exception("push(%s): clearing tombstones failed", library)
             return f"Push accepted but could not clear tombstones: {e}"
+        # The full audio push included every history row that existed when
+        # the payload was collected. Clear only those outbox entries; a play
+        # that happened during the upload keeps its newer row queued.
+        if library in ("all", "songs") and history_max_id:
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS History_Sync_Queue ("
+                        "history_id INTEGER PRIMARY KEY)"
+                    )
+                    conn.execute(
+                        "DELETE FROM History_Sync_Queue WHERE history_id <= ?",
+                        (history_max_id,),
+                    )
+            except sqlite3.OperationalError:
+                pass
         if library == "songs":
             msg = "Push complete: audios sent to server."
         elif library == "podcasts":
@@ -823,12 +909,33 @@ class ApiSyncClient:
             except sqlite3.OperationalError:
                 pass
         for h in snap.get("music_history") or []:
-            conn.execute(
-                "INSERT INTO Music_History (id, song_file, date_played) VALUES (?, ?, ?)"
-                " ON CONFLICT(id) DO UPDATE SET song_file = excluded.song_file,"
-                " date_played = excluded.date_played",
-                (h.get("id"), h.get("song_file"), h.get("date_played")),
-            )
+            song_file = h.get("song_file")
+            stamp = _local_stamp(h.get("date_played"))
+            if not song_file or not stamp:
+                continue
+            # Dedupe on the natural key before the id so a row re-keyed by
+            # the server does not reappear as a second local play.
+            duplicate = conn.execute(
+                "SELECT id FROM Music_History WHERE song_file = ? "
+                "AND replace(substr(date_played, 1, 19), 'T', ' ') = ?",
+                (song_file, stamp),
+            ).fetchone()
+            if duplicate:
+                continue
+            row_id = h.get("id")
+            id_taken = row_id is not None and conn.execute(
+                "SELECT 1 FROM Music_History WHERE id = ?", (row_id,)
+            ).fetchone()
+            if id_taken or row_id is None:
+                conn.execute(
+                    "INSERT INTO Music_History (song_file, date_played) VALUES (?, ?)",
+                    (song_file, stamp),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO Music_History (id, song_file, date_played) VALUES (?, ?, ?)",
+                    (row_id, song_file, stamp),
+                )
         for h in snap.get("playlist_history") or []:
             conn.execute(
                 "INSERT INTO Playlist_History (id, playlist_id, date_played) VALUES (?, ?, ?)"

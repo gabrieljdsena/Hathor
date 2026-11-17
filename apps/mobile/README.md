@@ -36,7 +36,9 @@ background, glass surfaces, orange accent.
   (delta + file bytes), so the phone mirrors the PC collection
   (songs, podcasts, playlists, lyrics incl. highlight offsets, podcast
   chapters, tags, history, daily mix); pushes local rows and new file
-  bytes back the same way
+  bytes back the same way. Playback history also flushes automatically
+  through a durable `History_Sync_Queue` outbox; full catalog/files push
+  remains manual.
 
 ## Requirements
 
@@ -148,6 +150,10 @@ Coverage today:
   track changes and pause/resume segment handling.
 - `PlaybackEventsApiTest` — POST path, bearer auth and JSON body against a local
   socket server.
+- `HistorySyncOutboxTest` — Room v10 outbox, natural-key lookup, id-collision
+  fallback and bounded manual-push clearing.
+- `SyncRepositoryHistoryTest` — queued history posts a scoped import and clears
+  the outbox after acceptance, against a local socket server.
 - `MainActivityTest` (`androidTest`) — shell renders every rail destination and
   Settings opens.
 

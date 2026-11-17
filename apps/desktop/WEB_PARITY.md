@@ -749,3 +749,4 @@ Suggested test matrix:
 | 2026-11-15 | **P5.2 — resume dock** | Player-bar dots/menu/time-ago, Now Playing banner, queue/source snapshots and full queue restore. |
 | 2026-11-15 | **P5.3 — view recovery** | Dynamic view fetch/eval failures render Retry/Home inline without touching the player shell. |
 | 2026-11-15 | **P5.4 — large libraries** | Lazy song rows stay virtualized; artists/albums render 200-name chunks with full-list search and counts. |
+| 2026-11-16 | **Automatic history sync** | Playback enqueues local `Music_History` ids; a debounced worker pushes only those rows via `/sync/import`. Pull dedupes by natural key/re-keys id collisions; manual Push clears only the snapshot it sent. |

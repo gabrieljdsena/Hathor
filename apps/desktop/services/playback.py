@@ -1166,6 +1166,15 @@ class PlaybackController:
         except Exception as e:
             print(f" [Python] Chapter skip error: {e}")
 
+    def _notify_history_sync(self):
+        """Wake the background Music_History outbox flush (best effort)."""
+        try:
+            history_sync = getattr(self.api, 'history_sync', None)
+            if history_sync is not None:
+                history_sync.notify()
+        except Exception:
+            pass
+
     def _commit_new_song_state(self, next_song, shift_queue_ui=True):
         """Shared bookkeeping when a new song takes over (DB/history/UI)."""
         if self.api.last_song and self.api.last_song.get('File'):
@@ -1187,11 +1196,23 @@ class PlaybackController:
                 conn.execute("UPDATE Settings SET current_song = ?", (self.api.current_filename,))
                 # Podcasts stay out of the music history (daily mix, recents).
                 if not next_song.get('IsPodcast'):
-                    conn.execute("INSERT INTO Music_History (song_file) VALUES (?)", (self.api.current_filename,))
+                    cur = conn.execute(
+                        "INSERT INTO Music_History (song_file) VALUES (?)",
+                        (self.api.current_filename,),
+                    )
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO History_Sync_Queue (history_id) "
+                            "VALUES (?)",
+                            (cur.lastrowid,),
+                        )
+                    except sqlite3.OperationalError:
+                        pass
                     if self.current_playlist_id is not None:
                         conn.execute("INSERT INTO Playlist_History (playlist_id) VALUES (?)", (self.current_playlist_id,))
         except Exception as e:
             print(f" [Python] Database error: {e}")
+        self._notify_history_sync()
         if hasattr(self.api, 'media_controls'):
             try:
                 self.api.media_controls.update_overlay(
@@ -1505,11 +1526,23 @@ class PlaybackController:
                     conn.execute("UPDATE Settings SET current_song = ?", (self.api.current_filename,))
                     # Podcasts stay out of the music history (daily mix, recents).
                     if not opening and not current_song.get('IsPodcast'):
-                        conn.execute("INSERT INTO Music_History (song_file) VALUES (?)", (self.api.current_filename,))
+                        cur = conn.execute(
+                            "INSERT INTO Music_History (song_file) VALUES (?)",
+                            (self.api.current_filename,),
+                        )
+                        try:
+                            conn.execute(
+                                "INSERT OR IGNORE INTO History_Sync_Queue (history_id) "
+                                "VALUES (?)",
+                                (cur.lastrowid,),
+                            )
+                        except sqlite3.OperationalError:
+                            pass
                         if self.current_playlist_id is not None:
                             conn.execute("INSERT INTO Playlist_History (playlist_id) VALUES (?)", (self.current_playlist_id,))
             except Exception as e:
                 print(f" [Python] Database error: {e}")
+            self._notify_history_sync()
             
             if hasattr(self.api, 'media_controls'):
                 # Never let a flaky OS overlay break playback of a loaded song.

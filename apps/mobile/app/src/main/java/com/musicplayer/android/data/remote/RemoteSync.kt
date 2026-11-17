@@ -168,9 +168,19 @@ object RemoteSync {
             }
         }
         for (row in snapshot.musicHistory) {
-            db.playlistDao().insertMusicHistoryIgnore(
-                MusicHistoryEntity(row.id, row.songFile, dateText(row.datePlayedMillis)),
+            val date = dateText(row.datePlayedMillis)
+            // Natural-key dedupe first: a server-rekeyed row must not
+            // reappear locally as a second play.
+            if (db.playlistDao().musicHistoryIdFor(row.songFile, date) != null) continue
+            val inserted = db.playlistDao().insertMusicHistoryIgnore(
+                MusicHistoryEntity(row.id, row.songFile, date),
             )
+            if (inserted == -1L) {
+                // The server id collides with a different local row.
+                db.playlistDao().insertMusicHistoryIgnore(
+                    MusicHistoryEntity(0, row.songFile, date),
+                )
+            }
         }
         for (row in snapshot.playlistHistory) {
             db.playlistDao().insertPlaylistHistoryIgnore(

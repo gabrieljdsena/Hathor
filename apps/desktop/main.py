@@ -384,6 +384,11 @@ def on_closing():
             api.telemetry.flush(wait=True)
     except Exception as e:
         print(f" [Python] Playback telemetry flush on close failed: {e}")
+    try:
+        if getattr(api, 'history_sync', None):
+            api.history_sync.close()
+    except Exception as e:
+        print(f" [Python] History sync shutdown failed: {e}")
 
 
 if __name__ == '__main__':

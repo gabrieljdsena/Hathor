@@ -3,6 +3,8 @@ package com.musicplayer.android.data.api
 import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.musicplayer.android.data.local.MusicHistoryEntity
+import com.musicplayer.android.data.remote.RemoteWriter
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -200,5 +202,22 @@ class ApiContractTest {
         assertTrue(json.getBoolean("Completed"))
         assertFalse(json.getBoolean("Skipped"))
         assertEquals("2026-11-15T12:00:00Z", json.getString("StartedAtUtc"))
+    }
+
+    @Test
+    fun `history outbox payload uses the sync import shape`() {
+        val json = RemoteWriter.historyPayload(
+            listOf(
+                MusicHistoryEntity(
+                    id = 9,
+                    songFile = "a.mp3",
+                    datePlayed = "2026-11-15 12:00:00",
+                )
+            )
+        )
+        val row = json.getJSONArray("MusicHistory").getJSONObject(0)
+        assertEquals(9L, row.getLong("Id"))
+        assertEquals("a.mp3", row.getString("SongFile"))
+        assertEquals("2026-11-15T12:00:00Z", row.getString("DatePlayedUtc"))
     }
 }

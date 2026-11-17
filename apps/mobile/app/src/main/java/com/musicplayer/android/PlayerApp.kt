@@ -164,6 +164,7 @@ class PlayerApp : Application() {
             }
         )
         syncRepo = SyncRepository(this, downloadEngine)
+        syncRepo.scheduleHistoryPush()
     }
 
     sealed interface EngineState {
