@@ -517,3 +517,4 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-16 | **P4.6 — playback telemetry** | Mobile posts one completion/skip segment per non-podcast track; pause/resume stays one segment, repeat/track change/queue end flush. `PlaybackTelemetryTest` + `PlaybackEventsApiTest` added. |
 | 2026-11-16 | **P4.7 — automatic history sync** | Durable history outbox + debounced scoped import; natural-key pull dedupe and id-collision re-key. `HistorySyncOutboxTest` added; Room v10 migration. |
 | 2026-11-16 | **Live pipeline validation** | Deployed server confirmed natural-key dedupe and desktop outbox push/clear; Settings Save now flushes pending history. |
+| 2026-11-16 | **Live mobile playback** | AVD: played a real MP3 from All Songs; server received the history row automatically, and Next sent a skipped playback event (insights 60→61). Instrumentation suite: 6/6 passed. |

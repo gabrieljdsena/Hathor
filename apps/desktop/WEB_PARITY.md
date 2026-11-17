@@ -630,17 +630,19 @@ independent of each other.
     counts/search still cover the full list. JS row-count smoke covers the
     chunker.
 
-- [ ] **P5.5 — Documentation and packaging**
+- [x] **P5.5 — Documentation and packaging**
   - Update `README.md`, `docs/CONFIGURATION.md` (runtime API config + scopes),
     `docs/ARCHITECTURE.md` (new services/voice path) and `docs/USAGE.md`
     (Discover/AI DJ/preview controls). Verify the PyInstaller build includes
     `ui/assets/` and new views.
   - Acceptance: fresh checkout + `python main.py` works; frozen build has no
     missing assets; docs match the UI.
-  - **Progress:** README/USAGE/ARCHITECTURE/DEVELOPMENT are current, and
+  - **Done:** README/USAGE/ARCHITECTURE/DEVELOPMENT are current, and
     `music_player.spec` collects the whole `ui/` tree (including assets and new
-    views). A frozen-build smoke test still needs a pygame/pywebview-capable
-    Windows environment.
+    views). A source launch and the frozen `dist/Hathor/Hathor.exe` were both
+    smoke-tested successfully; the PyInstaller archive includes
+    `services/history_sync`, `database.sql`, `ui/index.html` and the Discover
+    JS assets.
 
 ---
 
@@ -751,3 +753,4 @@ Suggested test matrix:
 | 2026-11-15 | **P5.4 — large libraries** | Lazy song rows stay virtualized; artists/albums render 200-name chunks with full-list search and counts. |
 | 2026-11-16 | **Automatic history sync** | Playback enqueues local `Music_History` ids; a debounced worker pushes only those rows via `/sync/import`. Pull dedupes by natural key/re-keys id collisions; manual Push clears only the snapshot it sent. |
 | 2026-11-16 | **Live pipeline validation** | Deployed server health/readiness OK. A synthetic song+history probe confirmed natural-key dedupe, and a temp-DB run of `push_pending_history` pushed and cleared its outbox; probe rows were removed with tombstones. |
+| 2026-11-16 | **P5.5 — packaging smoke** | Source launch and frozen `dist/Hathor/Hathor.exe` both stayed up; PyInstaller archive includes `services/history_sync`, `database.sql` and the full `ui/` tree. |
