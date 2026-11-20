@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api, type Song } from '../api/client'
 import { usePlayer } from '../store/player'
-import LibraryTable, { resolveSong, type SortKey } from '../components/LibraryTable'
+import LibraryTable, { resolveSong, SONG_SORT_KEYS } from '../components/LibraryTable'
 import { PlayCircleButton } from '../components/ui/buttons'
 import ViewHeader from '../components/ui/ViewHeader'
 import { useDebouncedValue } from '../components/ui/SearchInput'
+import { SORT_STORAGE, usePersistedSort } from '../hooks/usePersistedSort'
 
 // Page size for infinite scroll: 200 slim DTOs (~40KB) per fetch.
 export const SONGS_PAGE_SIZE = 200
@@ -18,8 +19,10 @@ export default function Songs() {
   const playSongByFiles = usePlayer((s) => s.playSongByFiles)
   const [search, setSearch] = useState('')
   const debounced = useDebouncedValue(search)
-  const [sort, setSort] = useState<SortKey | null>(null)
-  const [dir, setDir] = useState<'asc' | 'desc'>('asc')
+  const { sort, dir, setSort } = usePersistedSort(
+    SORT_STORAGE.songs,
+    SONG_SORT_KEYS,
+  )
 
   const { data: total } = useQuery({
     queryKey: ['songs', 'count', debounced],
@@ -99,10 +102,7 @@ export default function Songs() {
         onSearchChange={setSearch}
         sort={sort}
         dir={dir}
-        onSortChange={(s, d) => {
-          setSort(s)
-          setDir(d)
-        }}
+        onSortChange={setSort}
         getFiles={getFiles}
         loadingLabel="Loading your library…"
         emptyTitle={isError ? 'Could not load songs' : 'No songs yet'}

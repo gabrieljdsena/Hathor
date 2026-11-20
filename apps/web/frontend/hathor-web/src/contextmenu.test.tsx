@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import LibraryTable from './components/LibraryTable'
 import StripCard from './components/ui/StripCard'
 import Podcasts from './views/Podcasts'
@@ -63,6 +63,10 @@ function renderTable() {
     </QueryClientProvider>,
   )
 }
+
+beforeEach(() => {
+  localStorage.clear()
+})
 
 describe('LibraryTable context menu', () => {
   afterEach(() => {
