@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.musicplayer.android.BuildConfig
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.HathorApi
@@ -387,6 +389,17 @@ fun SettingsScreen(
             }
             podFolderResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             podRescanResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+
+        // ---- About ----
+        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SectionLabel(Icons.Filled.Info, "About")
+            Text("Hathor ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Your personal music system: downloads, playlists, podcasts, daily mixes, and multi-device sync.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
         }
     }
 }

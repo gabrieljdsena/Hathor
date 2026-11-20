@@ -12,6 +12,7 @@
     <application
         android:name=".PlayerApp"
         android:allowBackup="true"
+        android:description="@string/app_description"
         android:extractNativeLibs="true"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"

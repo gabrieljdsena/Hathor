@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Hathor</string>
+    <string name="app_description">Hathor is a personal music system for your own library: YouTube downloads, playlists, podcasts, daily mixes, and multi-device sync.</string>
 </resources>

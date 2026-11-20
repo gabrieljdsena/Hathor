@@ -2,10 +2,11 @@
 
 > Part of the [Hathor monorepo](../../README.md) (`apps/mobile`). Desktop: `../desktop/`, web: `../web/`.
 
-Native Android client for Hathor: the same music library, downloads, playlists,
-history and sync as the desktop app, rebuilt with Kotlin, Jetpack Compose and
-Media3. The visual system matches desktop and web — near-black `zinc-950`
-background, glass surfaces, orange accent.
+Native Android client for Hathor: a personal music system that brings your
+library, YouTube downloads, playlists, podcasts, daily mixes, and cross-device
+history into one player. Built with Kotlin, Jetpack Compose, and Media3, with
+the same near-black `zinc-950`, glass, and orange visual language as desktop
+and web.
 
 ## What it does
 
@@ -169,7 +170,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.3.0-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.0-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
