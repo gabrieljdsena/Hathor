@@ -62,6 +62,7 @@ public interface IUserSettingsRepository
 public interface ITombstoneRepository
 {
     Task RecordAsync(Guid userId, string tableName, string rowKey, CancellationToken ct = default);
+    Task RemoveAsync(Guid userId, string tableName, string rowKey, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }
 

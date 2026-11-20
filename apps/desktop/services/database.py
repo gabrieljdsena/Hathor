@@ -78,7 +78,10 @@ class DatabaseManager:
         """Record a deletion so the next manual push can remove the row on the remote DB."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("INSERT INTO Sync_Deletions (table_name, row_key) VALUES (?, ?)", (table_name, str(row_key)))
+                conn.execute(
+                    "INSERT INTO Sync_Deletions (table_name, row_key) VALUES (?, ?)",
+                    (table_name, str(row_key)),
+                )
         except Exception as e:
             print(f" [Python] Error recording deletion: {str(e)}")
 
@@ -189,10 +192,17 @@ class DatabaseManager:
     def assign_podcast_tag(self, file, tag_id):
         """Assign a tag to one episode (INSERT OR IGNORE)."""
         try:
+            key = f"{int(tag_id)}:{file}"
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO Podcast_Tag_Links (podcast_file, tag_id) VALUES (?, ?)",
                     (file, tag_id),
+                )
+                # Re-assigning cancels a pending unassign tombstone.
+                conn.execute(
+                    "DELETE FROM Sync_Deletions "
+                    "WHERE lower(table_name) = 'podcast_tag_links' AND row_key = ?",
+                    (key,),
                 )
             return True
         except Exception as e:
@@ -202,10 +212,23 @@ class DatabaseManager:
     def unassign_podcast_tag(self, file, tag_id):
         """Remove one episode's tag assignment."""
         try:
+            key = f"{int(tag_id)}:{file}"
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "DELETE FROM Podcast_Tag_Links WHERE podcast_file = ? AND tag_id = ?",
                     (file, tag_id),
+                )
+                # Hard link deletes need a tombstone so Push can propagate
+                # the unassign to the server and other devices. Replace any
+                # older tombstone for this key with a fresh timestamp.
+                conn.execute(
+                    "DELETE FROM Sync_Deletions "
+                    "WHERE lower(table_name) = 'podcast_tag_links' AND row_key = ?",
+                    (key,),
+                )
+                conn.execute(
+                    "INSERT INTO Sync_Deletions (table_name, row_key) VALUES (?, ?)",
+                    ("podcast_tag_links", key),
                 )
             return True
         except Exception as e:

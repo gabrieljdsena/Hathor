@@ -149,6 +149,64 @@ public sealed class Phase6SyncTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Sync_PodcastTagLinkTombstone_DeletesLink()
+    {
+        var token = await TokenForAsync($"tl-{Guid.NewGuid():N}");
+        var tagId = (long)Random.Shared.Next(1_000_000, 10_000_000);
+        var linkId = tagId + 1;
+        const string file = "e:1.mp3"; // Colon must survive the natural key.
+
+        using (var imp = new HttpRequestMessage(HttpMethod.Post, "/api/v1/sync/import"))
+        {
+            imp.Headers.Authorization = Bearer(token);
+            imp.Content = JsonContent.Create(new
+            {
+                podcastTags = new[] { new { id = tagId, name = "Tech" } },
+                podcastTagLinks = new[] { new { id = linkId, podcastFile = file, tagId } },
+            });
+            (await _client.SendAsync(imp)).StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        using (var map = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasttags/map"))
+        {
+            map.Headers.Authorization = Bearer(token);
+            var before = (await (await _client.SendAsync(map)).Content
+                .ReadFromJsonAsync<Dictionary<string, List<long>>>())!;
+            before.Should().ContainKey(file);
+        }
+
+        using (var del = new HttpRequestMessage(HttpMethod.Post, "/api/v1/sync/import"))
+        {
+            del.Headers.Authorization = Bearer(token);
+            del.Content = JsonContent.Create(new
+            {
+                deletions = new[]
+                {
+                    new { tableName = "podcast_tag_links", rowKey = $"{tagId}:{file}" },
+                },
+            });
+            (await _client.SendAsync(del)).StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        using (var map = new HttpRequestMessage(HttpMethod.Get, "/api/v1/podcasttags/map"))
+        {
+            map.Headers.Authorization = Bearer(token);
+            var after = (await (await _client.SendAsync(map)).Content
+                .ReadFromJsonAsync<Dictionary<string, List<long>>>())!;
+            after.Should().NotContainKey(file);
+        }
+
+        using (var exp = new HttpRequestMessage(HttpMethod.Get, "/api/v1/sync/export"))
+        {
+            exp.Headers.Authorization = Bearer(token);
+            var snapshot = (await (await _client.SendAsync(exp)).Content
+                .ReadFromJsonAsync<DeletionSnapshot>())!;
+            snapshot.Deletions.Should().ContainSingle(d =>
+                d.TableName == "podcast_tag_links" && d.RowKey == $"{tagId}:{file}");
+        }
+    }
+
+    [Fact]
     public async Task Sync_Delta_Flows()
     {
         var token = await TokenForAsync($"dl-{Guid.NewGuid():N}");
@@ -283,6 +341,7 @@ public sealed class Phase6SyncTests : IAsyncLifetime
     private sealed record Snapshot(
         List<SongFull> Songs, List<PlaylistFull> Playlists, List<HistFull> MusicHistory,
         List<Del> Deletions, List<ChapterFull>? PodcastChapters);
+    private sealed record DeletionSnapshot(List<Del> Deletions);
     private sealed record ChapterFull(
         long Id, string PodcastFile, string Name, double StartSecs, double? EndSecs);
     private sealed record SongFull(

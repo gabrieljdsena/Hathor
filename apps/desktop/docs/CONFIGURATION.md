@@ -80,7 +80,7 @@ Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `W
 
 - On **first run** with sync configured, the app prompts the user to load the server library (songs, podcasts, playlists, lyrics, daily mix, history) and download missing files into their respective folders.
 - After that, everything is manual: **Push to Server** uploads rows + new file bytes; **Sync from Server** pulls the incremental delta down (see [Database & sync](DATABASE.md) and [Sync API migration](SYNC_API_MIGRATION.md)).
-- Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history).
+- Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history, podcast tags and podcast tag links).
 
 ## Turning sync off
 

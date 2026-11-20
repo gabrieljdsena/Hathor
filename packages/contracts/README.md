@@ -15,7 +15,10 @@ downloads. JSON is camelCase; datetimes are ISO-8601 UTC.
 
 Rules all apps follow:
 
-- Tombstone deletions propagate via `Sync_Deletions` (delta carries them filtered by `DeletedAtUtc`)
+- Tombstone deletions propagate via `Sync_Deletions` (delta carries them filtered by `DeletedAtUtc`).
+  Podcast tag unassignments use table `podcast_tag_links` with `row_key = "<tagId>:<file>"`
+  (split on the first colon, so filenames may contain colons); re-assigning the same
+  tag/file cancels the pending tombstone.
 - Delta cursor is opaque (`<utcTicks>:<musicMaxId>:<playlistMaxId>`); time
   sections use `>=` overlap (clients upsert idempotently — a repeat is free),
   history stays exact via id comparison; `UpdatedAtUtc` is server-stamped on

@@ -240,6 +240,9 @@ interface SyncDeletionDao {
     @Query("SELECT * FROM Sync_Deletions")
     suspend fun all(): List<SyncDeletionEntity>
 
+    @Query("DELETE FROM Sync_Deletions WHERE table_name = :table AND row_key = :key")
+    suspend fun delete(table: String, key: String)
+
     @Query("DELETE FROM Sync_Deletions WHERE table_name IN (:tables)")
     suspend fun clearTables(tables: List<String>)
 }

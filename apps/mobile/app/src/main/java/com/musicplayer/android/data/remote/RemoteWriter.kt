@@ -30,7 +30,8 @@ object RemoteWriter {
     private val songTables = listOf(
         "songs", "playlists", "lyrics", "music_history", "playlist_history",
     )
-    private val podcastTables = listOf("podcasts", "podcast_tags", "podcast_chapters")
+    private val podcastTables =
+        listOf("podcasts", "podcast_tags", "podcast_tag_links", "podcast_chapters")
 
     data class PushReport(val rows: Int, val message: String)
 

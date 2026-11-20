@@ -144,7 +144,7 @@ pushes retry on the next play or app start. This path never blocks playback.
 
 ### Pull — "Sync from Server" (`Api.sync_remote_to_local_and_download` → `ApiSyncClient.pull_once`)
 
-`GET /api/v1/sync/delta?cursor=` merges changed rows (upserts, guarded link reconcile, daily-mix adopt + prune, tombstones applied incl. file removal), then streams missing files byte-identical from `GET /api/v1/sync/files/{file}` — songs into the songs folder, podcasts into the podcasts folder. The cursor (`sync_cursor.txt` next to the DB) advances only on full success.
+`GET /api/v1/sync/delta?cursor=` merges changed rows (upserts, guarded link reconcile, daily-mix adopt + prune, tombstones applied incl. file removal), then streams missing files byte-identical from `GET /api/v1/sync/files/{file}` — songs into the songs folder, podcasts into the podcasts folder. The cursor (`sync_cursor.txt` next to the DB) advances only on full success. Podcast tag unassignments arrive as `podcast_tag_links` tombstones with key `<tagId>:<file>`.
 
 ### Connections
 

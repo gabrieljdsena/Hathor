@@ -163,6 +163,13 @@ public sealed class EfTombstoneRepository(HathorDbContext db) : ITombstoneReposi
             DeletedAtUtc = DateTime.UtcNow,
         }, ct);
 
+    public async Task RemoveAsync(Guid userId, string tableName, string rowKey, CancellationToken ct = default)
+    {
+        var rows = await db.SyncDeletions.Where(d =>
+            d.UserId == userId && d.TableName == tableName && d.RowKey == rowKey).ToListAsync(ct);
+        if (rows.Count > 0) db.SyncDeletions.RemoveRange(rows);
+    }
+
     public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }
 

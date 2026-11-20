@@ -31,6 +31,9 @@ Delta contract (server must speak this; see
         "daily_mix": [{mix_date, song_files}],
         "deletions": [{table_name, row_key}] }
 
+Podcast tag-link tombstones use ``row_key = "<tagId>:<file>"`` (split on
+the first colon, so filenames may contain colons).
+
 Stdlib only (urllib) — no new pip dependency.
 
 Wire notes: the server speaks camelCase JSON (ASP.NET Core default) while
@@ -146,7 +149,7 @@ AUDIO_DELETION_TABLES = frozenset({
     "songs", "playlists", "lyrics", "music_history", "playlist_history",
 })
 PODCAST_DELETION_TABLES = frozenset({
-    "podcasts", "podcast_tags", "podcast_chapters",
+    "podcasts", "podcast_tags", "podcast_tag_links", "podcast_chapters",
 })
 
 
@@ -957,6 +960,14 @@ class ApiSyncClient:
                 " tag_id = excluded.tag_id",
                 (l.get("id"), l.get("podcast_file"), l.get("tag_id")),
             )
+            # The server's assignment is newer than any local unassign
+            # tombstone for the same natural key; cancel it so a later Push
+            # does not delete the link again.
+            conn.execute(
+                "DELETE FROM Sync_Deletions "
+                "WHERE lower(table_name) = 'podcast_tag_links' AND row_key = ?",
+                (f"{l.get('tag_id')}:{l.get('podcast_file')}",),
+            )
         if tag_links:
             keep = {(l.get("tag_id"), l.get("podcast_file")) for l in tag_links}
             stale = [
@@ -1032,6 +1043,19 @@ class ApiSyncClient:
                 elif table == "podcast_tags":
                     conn.execute("DELETE FROM Podcast_Tag_Links WHERE tag_id = ?", (key,))
                     conn.execute("DELETE FROM Podcast_Tags WHERE id = ?", (key,))
+                elif table == "podcast_tag_links":
+                    raw_tag, sep, podcast_file = str(key).partition(":")
+                    if sep and podcast_file:
+                        try:
+                            link_tag = int(raw_tag)
+                        except ValueError:
+                            link_tag = None
+                        if link_tag is not None:
+                            conn.execute(
+                                "DELETE FROM Podcast_Tag_Links "
+                                "WHERE tag_id = ? AND podcast_file = ?",
+                                (link_tag, podcast_file),
+                            )
                 elif table == "podcast_chapters":
                     conn.execute("DELETE FROM Podcast_Chapters WHERE podcast_file = ?", (key,))
             except Exception as e:
