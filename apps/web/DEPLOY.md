@@ -26,6 +26,44 @@ Restart-Service Hathor
 
 Open `http://localhost:5051` (API + UI same origin).
 
+## Android APK updates (sideload channel)
+
+The API also serves the Android app's self-updater. The phone asks for the
+latest release, downloads it, verifies its SHA-256 and hands it to Android's
+installer. No Play Store involved.
+
+- **Drop folder:** `C:\ProgramData\Hathor\apk` (pinned by
+  `install-service.ps1` as the machine env var `MobileApp__ApkDirectory`,
+  defaulting next to `-StorageRoot`). It lives outside `artifacts/publish/`,
+  so `build.ps1` never deletes it.
+- **Publish one file per release:** `hathor-<versionCode>-<versionName>.apk`
+  (e.g. `hathor-6-0.4.3-hathor.apk`). The server picks the highest
+  `versionCode`; older files may stay for rollback. Zero-byte and
+  differently-named files are ignored, and a file that is still copying over
+  SMB is skipped until its bytes are readable.
+- **Endpoints** (both require a normal `hth_` API key or JWT — they are not
+  anonymous):
+  - `GET /api/v1/app/latest` → metadata
+    `{ versionCode, versionName, fileName, sizeBytes, sha256, publishedAtUtc, downloadPath }`
+    or `404` when the folder has no release.
+  - `GET /api/v1/app/download/{fileName}` → the APK
+    (`application/vnd.android.package-archive`, range requests enabled).
+- **Share it with the build PC** (elevated PowerShell on the server):
+
+  ```powershell
+  cd C:\Users\gabriel\code\Hathor\apps\web
+  .\scripts\share-apk.ps1 -Account 'WORKPC\gabriel'
+  # prints \\SERVER\HathorAPK
+  ```
+
+  Only that account gets access: the APK embeds the build-time API token.
+- **After changing the folder path:** re-run `install-service.ps1` (pins the
+  env var) and `Restart-Service Hathor`. After code changes just run
+  `build.ps1`, which restarts the service.
+
+The mobile build/signing/publish side is documented in
+[`apps/mobile/README.md`](../mobile/README.md#in-app-updates-sideload-channel).
+
 ## Notes
 
 - YouTube bot-check protection: when downloads fail with "Sign in to

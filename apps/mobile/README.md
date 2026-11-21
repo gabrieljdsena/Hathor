@@ -163,6 +163,151 @@ CI runs the JVM suite on pushes/PRs touching `apps/mobile`
 on an AVD/phone because hosted emulators are slow and flaky; wire it into CI
 with `reactivecircus/android-emulator-runner` if you need it.
 
+## In-app updates (sideload channel)
+
+The phone updates itself from the Hathor server over the LAN — no Play Store.
+The server side is implemented (`apps/web/src/Hathor.Api/MobileAppController.cs`,
+deploy notes in [`../web/DEPLOY.md`](../web/DEPLOY.md)); the Android client and
+release scripts are described here.
+
+### Server contract
+
+Reuse the server URL/token from **Settings → Web API**
+(`SyncConfig.baseUrl()` / `SyncConfig.token()`); both calls need
+`Authorization: Bearer <hth_ key or JWT>`.
+
+```http
+GET /api/v1/app/latest
+```
+
+```json
+{
+  "versionCode": 6,
+  "versionName": "0.4.3-hathor",
+  "fileName": "hathor-6-0.4.3-hathor.apk",
+  "sizeBytes": 132456789,
+  "sha256": "lowercase-hex",
+  "publishedAtUtc": "2026-11-20T18:00:00+00:00",
+  "downloadPath": "/api/v1/app/download/hathor-6-0.4.3-hathor.apk"
+}
+```
+
+`404 { "message": "…" }` when no APK has been published. Compare
+`versionCode` with `BuildConfig.VERSION_CODE`; equal/lower means up to date.
+Then:
+
+```http
+GET /api/v1/app/download/{fileName}
+```
+
+Returns the APK as `application/vnd.android.package-archive` with range
+support. `downloadPath` is relative to the same server base URL. Verify the
+`sha256` (lowercase hex) before installing and delete the file on mismatch.
+
+### Expected app behaviour
+
+- Check on launch (throttled to once per 24 h in SharedPreferences) **and** a
+  manual "Check for updates" row in **Settings → About**; skip silently when
+  the Web API is not configured.
+- Show a dialog with current/latest version. Download to `filesDir/updates/`
+  with progress, verify SHA-256, then install through a `FileProvider`
+  (`content://`) and `Intent.ACTION_VIEW` with the APK MIME type.
+- Declare `REQUEST_INSTALL_PACKAGES`. On API 26+, if
+  `packageManager.canRequestPackageInstalls()` is false, open
+  `Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES` for the app and retry after the
+  user returns.
+- Never downgrade or reinstall the same `versionCode`; keep at most one
+  downloaded APK and clean it up after the installer is launched.
+- Use the existing stdlib stack (`HttpURLConnection` + `org.json`, like
+  `data/api/SyncApi.kt`) — no new dependencies. The APK is large
+  (native yt-dlp/FFmpeg), so stream to a `.part` file and use a longer read
+  timeout.
+
+### Release signing (one-time, on the work PC)
+
+The update installer requires every APK to be signed with the **same key** as
+the installed app. Debug builds use a machine-local debug key, so pick one:
+
+- **Dedicated release key (recommended)** — one-time uninstall of the debug
+  install (back up the library first, see below).
+- **Reuse the existing debug keystore** (`%USERPROFILE%\.android\debug.keystore`,
+  alias `androiddebugkey`, password `android`) — upgrades in place, but it is
+  a well-known key. Fine for a homelab only.
+- **Losing the key means no in-place updates** — back up the `.jks` and its
+  passwords outside the repo.
+
+Generate the dedicated key (keep it outside the repo, e.g. `C:\keys`):
+
+```powershell
+keytool -genkeypair -v -keystore C:\keys\hathor-release.jks `
+  -alias hathor -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Create `apps/mobile/keystore.properties` (gitignored):
+
+```properties
+storeFile=C:\\keys\\hathor-release.jks
+storePassword=<password>
+keyAlias=hathor
+keyPassword=<password>
+```
+
+Wire it into `app/build.gradle.kts` as `signingConfigs.release` (read the
+properties file when present, fall back to unsigned otherwise). The existing
+debug install is signed with a different key, so the first release APK must be
+installed after a one-time migration:
+
+```powershell
+# 1. Back up app-private library files (deleted by uninstall)
+adb pull /sdcard/Android/data/com.musicplayer.android/files/AndroidPlayer .\android-player-backup
+
+# 2. Remove the debug install (signature mismatch otherwise)
+adb uninstall com.musicplayer.android
+
+# 3. Install the first release-signed APK, then restore the folder
+adb install .\hathor-6-0.4.3-hathor.apk
+adb push .\android-player-backup\. /sdcard/Android/data/com.musicplayer.android/files/AndroidPlayer/
+```
+
+Alternatively, use Settings before step 2 to move the music/podcasts folders
+to a shared (SAF) folder that survives uninstall, then re-pick it afterwards.
+The server library can also be re-pulled.
+
+### Compile & publish (work PC)
+
+1. Bump `versionCode` (strictly increasing) and `versionName` in
+   `app/build.gradle.kts` — e.g. `6` / `0.4.3-hathor`.
+2. Confirm `local.properties` has `sdk.dir`, `API_BASE_URL` (server LAN URL)
+   and `API_TOKEN` (scope `library:read` + `library:write`). These values are
+   baked into the APK; do not commit them.
+3. Build the signed release:
+
+   ```powershell
+   .\gradlew.bat :app:assembleRelease
+   ```
+
+   Target convenience wrapper: `.\scripts\release.ps1` (create it if missing)
+   should build, rename/copy the output to
+   `dist\hathor-<versionCode>-<versionName>.apk`, print the SHA-256 and accept
+   `-Destination \\SERVER\HathorAPK` to publish directly (the SMB share is
+   created by the server's `apps/web/scripts/share-apk.ps1`).
+4. Expected Gradle output:
+   `app\build\outputs\apk\release\app-release.apk`. Publish exactly one file
+   named `hathor-<versionCode>-<versionName>.apk`; the server ignores
+   everything else and selects the highest `versionCode`.
+5. Verify end-to-end (with a valid `hth_` key):
+
+   ```powershell
+   Invoke-RestMethod -Uri http://<server>:5051/api/v1/app/latest `
+     -Headers @{ Authorization = 'Bearer hth_...' }
+   ```
+
+   The returned `versionCode`/`sha256` must match the file just copied.
+6. Run `.\gradlew.bat testDebugUnitTest` before publishing, and optionally
+   `adb install -r .\hathor-<code>-<name>.apk` to smoke-test the installer.
+
+Never commit `.jks`, `keystore.properties`, `dist/` APKs or `local.properties`.
+
 ## Project structure
 
 ```text

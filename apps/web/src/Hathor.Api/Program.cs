@@ -58,6 +58,7 @@ builder.Services.AddSignalR();
 // RAM: bound the process-wide cache (idempotency DTOs hold full player
 // state). Entries must set Size — see PlayerController.
 builder.Services.AddMemoryCache(options => options.SizeLimit = 1024);
+builder.Services.AddSingleton<AppReleaseStore>();
 
 builder.Services.AddHathorInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<IPlaybackHub, SignalRPlaybackHub>();
