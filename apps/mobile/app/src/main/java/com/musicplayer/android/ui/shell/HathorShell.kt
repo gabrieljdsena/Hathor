@@ -217,28 +217,35 @@ fun HathorShell(
                         )
                 )
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        if (!sidebarVisible) {
-                            // Clean top strip: the only chrome when the rail is hidden.
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(onClick = { sidebarVisible = true }) {
-                                    Icon(
-                                        Icons.Filled.Menu,
-                                        contentDescription = "Show sidebar",
-                                        tint = HathorColors.TextBody
-                                    )
-                                }
-                            }
-                        }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // Reserve the hamburger's leading slot so the
+                            // screen header sits on the same row, never under it.
+                            .padding(start = if (sidebarVisible) 0.dp else 40.dp)
+                    ) {
                         if (syncProgress?.running == true) {
                             SyncProgressBar(syncProgress)
                         }
                         Box(modifier = Modifier.weight(1f)) { content() }
+                    }
+                    if (!sidebarVisible) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = 4.dp, top = 16.dp)
+                        ) {
+                            IconButton(
+                                onClick = { sidebarVisible = true },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Menu,
+                                    contentDescription = "Show sidebar",
+                                    tint = HathorColors.TextBody
+                                )
+                            }
+                        }
                     }
                 }
             }
