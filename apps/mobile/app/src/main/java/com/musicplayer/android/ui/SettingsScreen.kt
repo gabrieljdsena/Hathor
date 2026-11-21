@@ -131,18 +131,12 @@ fun SettingsScreen(
             }
             Column {
                 Text("Settings", style = MaterialTheme.typography.titleLarge)
-                Text("Manage your preferences", style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
             }
         }
 
         // ---- Web API connection (runtime; no account/login on mobile) ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel(Icons.Filled.Sync, "Web API")
-            Text(
-                "The mobile app talks to your self-hosted Hathor Web API. No login is needed — use a scoped hth_ API key.",
-                style = MaterialTheme.typography.bodySmall,
-                color = HathorColors.TextHint
-            )
             HathorTextField(
                 value = apiUrl,
                 onValueChange = { apiUrl = it },
@@ -163,7 +157,7 @@ fun SettingsScreen(
                         apiUrl = SyncConfig.baseUrl()
                         apiToken = SyncConfig.token()
                         sync.scheduleHistoryPush()
-                        apiMessage = "Saved. Pull/push and Discover/AI DJ use this server; pending history syncs automatically."
+                        apiMessage = "Saved."
                     },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
@@ -185,11 +179,6 @@ fun SettingsScreen(
                 ) { Text(if (testingApi) "Testing…" else "Test") }
             }
             apiMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint) }
-            Text(
-                "Scopes: library:read + library:write for sync/Discover; add player:read + player:control for AI DJ.",
-                style = MaterialTheme.typography.bodySmall,
-                color = HathorColors.TextHint
-            )
         }
 
         // ---- Sync server (desktop settings view owns these actions) ----
@@ -226,11 +215,6 @@ fun SettingsScreen(
                     )
                 }
             ) { Text("Full resync files") }
-            Text(
-                "Replays the server delta and retries any files missing on this device. Downloaded music is kept.",
-                style = MaterialTheme.typography.bodySmall,
-                color = HathorColors.TextHint
-            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -238,10 +222,6 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Search YouTube for songs without links", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Off = linkless rows are listed but skipped, never guessed.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                 }
                 HathorSwitch(
                     checked = searchFallback,
@@ -271,10 +251,6 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Crossfade (${xSecs.toInt()}s)", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Blend into the next song on auto-advance. Manual next/prev stay instant.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                 }
                 HathorSwitch(
                     checked = xEnabled,
@@ -303,10 +279,6 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Chapter auto-skip", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Podcast episodes start at the first chapter and skip ahead at chapter ends.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                 }
                 HathorSwitch(
                     checked = chapterSkip,
@@ -318,7 +290,6 @@ fun SettingsScreen(
         // ---- Concurrency ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionLabel(Icons.Filled.Download, "Concurrent downloads ($limit)")
-            Text("Same limit as desktop (1–20). Applies to new jobs.", style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { scope.launch { settings.setLimit(limit - 1) } }, enabled = limit > 1) { Text("−") }
                 Text("$limit", style = MaterialTheme.typography.titleMedium)
@@ -329,7 +300,6 @@ fun SettingsScreen(
         // ---- Wallpaper (desktop background picker, same 40% scrim) ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel(Icons.Filled.Image, "Wallpaper")
-            Text("Dimmed 40% behind the UI, like the desktop.", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { pickWallpaper.launch("image/*") },
@@ -402,20 +372,18 @@ fun SettingsScreen(
                 "Hathor ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
                 style = MaterialTheme.typography.titleSmall
             )
-            Text(
-                "Your personal music system: downloads, playlists, podcasts, daily mixes, and multi-device sync.",
-                style = MaterialTheme.typography.bodySmall,
-                color = HathorColors.TextHint
-            )
-            Text(
-                updateStatusText(updateState),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (updateState is UpdateState.Error) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    HathorColors.TextHint
-                }
-            )
+            val statusText = updateStatusText(updateState)
+            if (statusText.isNotBlank()) {
+                Text(
+                    statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (updateState is UpdateState.Error) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        HathorColors.TextHint
+                    }
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { updateRepo.check(force = true) },
@@ -460,7 +428,7 @@ private fun SectionLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, 
 }
 
 private fun updateStatusText(state: UpdateState): String = when (state) {
-    UpdateState.Idle -> "Check the server for a new build."
+    UpdateState.Idle -> ""
     UpdateState.Disabled -> "Configure Web API to check for updates."
     UpdateState.Checking -> "Checking…"
     UpdateState.UpToDate -> "Up to date."

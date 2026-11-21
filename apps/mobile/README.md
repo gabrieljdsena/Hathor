@@ -322,7 +322,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.5-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.7-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
