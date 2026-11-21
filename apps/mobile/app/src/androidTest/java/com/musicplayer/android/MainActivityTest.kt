@@ -57,7 +57,7 @@ class MainActivityTest {
     }
 
     @Test(timeout = 180_000)
-    fun sidebarCollapsesToHamburgerAndReopens() {
+    fun sidebarCollapsesToOpenArrowAndReopens() {
         compose.onNodeWithContentDescription("Hide sidebar").performClick()
         compose.waitForIdle()
 

@@ -41,8 +41,8 @@ android {
         applicationId = "com.musicplayer.android"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.4.7-hathor"
+        versionCode = 11
+        versionName = "0.4.8-hathor"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

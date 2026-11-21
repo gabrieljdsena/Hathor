@@ -1,6 +1,12 @@
 package com.musicplayer.android.ui.shell
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +24,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Explore
@@ -115,12 +121,24 @@ fun HathorShell(
     content: @Composable () -> Unit
 ) {
     // The old icon-only "minimized" rail is now the open state. Closing the
-    // sidebar removes the rail entirely and reveals a hamburger bar instead.
+    // sidebar slides the rail away and reveals a small open arrow instead.
     var sidebarVisible by remember { mutableStateOf(true) }
+    // Keep the content header in the same place while the rail animates.
+    val contentStart by animateDpAsState(
+        targetValue = if (sidebarVisible) 0.dp else 40.dp,
+        animationSpec = tween(durationMillis = 220),
+        label = "content-start"
+    )
 
     Column(modifier = Modifier.fillMaxSize().background(HathorColors.Background)) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (sidebarVisible) {
+            AnimatedVisibility(
+                visible = sidebarVisible,
+                enter = expandHorizontally(animationSpec = tween(220)) +
+                    fadeIn(animationSpec = tween(220)),
+                exit = shrinkHorizontally(animationSpec = tween(180)) +
+                    fadeOut(animationSpec = tween(140))
+            ) {
                 // ---- Icon-only rail (the previous minimized layout) ----
                 Column(
                     modifier = Modifier
@@ -220,29 +238,31 @@ fun HathorShell(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            // Reserve the hamburger's leading slot so the
+                            // Reserve the open-arrow's leading slot so the
                             // screen header sits on the same row, never under it.
-                            .padding(start = if (sidebarVisible) 0.dp else 40.dp)
+                            .padding(start = contentStart)
                     ) {
                         if (syncProgress?.running == true) {
                             SyncProgressBar(syncProgress)
                         }
                         Box(modifier = Modifier.weight(1f)) { content() }
                     }
-                    if (!sidebarVisible) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(start = 4.dp, top = 16.dp)
-                        ) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !sidebarVisible,
+                        enter = fadeIn(animationSpec = tween(200, delayMillis = 120)),
+                        exit = fadeOut(animationSpec = tween(80)),
+                        modifier = Modifier.align(Alignment.TopStart)
+                    ) {
+                        Box(modifier = Modifier.padding(start = 4.dp, top = 16.dp)) {
                             IconButton(
                                 onClick = { sidebarVisible = true },
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
-                                    Icons.Filled.Menu,
+                                    Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = "Show sidebar",
-                                    tint = HathorColors.TextBody
+                                    tint = HathorColors.TextBody,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
