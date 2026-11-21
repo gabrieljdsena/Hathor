@@ -258,16 +258,23 @@ debug install is signed with a different key, so the first release APK must be
 installed after a one-time migration:
 
 ```powershell
-# 1. Back up app-private library files (deleted by uninstall)
-adb pull /sdcard/Android/data/com.musicplayer.android/files/AndroidPlayer .\android-player-backup
+# 1. Back up the app-private music + podcast libraries (deleted by uninstall)
+New-Item -ItemType Directory -Force .\android-player-backup\Music, .\android-player-backup\Podcasts | Out-Null
+adb pull /sdcard/Android/data/com.musicplayer.android/files/Music/AndroidPlayer .\android-player-backup\Music
+adb pull /sdcard/Android/data/com.musicplayer.android/files/Podcasts/AndroidPlayer .\android-player-backup\Podcasts
 
 # 2. Remove the debug install (signature mismatch otherwise)
 adb uninstall com.musicplayer.android
 
-# 3. Install the first release-signed APK, then restore the folder
-adb install .\hathor-6-0.4.3-hathor.apk
-adb push .\android-player-backup\. /sdcard/Android/data/com.musicplayer.android/files/AndroidPlayer/
+# 3. Install the first release-signed APK, then restore the libraries
+adb install .\dist\hathor-6-0.4.3-hathor.apk
+adb push .\android-player-backup\Music\. /sdcard/Android/data/com.musicplayer.android/files/Music/AndroidPlayer/
+adb push .\android-player-backup\Podcasts\. /sdcard/Android/data/com.musicplayer.android/files/Podcasts/AndroidPlayer/
 ```
+
+The internal database (playlists/history/settings) is **not** in those folders.
+Push the library to the server before uninstalling if you want it restored by
+a Pull afterward; app settings such as volume and wallpaper will reset.
 
 Alternatively, use Settings before step 2 to move the music/podcasts folders
 to a shared (SAF) folder that survives uninstall, then re-pick it afterwards.
