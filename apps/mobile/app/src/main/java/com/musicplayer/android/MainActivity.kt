@@ -291,6 +291,7 @@ class MainActivity : ComponentActivity() {
                     val syncState by syncRepo.state.collectAsState()
                     val updateState by updateRepo.state.collectAsState()
                     val updateDialogVisible by updateRepo.dialogVisible.collectAsState()
+                    val downloaderStatus by PlayerApp.instance.downloaderStatus.collectAsState()
                     val wallpaper by settingsRepo.background.collectAsState()
                     var syncProgress by remember { mutableStateOf<SyncProgress?>(null) }
                     // Manual-only sync elsewhere; the update check is throttled
@@ -700,7 +701,9 @@ class MainActivity : ComponentActivity() {
                                 podcastRepo,
                                 updateRepo,
                                 onPull = { enqueuePull() },
-                                wallpaper = wallpaper
+                                wallpaper = wallpaper,
+                                downloaderStatus = downloaderStatus,
+                                onUpdateDownloader = { PlayerApp.instance.updateDownloaderNow() }
                             )
                             Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
                                 controller = aiDjController,

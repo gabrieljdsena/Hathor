@@ -212,6 +212,12 @@ support. `downloadPath` is relative to the same server base URL. Verify the
 - Show a dialog with current/latest version. Download to `filesDir/updates/`
   with progress, verify SHA-256, then install through a `FileProvider`
   (`content://`) and `Intent.ACTION_VIEW` with the APK MIME type.
+- Keep at most one downloaded APK. On first launch of the installed version
+  the obsolete APK is deleted automatically; **Settings → About** also shows
+  the cached size with a **Remove APK** action.
+- **Settings → Downloader** shows the yt-dlp version and last update result,
+  with a manual **Check for updates** action. The stable channel is also
+  checked automatically on launch, and downloads wait for it before starting.
 - Declare `REQUEST_INSTALL_PACKAGES`. On API 26+, if
   `packageManager.canRequestPackageInstalls()` is false, open
   `Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES` for the app and retry after the
@@ -322,7 +328,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.22-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.23-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init

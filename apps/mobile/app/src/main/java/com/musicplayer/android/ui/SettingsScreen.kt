@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.BuildConfig
+import com.musicplayer.android.PlayerApp
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.HathorApi
@@ -78,7 +79,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Settings destination: the same actions as the desktop settings view, split
- * into five collapsible groups so the page stays short on a phone.
+ * into collapsible groups so the page stays short on a phone.
  */
 @Composable
 fun SettingsScreen(
@@ -87,11 +88,14 @@ fun SettingsScreen(
     podcasts: com.musicplayer.android.data.PodcastRepository,
     updateRepo: UpdateRepository,
     onPull: () -> Unit,
-    wallpaper: android.graphics.Bitmap? = null
+    wallpaper: android.graphics.Bitmap? = null,
+    downloaderStatus: PlayerApp.DownloaderStatus,
+    onUpdateDownloader: () -> Unit
 ) {
     val limit by settings.limit.collectAsState()
     val syncState by sync.state.collectAsState()
     val updateState by updateRepo.state.collectAsState()
+    val cachedApkBytes by updateRepo.cachedApkBytes.collectAsState()
     val xEnabled by settings.crossfadeEnabled.collectAsState()
     val xSecs by settings.crossfadeSeconds.collectAsState()
     val chapterSkip by settings.chapterSkip.collectAsState()
@@ -351,6 +355,48 @@ fun SettingsScreen(
             }
         }
 
+        // ---- Downloader ----
+        SettingsGroupCard(
+            group = SettingsGroup.Downloader,
+            expanded = openGroup == SettingsGroup.Downloader,
+            onToggle = {
+                openGroup = if (openGroup == SettingsGroup.Downloader) null else SettingsGroup.Downloader
+            }
+        ) {
+            val status = downloaderStatus
+            val version = when (status) {
+                is PlayerApp.DownloaderStatus.Ready -> status.version
+                is PlayerApp.DownloaderStatus.Updating -> status.version
+                is PlayerApp.DownloaderStatus.Failed -> status.version
+                PlayerApp.DownloaderStatus.Starting -> null
+            }
+            Text(
+                "yt-dlp ${version ?: "version unknown"}",
+                style = MaterialTheme.typography.titleSmall
+            )
+            val message = when (status) {
+                PlayerApp.DownloaderStatus.Starting -> "Initializing engine…"
+                is PlayerApp.DownloaderStatus.Updating -> "Checking the stable update channel…"
+                is PlayerApp.DownloaderStatus.Ready -> status.message
+                is PlayerApp.DownloaderStatus.Failed -> status.message
+            }
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (status is PlayerApp.DownloaderStatus.Failed) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    HathorColors.TextHint
+                }
+            )
+            HathorTonalButton(
+                onClick = onUpdateDownloader,
+                enabled = status !is PlayerApp.DownloaderStatus.Updating
+            ) {
+                Text(if (status is PlayerApp.DownloaderStatus.Updating) "Updating…" else "Check for updates")
+            }
+        }
+
         // ---- Appearance ----
         SettingsGroupCard(
             group = SettingsGroup.Appearance,
@@ -515,6 +561,20 @@ fun SettingsScreen(
                     else -> Unit
                 }
             }
+            if (cachedApkBytes > 0L) {
+                GroupDivider()
+                Text("Downloaded update APK", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    formatBytes(cachedApkBytes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HathorColors.TextHint
+                )
+                HathorTonalButton(
+                    onClick = updateRepo::removeCachedApk,
+                    enabled = updateState !is UpdateState.Downloading &&
+                        updateState !is UpdateState.Installing
+                ) { Text("Remove APK") }
+            }
         }
         }
     }
@@ -523,9 +583,18 @@ fun SettingsScreen(
 private enum class SettingsGroup(val title: String, val icon: ImageVector) {
     Connection("Connection", Icons.Filled.Sync),
     Playback("Playback", Icons.Filled.PlayArrow),
+    Downloader("Downloader", Icons.Filled.Download),
     Appearance("Appearance", Icons.Filled.Image),
     Storage("Storage", Icons.Filled.Folder),
     About("About", Icons.Filled.Info)
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L * 1024L ->
+        java.lang.String.format(java.util.Locale.US, "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+    bytes >= 1024L * 1024L ->
+        java.lang.String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    else -> "${bytes / 1024L} KB"
 }
 
 @Composable
