@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.AnimatedPlayPauseIcon
 import com.musicplayer.android.ui.HathorArtwork
 import com.musicplayer.android.ui.SyncProgressBar
 import com.musicplayer.android.ui.theme.HathorColors
@@ -439,9 +440,8 @@ private fun PlayerBar(
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", tint = HathorColors.TextPrimary)
             }
             IconButton(onClick = { player.toggle() }) {
-                Icon(
-                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (playing) "Pause" else "Play",
+                AnimatedPlayPauseIcon(
+                    playing = playing,
                     tint = HathorColors.TextPrimary
                 )
             }
