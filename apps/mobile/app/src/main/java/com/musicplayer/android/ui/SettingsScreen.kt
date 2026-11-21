@@ -21,7 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.musicplayer.android.ui.theme.HathorTonalButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -165,7 +165,7 @@ fun SettingsScreen(
                         contentColor = Color.White
                     )
                 ) { Text("Save") }
-                OutlinedButton(
+                HathorTonalButton(
                     onClick = {
                         testingApi = true
                         apiMessage = null
@@ -291,9 +291,9 @@ fun SettingsScreen(
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionLabel(Icons.Filled.Download, "Concurrent downloads ($limit)")
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { scope.launch { settings.setLimit(limit - 1) } }, enabled = limit > 1) { Text("−") }
+                HathorTonalButton(onClick = { scope.launch { settings.setLimit(limit - 1) } }, enabled = limit > 1) { Text("−") }
                 Text("$limit", style = MaterialTheme.typography.titleMedium)
-                Button(onClick = { scope.launch { settings.setLimit(limit + 1) } }, enabled = limit < 20) { Text("+") }
+                HathorTonalButton(onClick = { scope.launch { settings.setLimit(limit + 1) } }, enabled = limit < 20) { Text("+") }
             }
         }
 
@@ -301,13 +301,11 @@ fun SettingsScreen(
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel(Icons.Filled.Image, "Wallpaper")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { pickWallpaper.launch("image/*") },
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                HathorTonalButton(
+                    onClick = { pickWallpaper.launch("image/*") }
                 ) { Text("Choose") }
-                Button(
-                    onClick = { scope.launch { wallpaperMsg = settings.removeBackground() } },
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                HathorTonalButton(
+                    onClick = { scope.launch { wallpaperMsg = settings.removeBackground() } }
                 ) { Text("Remove") }
             }
             wallpaperMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -318,11 +316,10 @@ fun SettingsScreen(
             SectionLabel(Icons.Filled.Folder, "Music folder")
             Text(folderPath, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { pickFolder.launch(null) },
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                HathorTonalButton(
+                    onClick = { pickFolder.launch(null) }
                 ) { Text("Change") }
-                Button(
+                HathorTonalButton(
                     onClick = {
                         busy = true
                         rescanResult = null
@@ -331,8 +328,7 @@ fun SettingsScreen(
                             busy = false
                         }
                     },
-                    enabled = !busy,
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                    enabled = !busy
                 ) { Text(if (busy) "Scanning…" else "Rescan folder") }
             }
             folderResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -344,11 +340,10 @@ fun SettingsScreen(
             SectionLabel(Icons.Filled.Folder, "Podcasts folder")
             Text(podFolderPath, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { pickPodcastsFolder.launch(null) },
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                HathorTonalButton(
+                    onClick = { pickPodcastsFolder.launch(null) }
                 ) { Text("Change") }
-                Button(
+                HathorTonalButton(
                     onClick = {
                         busy = true
                         podRescanResult = null
@@ -357,8 +352,7 @@ fun SettingsScreen(
                             busy = false
                         }
                     },
-                    enabled = !busy,
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                    enabled = !busy
                 ) { Text(if (busy) "Scanning…" else "Rescan podcasts") }
             }
             podFolderResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -385,7 +379,7 @@ fun SettingsScreen(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
+                HathorTonalButton(
                     onClick = { updateRepo.check(force = true) },
                     enabled = updateState !is UpdateState.Checking &&
                         updateState !is UpdateState.Downloading &&

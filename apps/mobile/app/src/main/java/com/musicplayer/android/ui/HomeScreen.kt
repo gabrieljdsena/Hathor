@@ -1,7 +1,7 @@
 package com.musicplayer.android.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import com.musicplayer.android.ui.theme.hathorPressable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -300,7 +300,7 @@ private fun HomeCard(
     onPlay: (() -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().hathorGlass().clickable(onClick = onClick).padding(20.dp),
+        modifier = Modifier.fillMaxWidth().hathorGlass().hathorPressable(onClick).padding(20.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -21,11 +21,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Explore
@@ -68,9 +69,11 @@ import androidx.compose.ui.unit.dp
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.HathorArtwork
 import com.musicplayer.android.ui.SyncProgressBar
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.ModernSlider
+import com.musicplayer.android.ui.theme.hathorPressable
 
 /**
  * Destinations mirror the desktop sidebar (Home, Download, Playlists,
@@ -168,7 +171,8 @@ fun HathorShell(
                         Icon(
                             Icons.Filled.ChevronLeft,
                             contentDescription = "Hide sidebar",
-                            tint = HathorColors.TextHint
+                            tint = HathorColors.TextHint,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                     val selectedRail = selected.railActive()
@@ -180,12 +184,22 @@ fun HathorShell(
                             animationSpec = tween(durationMillis = 300),
                             label = "rail-icon"
                         )
+                        val itemBackground by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (active) HathorColors.AccentFill else Color.Transparent,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "rail-background"
+                        )
+                        val indicatorColor by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (active) HathorColors.AccentBright else Color.Transparent,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "rail-indicator"
+                        )
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(if (active) HathorColors.AccentFill else Color.Transparent)
-                                .clickable { onSelect(dest) }
+                                .background(itemBackground)
+                                .hathorPressable { onSelect(dest) }
                                 .padding(vertical = 10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
@@ -193,6 +207,13 @@ fun HathorShell(
                                 dest.icon,
                                 contentDescription = dest.label,
                                 tint = iconTint
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(indicatorColor)
                             )
                         }
                     }
@@ -259,10 +280,10 @@ fun HathorShell(
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
-                                    Icons.AutoMirrored.Filled.ArrowForward,
+                                    Icons.Filled.ChevronRight,
                                     contentDescription = "Show sidebar",
                                     tint = HathorColors.TextBody,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
@@ -385,18 +406,17 @@ private fun PlayerBar(
                     .background(HathorColors.AccentFill),
                 contentAlignment = Alignment.Center
             ) {
-                // Playing: visualizer bars; paused with art: the cover;
-                // otherwise the note glyph.
+                // Playing: visualizer bars; otherwise crossfading cover art
+                // with the shared accent placeholder.
                 if (playing) {
                     com.musicplayer.android.ui.VisualizerBars()
-                } else if (cover != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = cover.asImageBitmap(),
-                        contentDescription = "Cover",
-                        modifier = Modifier.size(44.dp)
-                    )
                 } else {
-                    Icon(Icons.Filled.MusicNote, contentDescription = null, tint = HathorColors.AccentBright)
+                    HathorArtwork(
+                        bitmap = cover,
+                        contentDescription = "Cover",
+                        modifier = Modifier.size(44.dp),
+                        cornerRadius = 8.dp
+                    )
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
