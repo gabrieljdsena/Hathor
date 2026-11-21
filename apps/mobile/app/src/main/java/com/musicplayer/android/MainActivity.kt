@@ -51,6 +51,7 @@ import com.musicplayer.android.data.PlaylistRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
+import com.musicplayer.android.data.update.UpdateRepository
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.AiDjController
 import com.musicplayer.android.playback.PlayerManager
@@ -62,6 +63,7 @@ import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
 import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.UpdateDialog
 import com.musicplayer.android.ui.querySyncProgress
 import com.musicplayer.android.ui.shell.Dest
 import com.musicplayer.android.ui.shell.HathorShell
@@ -81,6 +83,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var engine: DownloadEngine
     private lateinit var queueRepo: QueueRepository
     private lateinit var syncRepo: SyncRepository
+    private lateinit var updateRepo: UpdateRepository
     private lateinit var metadataRepo: MetadataRepository
     private lateinit var playlistRepo: PlaylistRepository
     private lateinit var historyRepo: HistoryRepository
@@ -131,6 +134,7 @@ class MainActivity : ComponentActivity() {
         aiDjController = PlayerApp.instance.aiDjController
         queueRepo = PlayerApp.instance.queueRepo
         syncRepo = PlayerApp.instance.syncRepo
+        updateRepo = PlayerApp.instance.updateRepo
         metadataRepo = MetadataRepository(this, engine)
         playlistRepo = PlaylistRepository(this, metadataRepo)
         historyRepo = HistoryRepository(this, metadataRepo)
@@ -252,8 +256,13 @@ class MainActivity : ComponentActivity() {
                     var lyricsReturnToNowPlaying by remember { mutableStateOf(false) }
                     var showFirstRun by remember { mutableStateOf(false) }
                     val syncState by syncRepo.state.collectAsState()
+                    val updateState by updateRepo.state.collectAsState()
+                    val updateDialogVisible by updateRepo.dialogVisible.collectAsState()
                     val wallpaper by settingsRepo.background.collectAsState()
                     var syncProgress by remember { mutableStateOf<SyncProgress?>(null) }
+                    // Manual-only sync elsewhere; the update check is throttled
+                    // to 24 h and silently skipped when the Web API is off.
+                    LaunchedEffect(Unit) { updateRepo.checkOnStartup() }
                     LaunchedEffect(Unit) {
                         while (true) {
                             syncProgress = withContext(Dispatchers.IO) {
@@ -648,6 +657,7 @@ class MainActivity : ComponentActivity() {
                                 settingsRepo,
                                 syncRepo,
                                 podcastRepo,
+                                updateRepo,
                                 onPull = { enqueuePull() }
                             )
                             Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
@@ -713,6 +723,7 @@ class MainActivity : ComponentActivity() {
                         AlertDialog(
                             onDismissRequest = {},
                             title = { Text("Sync Server Found") },
+
                             text = {
                                 Column {
                                     Text("A sync server is configured. Would you like to load your music library from it?")
@@ -738,6 +749,16 @@ class MainActivity : ComponentActivity() {
                             dismissButton = {
                                 TextButton(onClick = { dismissFirstRun() }) { Text("No, start fresh") }
                             }
+                        )
+                    }
+
+                    if (updateDialogVisible && !showFirstRun) {
+                        UpdateDialog(
+                            state = updateState,
+                            onDismiss = updateRepo::dismissDialog,
+                            onUpdate = updateRepo::download,
+                            onInstall = updateRepo::install,
+                            onRetry = updateRepo::retry,
                         )
                     }
                 }
@@ -970,6 +991,13 @@ class MainActivity : ComponentActivity() {
         val target = resolveFileByName(fileName)
         if (!target.exists()) return
         if (next) player.playNext(target) else player.addToQueue(target)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The unknown-apps settings page has no result callback; retry when
+        // the user returns and the permission is now granted.
+        if (::updateRepo.isInitialized) updateRepo.onResume()
     }
 
     override fun onDestroy() {

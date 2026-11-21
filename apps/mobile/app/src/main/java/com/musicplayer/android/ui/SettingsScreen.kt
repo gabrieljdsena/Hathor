@@ -44,6 +44,8 @@ import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.HathorApi
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.RemoteSync
+import com.musicplayer.android.data.update.UpdateRepository
+import com.musicplayer.android.data.update.UpdateState
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
 import com.musicplayer.android.ui.theme.HathorTextField
@@ -62,10 +64,12 @@ fun SettingsScreen(
     settings: SettingsRepository,
     sync: SyncRepository,
     podcasts: com.musicplayer.android.data.PodcastRepository,
+    updateRepo: UpdateRepository,
     onPull: () -> Unit
 ) {
     val limit by settings.limit.collectAsState()
     val syncState by sync.state.collectAsState()
+    val updateState by updateRepo.state.collectAsState()
     var rescanResult by remember { mutableStateOf<String?>(null) }
     var folderResult by remember { mutableStateOf<String?>(null) }
     var folderPath by remember { mutableStateOf(settings.musicFolder()) }
@@ -394,12 +398,56 @@ fun SettingsScreen(
         // ---- About ----
         Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             SectionLabel(Icons.Filled.Info, "About")
-            Text("Hathor ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Hathor ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                style = MaterialTheme.typography.titleSmall
+            )
             Text(
                 "Your personal music system: downloads, playlists, podcasts, daily mixes, and multi-device sync.",
                 style = MaterialTheme.typography.bodySmall,
                 color = HathorColors.TextHint
             )
+            Text(
+                updateStatusText(updateState),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (updateState is UpdateState.Error) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    HathorColors.TextHint
+                }
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { updateRepo.check(force = true) },
+                    enabled = updateState !is UpdateState.Checking &&
+                        updateState !is UpdateState.Downloading &&
+                        updateState !is UpdateState.Installing,
+                ) { Text("Check for updates") }
+                when (updateState) {
+                    is UpdateState.Available -> Button(
+                        onClick = updateRepo::download,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HathorColors.Accent,
+                            contentColor = Color.White,
+                        ),
+                    ) { Text("Update") }
+                    is UpdateState.Ready, is UpdateState.NeedsPermission -> Button(
+                        onClick = updateRepo::install,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HathorColors.Accent,
+                            contentColor = Color.White,
+                        ),
+                    ) { Text("Install") }
+                    is UpdateState.Error -> Button(
+                        onClick = updateRepo::retry,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HathorColors.Accent,
+                            contentColor = Color.White,
+                        ),
+                    ) { Text("Retry") }
+                    else -> Unit
+                }
+            }
         }
     }
 }
@@ -409,4 +457,22 @@ private fun SectionLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, 
         Icon(icon, contentDescription = null, tint = HathorColors.AccentBright)
         Text(text, style = MaterialTheme.typography.titleSmall)
     }
+}
+
+private fun updateStatusText(state: UpdateState): String = when (state) {
+    UpdateState.Idle -> "Check the server for a new build."
+    UpdateState.Disabled -> "Configure Web API to check for updates."
+    UpdateState.Checking -> "Checking…"
+    UpdateState.UpToDate -> "Up to date."
+    UpdateState.NoRelease -> "No APK published yet."
+    is UpdateState.Available ->
+        "Update available: ${state.info.versionName} (build ${state.info.versionCode})."
+    is UpdateState.Downloading -> {
+        val total = state.total.coerceAtLeast(1L)
+        "Downloading… ${((state.bytes * 100) / total).coerceIn(0L, 100L)}%"
+    }
+    is UpdateState.Ready -> "Update ready: ${state.info.versionName}."
+    is UpdateState.NeedsPermission -> "Allow installs from this source, then return."
+    is UpdateState.Error -> state.message
+    is UpdateState.Installing -> "Installer opened."
 }

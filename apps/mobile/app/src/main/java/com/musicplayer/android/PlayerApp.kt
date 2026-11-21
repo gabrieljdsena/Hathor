@@ -7,6 +7,7 @@ import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.SyncConfig
+import com.musicplayer.android.data.update.UpdateRepository
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.AiDjController
 import com.musicplayer.android.playback.PlaybackTelemetry
@@ -54,6 +55,9 @@ class PlayerApp : Application() {
         private set
     lateinit var syncRepo: SyncRepository
         private set
+    /** App-scoped sideload updater (downloads survive activity recreation). */
+    lateinit var updateRepo: UpdateRepository
+        private set
 
     /**
      * Active music folder (desktop songs_path equivalent). Starts as the
@@ -85,6 +89,7 @@ class PlayerApp : Application() {
         super.onCreate()
         instance = this
         SyncConfig.init(this)
+        updateRepo = UpdateRepository(this)
         musicDir = java.io.File(
             getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC),
             "AndroidPlayer"

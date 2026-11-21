@@ -315,18 +315,20 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.2-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.3-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
       engine/DownloadEngine.kt       YouTube → MP3 download engine (yt-dlp options mirror desktop Download.py)
       playback/                      PlayerService, PlayerManager, PlaybackTelemetry, PlaybackSource, PreviewPlayer
+      data/update/                   in-app sideload updater (check, download, install)
       ui/                            Compose screens: Home, Library/AllSongs, DailyMix, Download,
                                      Podcasts, Playlists, History, Settings, NowPlayingSheet,
                                      SongRow, VisualizerBars
       ui/shell/HathorShell.kt        navigation rail + destinations (Home, Download, Podcasts,
                                      Playlists, History, Settings; All Songs / Daily Mix under Home)
       ui/theme/                      Hathor colors, typography, motion (desktop visual tokens)
+  scripts/release.ps1               signed release APK + optional SMB publish
 ```
 
 ## How sync works
