@@ -616,6 +616,32 @@ interface SettingsDao {
     suspend fun save(settings: SettingsEntity)
 }
 
+/** Persistent tag cache for the music library (avoids retriever sweeps). */
+@Entity(tableName = "Metadata_Cache")
+data class MetadataCacheEntity(
+    @PrimaryKey val path: String,
+    @ColumnInfo(name = "last_modified") val lastModified: Long,
+    @ColumnInfo(name = "file_length") val fileLength: Long,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val year: String,
+    @ColumnInfo(name = "duration_sec") val durationSec: Long,
+    @ColumnInfo(name = "has_cover") val hasCover: Boolean
+)
+
+@Dao
+interface MetadataCacheDao {
+    @Query("SELECT * FROM Metadata_Cache")
+    suspend fun getAll(): List<MetadataCacheEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putAll(rows: List<MetadataCacheEntity>)
+
+    @Query("DELETE FROM Metadata_Cache WHERE path IN (:paths)")
+    suspend fun deletePaths(paths: List<String>)
+}
+
 @Database(
     entities = [
         SongEntity::class, PlaylistEntity::class, SongPlaylistEntity::class,
@@ -624,9 +650,9 @@ interface SettingsDao {
         SyncDeletionEntity::class, SettingsEntity::class, DownloadJobEntity::class,
         PodcastEntity::class, DailyMixEntity::class,
         PodcastTagEntity::class, PodcastTagLinkEntity::class,
-        PodcastChapterEntity::class
+        PodcastChapterEntity::class, MetadataCacheEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -641,6 +667,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun podcastTagLinkDao(): PodcastTagLinkDao
     abstract fun podcastChapterDao(): PodcastChapterDao
     abstract fun syncDeletionDao(): SyncDeletionDao
+    abstract fun metadataCacheDao(): MetadataCacheDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
@@ -770,13 +797,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS Metadata_Cache (" +
+                        "path TEXT NOT NULL, last_modified INTEGER NOT NULL, " +
+                        "file_length INTEGER NOT NULL, title TEXT NOT NULL, " +
+                        "artist TEXT NOT NULL, album TEXT NOT NULL, year TEXT NOT NULL, " +
+                        "duration_sec INTEGER NOT NULL, has_cover INTEGER NOT NULL, " +
+                        "PRIMARY KEY(path))"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "music_player.db" // same filename as desktop
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build().also { INSTANCE = it }
             }
     }
 }

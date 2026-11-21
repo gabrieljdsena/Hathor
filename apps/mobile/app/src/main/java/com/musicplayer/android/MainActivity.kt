@@ -265,14 +265,17 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(Unit) {
                         if (!showSplash) return@LaunchedEffect
                         val started = System.currentTimeMillis()
-                        withTimeoutOrNull(5_000L) {
+                        // The scan must outlive the splash timeout so a large
+                        // first library still populates the persistent cache.
+                        val refreshJob = CoroutineScope(Dispatchers.IO).launch {
                             runCatching { metadataRepo.refreshLibraryIfStale() }
                         }
+                        withTimeoutOrNull(5_000L) { refreshJob.join() }
                         val elapsed = System.currentTimeMillis() - started
                         if (elapsed < 500L) delay(500L - elapsed)
                         android.util.Log.i(
                             "HathorStartup",
-                            "library ready in ${System.currentTimeMillis() - started} ms"
+                            "splash released after ${System.currentTimeMillis() - started} ms"
                         )
                         showSplash = false
                     }

@@ -5,14 +5,20 @@ import android.media.MediaMetadataRetriever
 import android.os.SystemClock
 import android.util.Log
 import com.musicplayer.android.data.local.AppDatabase
+import com.musicplayer.android.data.local.MetadataCacheEntity
 import com.musicplayer.android.data.local.SyncDeletionEntity
 import com.musicplayer.android.engine.DownloadEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -37,6 +43,7 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
 
     private val appContext = context.applicationContext
     private val db = AppDatabase.get(appContext)
+    private val metaCacheDao = db.metadataCacheDao()
 
     private val _library = MutableStateFlow<List<SongMeta>>(emptyList())
     val library: StateFlow<List<SongMeta>> = _library.asStateFlow()
@@ -61,6 +68,31 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
     // lastModified+length, so a refresh only pays for new/changed files.
     private data class CacheEntry(val lastModified: Long, val length: Long, val meta: SongMeta)
     private val metaCache = mutableMapOf<String, CacheEntry>()
+
+    private fun com.musicplayer.android.data.local.MetadataCacheEntity.toSongMeta(): SongMeta =
+        SongMeta(
+            file = File(path).name,
+            title = title,
+            artist = artist,
+            album = album,
+            year = year,
+            durationSec = durationSec,
+            dateDownload = null,
+            hasCover = hasCover
+        )
+
+    private fun SongMeta.toCacheEntity(path: String, lastModified: Long, length: Long) =
+        com.musicplayer.android.data.local.MetadataCacheEntity(
+            path = path,
+            lastModified = lastModified,
+            fileLength = length,
+            title = title,
+            artist = artist,
+            album = album,
+            year = year,
+            durationSec = durationSec,
+            hasCover = hasCover
+        )
     private val refreshMutex = Mutex()
     private var lastRefreshElapsed = 0L
     private var lastRefreshDir: String? = null
@@ -88,28 +120,77 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
             val files = outDir.listFiles { f ->
                 f.isFile && f.extension.equals("mp3", ignoreCase = true)
             }?.sortedBy { it.name } ?: emptyList()
-            val dates = db.songDao().getAll().associate { it.file to it.dateDownload }
-            val fresh = files.map { f ->
-                val lm = f.lastModified()
-                val len = f.length()
-                val cached = synchronized(metaCache) { metaCache[f.absolutePath] }
-                if (cached != null && cached.lastModified == lm && cached.length == len) {
-                    cached.meta.copy(dateDownload = dates[f.name])
-                } else {
-                    val m = readMeta(f).copy(dateDownload = dates[f.name])
-                    // Cache without the DB date (it can change w/o file change).
-                    synchronized(metaCache) { metaCache[f.absolutePath] = CacheEntry(lm, len, m.copy(dateDownload = null)) }
-                    m
+            val prefix = outDir.absolutePath
+            // Hydrate the in-memory cache from Room once per scan so unchanged
+            // files never open MediaMetadataRetriever again after a restart.
+            val persisted = try {
+                metaCacheDao.getAll().associateBy { it.path }
+            } catch (e: Exception) {
+                Log.w(TAG, "metadata cache read failed: ${e.message}")
+                emptyMap()
+            }
+            synchronized(metaCache) {
+                persisted.forEach { (path, entry) ->
+                    if (path.startsWith(prefix) && !metaCache.containsKey(path)) {
+                        metaCache[path] = CacheEntry(
+                            entry.lastModified,
+                            entry.fileLength,
+                            entry.toSongMeta()
+                        )
+                    }
                 }
             }
+            val dates = db.songDao().getAll().associate { it.file to it.dateDownload }
+            // First scan after install/migration still has to open every file.
+            // A small worker pool keeps a large library from being serialized
+            // behind one MediaMetadataRetriever at a time.
+            val gate = Semaphore(PARALLEL_METADATA_READS)
+            val scanned: List<Pair<SongMeta, MetadataCacheEntity?>> = coroutineScope {
+                files.map { f ->
+                    async(Dispatchers.IO) {
+                        gate.withPermit {
+                            val lm = f.lastModified()
+                            val len = f.length()
+                            val cached = synchronized(metaCache) { metaCache[f.absolutePath] }
+                            if (cached != null && cached.lastModified == lm && cached.length == len) {
+                                cached.meta.copy(dateDownload = dates[f.name]) to null
+                            } else {
+                                val m = readMeta(f).copy(dateDownload = dates[f.name])
+                                // Cache without the DB date (it can change w/o file change).
+                                val metaOnly = m.copy(dateDownload = null)
+                                synchronized(metaCache) {
+                                    metaCache[f.absolutePath] = CacheEntry(lm, len, metaOnly)
+                                }
+                                m to metaOnly.toCacheEntity(f.absolutePath, lm, len)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+            val fresh = scanned.map { it.first }
+            val updates = scanned.mapNotNull { it.second }
             val liveKeys = fresh.map { File(outDir, it.file).absolutePath }.toSet()
+            try {
+                if (updates.isNotEmpty()) metaCacheDao.putAll(updates)
+                val stale = persisted.values
+                    .filter { it.path.startsWith(prefix) && it.path !in liveKeys }
+                    .map { it.path }
+                stale.chunked(500).forEach { metaCacheDao.deletePaths(it) }
+            } catch (e: Exception) {
+                Log.w(TAG, "metadata cache write failed: ${e.message}")
+            }
             synchronized(metaCache) {
                 // Only evict THIS library's stale keys (never another dir's).
-                metaCache.keys.retainAll { k -> !k.startsWith(outDir.absolutePath) || k in liveKeys }
+                metaCache.keys.retainAll { k -> !k.startsWith(prefix) || k in liveKeys }
             }
             _library.value = fresh
             lastRefreshElapsed = SystemClock.elapsedRealtime()
-            lastRefreshDir = outDir.absolutePath
+            lastRefreshDir = prefix
+            Log.i(
+                TAG,
+                "refreshLibrary: ${fresh.size} files, ${updates.size} parsed, " +
+                    "${SystemClock.elapsedRealtime() - startedAt} ms"
+            )
         }
     }
 
@@ -175,7 +256,6 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
         var album = "Unknown"
         var year = "Unknown"
         var durationSec = 0L
-        var hasCover = false
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(file.absolutePath)
@@ -184,7 +264,8 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }?.let { album = it }
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.takeIf { it.isNotBlank() }?.let { year = it }
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationSec = it / 1000 }
-            hasCover = retriever.embeddedPicture != null
+            // Cover existence is resolved lazily by coverArtFor(); reading
+            // embeddedPicture here decoded full artwork for every file.
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load metadata for ${file.name}: ${e.message}")
         } finally {
@@ -194,7 +275,16 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
             } catch (_: Exception) {
             }
         }
-        return SongMeta(file.name, title, artist, album, year, durationSec, dateDownload = null, hasCover)
+        return SongMeta(
+            file.name,
+            title,
+            artist,
+            album,
+            year,
+            durationSec,
+            dateDownload = null,
+            hasCover = false
+        )
     }
 
     /** Embedded picture bytes for a row (cached); null when absent/unreadable. */
@@ -450,5 +540,6 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
     companion object {
         private const val TAG = "MetadataRepository"
         const val REFRESH_TTL_MS = 30_000L
+        private const val PARALLEL_METADATA_READS = 4
     }
 }
