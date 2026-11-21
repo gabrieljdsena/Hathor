@@ -14,8 +14,9 @@ public sealed class DiscoveryOptions
     public double ArtistHalfLifeDays { get; set; } = 60;
     // Completion/skip telemetry window used to weight the taste profile.
     public int PlaybackWindowDays { get; set; } = 90;
-    // Clients that do not send Playback_Events (desktop/mobile) get quality
-    // inferred from Music_History start-to-start gaps; explicit events win.
+    // Clients that do not send Playback_Events (legacy plays, or a client
+    // that has not reached the server yet) get quality inferred from
+    // Music_History start-to-start gaps; explicit events win.
     public bool InferPlaybackQuality { get; set; } = true;
 
     // Candidate generation. MusicBrainz is capped at ~1 request/second, so

@@ -81,6 +81,12 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     // Dedupes double auto-advances (completion callback + monitor backup)
     // from the same track index.
     private var autoIndexClaim: Int = -1
+    // True while a replacement MediaPlayer is preparing: the old player may
+    // already be released, so ticker/telemetry work must wait for the new
+    // player to become current.
+    private var switchingTrack: Boolean = false
+    // Invalidates an in-flight prepare when a newer play/restore starts.
+    private var prepareGen: Int = 0
     // Wall-clock play-time base for end guards (desktop last_play_time).
     private var trackStartWallMs: Long = 0L
     private var startOffsetMs: Int = 0
@@ -99,6 +105,12 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
 
     /** Fired before any main-queue track starts; used to stop previews. */
     var onPlaybackStarting: (() -> Unit)? = null
+
+    /**
+     * Optional Discover telemetry observer. Playback remains authoritative:
+     * a missing or slow observer must never affect local audio.
+     */
+    var playbackObserver: PlaybackObserver? = null
 
     private val _queueFlow = MutableStateFlow<List<File>>(emptyList())
     val queueFlow: StateFlow<List<File>> = _queueFlow.asStateFlow()
@@ -495,6 +507,9 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     }
 
     fun release() {
+        notifyPlaybackStopped()
+        switchingTrack = false
+        prepareGen++
         stopTicker()
         cancelCrossfade()
         try {
@@ -504,6 +519,28 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
         player = null
         _playing.value = false
+    }
+
+    /** Flush the open segment when the foreground service goes away. */
+    fun flushPlaybackTelemetry() = notifyPlaybackStopped()
+
+    private fun notifyPlaybackStopped() {
+        try {
+            playbackObserver?.onPlaybackStopped()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun notifyPlaybackTick(file: File, positionMs: Int, durationMs: Int) {
+        try {
+            playbackObserver?.onPlaybackTick(
+                file = file,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                isPodcast = isPodcastFile?.invoke(file) == true
+            )
+        } catch (_: Exception) {
+        }
     }
 
     /**
@@ -528,6 +565,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         cancelCrossfade()
         if (queue.isEmpty()) return
         if (!manual && repeatOne) {
+            notifyPlaybackStopped()
             try {
                 player?.seekTo(0)
                 stampStart(0)
@@ -541,6 +579,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
         val ni = index + 1
         if (ni >= queue.size) {
+            notifyPlaybackStopped()
             try {
                 player?.pause()
                 player?.seekTo(0)
@@ -569,6 +608,9 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
 
     private fun playAt(i: Int) {
         val file = queue.getOrNull(i) ?: return
+        val prepare = ++prepareGen
+        notifyPlaybackStopped()
+        switchingTrack = true
         onPlaybackStarting?.invoke()
         cancelCrossfade()
         setIndex(i)
@@ -585,12 +627,22 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                 mp.prepare()
                 mp.setOnCompletionListener { guardedOnCompletion(it) }
                 withContext(Dispatchers.Main) {
-                    // A manual action during prepare wins: drop this instance.
+                    // A newer play/restore wins; release this stale instance.
+                    if (prepare != prepareGen) {
+                        try {
+                            mp.release()
+                        } catch (_: Exception) {
+                        }
+                        return@withContext
+                    }
                     if (index != i) {
                         try {
                             mp.release()
                         } catch (_: Exception) {
                         }
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
                         return@withContext
                     }
                     player = mp
@@ -612,13 +664,20 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                         }
                     }
                     _playing.value = true
+                    switchingTrack = false
                     startTicker()
                     onTrackChanged?.invoke(file.name)
                     refreshChapters(file, seekFirst = pending == null)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "play failed: ${file.name}", e)
-                withContext(Dispatchers.Main) { _playing.value = false }
+                withContext(Dispatchers.Main) {
+                    if (prepare == prepareGen) {
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
+                    }
+                }
             }
         }
     }
@@ -626,6 +685,9 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
     /** Load a track without starting it (launch restore path). */
     private fun prepareAt(i: Int) {
         val file = queue.getOrNull(i) ?: return
+        val prepare = ++prepareGen
+        notifyPlaybackStopped()
+        switchingTrack = true
         cancelCrossfade()
         setIndex(i)
         scope.launch(Dispatchers.IO) {
@@ -640,11 +702,21 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                 mp.prepare()
                 mp.setOnCompletionListener { guardedOnCompletion(it) }
                 withContext(Dispatchers.Main) {
+                    if (prepare != prepareGen) {
+                        try {
+                            mp.release()
+                        } catch (_: Exception) {
+                        }
+                        return@withContext
+                    }
                     if (index != i) {
                         try {
                             mp.release()
                         } catch (_: Exception) {
                         }
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
                         return@withContext
                     }
                     player = mp
@@ -654,10 +726,18 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
                     mp.setVolume(effectiveVolume(), effectiveVolume())
                     stampStart(0)
                     _playing.value = false
+                    switchingTrack = false
                     refreshChapters(file, seekFirst = false)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "prepare failed: ${file.name}", e)
+                withContext(Dispatchers.Main) {
+                    if (prepare == prepareGen) {
+                        switchingTrack = false
+                        _playing.value = false
+                        stopTicker()
+                    }
+                }
             }
         }
     }
@@ -844,6 +924,7 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             } catch (_: Exception) {
             }
             releaseQuiet(old)
+            notifyPlaybackStopped()
             _current.value = next
             val ni = queue.indexOfFirst { it.absolutePath == next.absolutePath }
             setIndex(if (ni >= 0) ni else index + 1)
@@ -929,10 +1010,18 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
             while (isActive) {
                 try {
                     val p = player
-                    if (p != null && _playing.value) {
+                    if (!switchingTrack && p != null && _playing.value) {
                         val pos = try { p.currentPosition } catch (_: Exception) { -1 }
                         if (pos >= 0) _positionMs.value = pos
                         val dur = try { p.duration } catch (_: Exception) { 0 }
+                        val file = _current.value
+                        if (file != null) {
+                            notifyPlaybackTick(
+                                file,
+                                if (pos >= 0) pos else _positionMs.value,
+                                dur
+                            )
+                        }
                         if (dur > 0 && pos >= 0) {
                             if (!rampAlive() && isRamping()) {
                                 // Orphaned ramp can never wedge the handoff.

@@ -78,7 +78,10 @@ class DatabaseManager:
         """Record a deletion so the next manual push can remove the row on the remote DB."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("INSERT INTO Sync_Deletions (table_name, row_key) VALUES (?, ?)", (table_name, str(row_key)))
+                conn.execute(
+                    "INSERT INTO Sync_Deletions (table_name, row_key) VALUES (?, ?)",
+                    (table_name, str(row_key)),
+                )
         except Exception as e:
             print(f" [Python] Error recording deletion: {str(e)}")
 
@@ -189,10 +192,17 @@ class DatabaseManager:
     def assign_podcast_tag(self, file, tag_id):
         """Assign a tag to one episode (INSERT OR IGNORE)."""
         try:
+            key = f"{int(tag_id)}:{file}"
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO Podcast_Tag_Links (podcast_file, tag_id) VALUES (?, ?)",
                     (file, tag_id),
+                )
+                # Re-assigning cancels a pending unassign tombstone.
+                conn.execute(
+                    "DELETE FROM Sync_Deletions "
+                    "WHERE lower(table_name) = 'podcast_tag_links' AND row_key = ?",
+                    (key,),
                 )
             return True
         except Exception as e:
@@ -202,10 +212,23 @@ class DatabaseManager:
     def unassign_podcast_tag(self, file, tag_id):
         """Remove one episode's tag assignment."""
         try:
+            key = f"{int(tag_id)}:{file}"
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "DELETE FROM Podcast_Tag_Links WHERE podcast_file = ? AND tag_id = ?",
                     (file, tag_id),
+                )
+                # Hard link deletes need a tombstone so Push can propagate
+                # the unassign to the server and other devices. Replace any
+                # older tombstone for this key with a fresh timestamp.
+                conn.execute(
+                    "DELETE FROM Sync_Deletions "
+                    "WHERE lower(table_name) = 'podcast_tag_links' AND row_key = ?",
+                    (key,),
+                )
+                conn.execute(
+                    "INSERT INTO Sync_Deletions (table_name, row_key) VALUES (?, ?)",
+                    ("podcast_tag_links", key),
                 )
             return True
         except Exception as e:
@@ -553,7 +576,7 @@ class DatabaseManager:
         songs.sort(key=lambda s: ((s.get('Artist') or '').lower(), (s.get('Title') or '').lower()))
         return songs
 
-    def get_download_history(self, page=1, limit=10):
+    def get_download_history(self, page=1, limit=10, include_cover=True):
         try:
             import math
             page = max(int(page), 1)
@@ -582,7 +605,7 @@ class DatabaseManager:
             history_songs = []
             for file_name, date_download in page_rows:
                 file_path = os.path.join(settings.path, file_name)
-                song_data = self.api.metadata.get_song_metadata(file_path, file_name, include_cover=True)
+                song_data = self.api.metadata.get_song_metadata(file_path, file_name, include_cover=include_cover)
                 song_data['DateDownload'] = date_download.replace(' ', 'T') + 'Z' if date_download else None
                 song_data['DownloadedLink'] = link_lookup.get(file_name) or ''
                 history_songs.append(song_data)
@@ -591,7 +614,7 @@ class DatabaseManager:
             print(f" [Python] Error loading download history: {str(e)}")
             return {"items": [], "total_pages": 1, "current_page": 1}
 
-    def get_played_history(self, page=1, limit=10):
+    def get_played_history(self, page=1, limit=10, include_cover=True):
         try:
             import math
             page = max(int(page), 1)
@@ -615,7 +638,7 @@ class DatabaseManager:
             history_songs = []
             for file_name, date_played in page_rows:
                 file_path = os.path.join(settings.path, file_name)
-                song_data = self.api.metadata.get_song_metadata(file_path, file_name, include_cover=True)
+                song_data = self.api.metadata.get_song_metadata(file_path, file_name, include_cover=include_cover)
                 song_data['DatePlayed'] = date_played.replace(' ', 'T') + 'Z' if date_played else None
                 history_songs.append(song_data)
             return {"items": history_songs, "total_pages": total_pages, "current_page": page}

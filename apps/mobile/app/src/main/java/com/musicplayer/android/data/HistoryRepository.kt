@@ -1,6 +1,7 @@
 package com.musicplayer.android.data
 
 import android.content.Context
+import com.musicplayer.android.data.local.HistorySyncQueueEntity
 import com.musicplayer.android.data.local.MusicHistoryEntity
 import com.musicplayer.android.data.local.AppDatabase
 import kotlinx.coroutines.Dispatchers
@@ -52,9 +53,12 @@ class HistoryRepository(context: Context, private val metadata: MetadataReposito
     /** Called when playback starts a new file (desktop logs Music_History on play). */
     suspend fun recordPlayed(file: String) = withContext(Dispatchers.IO) {
         try {
-            db.playlistDao().insertMusicHistory(
+            val historyId = db.playlistDao().insertMusicHistory(
                 MusicHistoryEntity(songFile = file, datePlayed = STAMP.format(Date()))
             )
+            if (historyId > 0) {
+                db.historySyncQueueDao().enqueue(HistorySyncQueueEntity(historyId))
+            }
         } catch (_: Exception) {
         }
     }

@@ -30,11 +30,13 @@ class PodcastRepository(
     context: Context,
     private val engine: DownloadEngine,
     private val metadata: MetadataRepository,
+    database: AppDatabase? = null,
 ) {
     data class PodcastTag(val id: Long, val name: String, val episodeCount: Int)
 
     private val appCtx = context.applicationContext
-    private val db by lazy { AppDatabase.get(appCtx) }
+    private val injectedDb = database
+    private val db by lazy { injectedDb ?: AppDatabase.get(appCtx) }
 
     private val _episodes = MutableStateFlow<List<SongMeta>>(emptyList())
     val episodes: StateFlow<List<SongMeta>> = _episodes.asStateFlow()
@@ -241,9 +243,13 @@ class PodcastRepository(
         }
     }
 
+    private fun tagLinkKey(file: String, tagId: Long) = "$tagId:$file"
+
     suspend fun assignTag(file: String, tagId: Long): Boolean {
         return try {
             db.podcastTagLinkDao().insertLinkIgnore(PodcastTagLinkEntity(podcastFile = file, tagId = tagId))
+            // Re-assigning cancels a pending unassign tombstone.
+            db.syncDeletionDao().delete("podcast_tag_links", tagLinkKey(file, tagId))
             refresh()
             true
         } catch (e: Exception) {
@@ -254,7 +260,14 @@ class PodcastRepository(
 
     suspend fun unassignTag(file: String, tagId: Long): Boolean {
         return try {
+            val key = tagLinkKey(file, tagId)
             db.podcastTagLinkDao().deleteLink(file, tagId)
+            // Hard link deletes need a tombstone so Push can propagate
+            // the unassign to the server and other devices.
+            db.syncDeletionDao().delete("podcast_tag_links", key)
+            db.syncDeletionDao().insert(
+                SyncDeletionEntity(tableName = "podcast_tag_links", rowKey = key),
+            )
             refresh()
             true
         } catch (e: Exception) {

@@ -21,6 +21,7 @@ hathor.log
 
 # Python (desktop)
 __pycache__/
+.pytest_cache/
 dist/
 build/
 ffmpeg/
@@ -46,6 +47,7 @@ artifacts/
 
 # Android (apps/mobile) — never commit secrets or build outputs
 local.properties
+keystore.properties
 *.jks
 *.keystore
 *.p12

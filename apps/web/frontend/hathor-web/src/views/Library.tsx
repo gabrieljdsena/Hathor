@@ -3,12 +3,13 @@ import { Link, useParams } from 'react-router-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { usePlayer } from '../store/player'
-import LibraryTable, { resolveSong, type SortKey } from '../components/LibraryTable'
+import LibraryTable, { resolveSong, SONG_SORT_KEYS } from '../components/LibraryTable'
 import { ControlButton, PlayCircleButton } from '../components/ui/buttons'
 import ViewHeader from '../components/ui/ViewHeader'
 import SearchInput, { useDebouncedValue } from '../components/ui/SearchInput'
 import { fuzzyMatch } from '../utils/fuzzy'
 import { EmptyState, LoadingState } from '../components/ui/states'
+import { SORT_STORAGE, usePersistedSort } from '../hooks/usePersistedSort'
 import { SONGS_PAGE_SIZE } from './Songs'
 
 function shuffleList(list: string[]): string[] {
@@ -154,8 +155,10 @@ export function ArtistDetail() {
   const playSongByFiles = usePlayer((s) => s.playSongByFiles)
   const [search, setSearch] = useState('')
   const debounced = useDebouncedValue(search)
-  const [sort, setSort] = useState<SortKey | null>(null)
-  const [dir, setDir] = useState<'asc' | 'desc'>('asc')
+  const { sort, dir, setSort } = usePersistedSort(
+    SORT_STORAGE.artist,
+    SONG_SORT_KEYS,
+  )
   const { data: total } = useQuery({
     queryKey: ['artist-songs', 'count', artist, debounced],
     queryFn: () => api.artistSongCount(artist, debounced || undefined),
@@ -232,10 +235,7 @@ export function ArtistDetail() {
         onSearchChange={setSearch}
         sort={sort}
         dir={dir}
-        onSortChange={(s, d) => {
-          setSort(s)
-          setDir(d)
-        }}
+        onSortChange={setSort}
         getFiles={getFiles}
         loadingLabel="Loading artist…"
         emptyTitle="No songs by this artist"
@@ -297,8 +297,10 @@ export function AlbumDetail() {
   const playSongByFiles = usePlayer((s) => s.playSongByFiles)
   const [search, setSearch] = useState('')
   const debounced = useDebouncedValue(search)
-  const [sort, setSort] = useState<SortKey | null>(null)
-  const [dir, setDir] = useState<'asc' | 'desc'>('asc')
+  const { sort, dir, setSort } = usePersistedSort(
+    SORT_STORAGE.album,
+    SONG_SORT_KEYS,
+  )
   const { data: total } = useQuery({
     queryKey: ['album-songs', 'count', album, debounced],
     queryFn: () => api.albumSongCount(album, debounced || undefined),
@@ -380,10 +382,7 @@ export function AlbumDetail() {
         onSearchChange={setSearch}
         sort={sort}
         dir={dir}
-        onSortChange={(s, d) => {
-          setSort(s)
-          setDir(d)
-        }}
+        onSortChange={setSort}
         getFiles={getFiles}
         loadingLabel="Loading album…"
         emptyTitle="No songs on this album"

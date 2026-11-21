@@ -117,6 +117,47 @@ class MusicDownloader:
             print(f" [Python] Search Error: {str(e)}")
             return []
 
+    def resolve_preview_url(self, search_query):
+        """Resolve a direct audio URL for a preview without downloading.
+
+        Used as the offline/local fallback when the Hathor server's YouTube
+        preview endpoint is unavailable. Returns ``{id, audioUrl}`` or None.
+        """
+        if not search_query:
+            return None
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'format': 'bestaudio/best',
+        }
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"ytsearch1:{search_query}", download=False)
+                if not info:
+                    return None
+                if info.get('entries'):
+                    info = info['entries'][0] or {}
+                video_id = info.get('id')
+                direct = info.get('url')
+                if direct:
+                    return {'id': video_id, 'audioUrl': direct}
+                formats = info.get('formats') or []
+                audio = [
+                    f for f in formats
+                    if f.get('url') and f.get('acodec') not in (None, 'none')
+                ]
+                if not audio:
+                    return None
+                best = max(audio, key=lambda f: (
+                    f.get('abr') or f.get('tbr') or 0,
+                    f.get('asr') or 0,
+                ))
+                return {'id': video_id, 'audioUrl': best.get('url')}
+        except Exception as e:
+            print(f" [Python] Local preview resolve failed: {e}")
+            return None
+
     @staticmethod
     def _safe_filename(name):
         """Strip characters that are invalid in Windows filenames."""

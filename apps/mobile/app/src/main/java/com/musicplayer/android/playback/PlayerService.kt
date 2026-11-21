@@ -114,6 +114,7 @@ class PlayerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        player.flushPlaybackTelemetry()
         session?.release()
         session = null
         scope.cancel()

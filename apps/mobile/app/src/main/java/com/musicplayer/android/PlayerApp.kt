@@ -7,8 +7,10 @@ import com.musicplayer.android.data.MetadataRepository
 import com.musicplayer.android.data.QueueRepository
 import com.musicplayer.android.data.SyncRepository
 import com.musicplayer.android.data.api.SyncConfig
+import com.musicplayer.android.data.update.UpdateRepository
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.AiDjController
+import com.musicplayer.android.playback.PlaybackTelemetry
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.yausername.ffmpeg.FFmpeg
@@ -40,6 +42,8 @@ class PlayerApp : Application() {
         private set
     lateinit var player: PlayerManager
         private set
+    // Discover playback-quality telemetry (one segment per music track).
+    private lateinit var playbackTelemetry: PlaybackTelemetry
     // App-scoped so Vohithe keeps talking across navigation/screen rotation.
     lateinit var aiDjController: AiDjController
         private set
@@ -50,6 +54,9 @@ class PlayerApp : Application() {
     lateinit var queueRepo: QueueRepository
         private set
     lateinit var syncRepo: SyncRepository
+        private set
+    /** App-scoped sideload updater (downloads survive activity recreation). */
+    lateinit var updateRepo: UpdateRepository
         private set
 
     /**
@@ -82,6 +89,7 @@ class PlayerApp : Application() {
         super.onCreate()
         instance = this
         SyncConfig.init(this)
+        updateRepo = UpdateRepository(this)
         musicDir = java.io.File(
             getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC),
             "AndroidPlayer"
@@ -94,6 +102,15 @@ class PlayerApp : Application() {
         if (!podcastsDir.exists()) podcastsDir.mkdirs()
         downloadEngine = DownloadEngine(this)
         player = PlayerManager(this) { downloadEngine.outputDir() }
+        player.isPodcastFile = { f ->
+            try {
+                f.canonicalPath.startsWith(podcastsDir.canonicalPath)
+            } catch (_: Exception) {
+                false
+            }
+        }
+        playbackTelemetry = PlaybackTelemetry()
+        player.playbackObserver = playbackTelemetry
         previewPlayer = PreviewPlayer(this)
         aiDjController = AiDjController(this, player) { name ->
             java.io.File(downloadEngine.outputDir(), name)
@@ -152,6 +169,7 @@ class PlayerApp : Application() {
             }
         )
         syncRepo = SyncRepository(this, downloadEngine)
+        syncRepo.scheduleHistoryPush()
     }
 
     sealed interface EngineState {

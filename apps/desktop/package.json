@@ -14,7 +14,8 @@
     "tailwindcss": "^4.3.0"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/js/discover-preview.test.js && node tests/js/ai-dj-voice.test.js && node tests/js/fuzzy.test.js && node tests/js/download-batch.test.js && node tests/js/chunked-list.test.js",
+    "test:js": "node tests/js/discover-preview.test.js && node tests/js/ai-dj-voice.test.js && node tests/js/fuzzy.test.js && node tests/js/download-batch.test.js && node tests/js/chunked-list.test.js"
   },
   "keywords": [],
   "author": "",

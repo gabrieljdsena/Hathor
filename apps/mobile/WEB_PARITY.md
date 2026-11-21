@@ -21,7 +21,9 @@ files, acceptance criteria and a suggested phase. Check items off as they land.
 AI DJ are consumed through the Hathor Web API with a runtime server URL + API
 key configured in Settings (no mobile login, no server logic on-device).
 Mobile's key needs `library:read` + `library:write` for sync/Discover, and
-`player:read` + `player:control` for AI DJ / cross-device playback.
+`player:read` + `player:control` for AI DJ / cross-device playback / playback
+telemetry. Playback completion/skip segments are posted automatically to
+`/player/playback-events`; they never block local playback.
 
 ---
 
@@ -396,6 +398,36 @@ every feature below requires rebuilding the APK.
   - **Decision:** no mobile login. The app uses a runtime `hth_` API key entered
     in Settings; account/API-key management stays in the web UI.
 
+- [x] **P4.6 — Playback telemetry (D19)**
+  - Report one segment per non-podcast music track to
+    `POST /player/playback-events` with a client-generated id, position,
+    duration and completed/skipped flags.
+  - Close a segment on track change, repeat, queue exhaustion and service
+    shutdown; keep pause/resume as one segment.
+  - Best-effort delivery only: a missing/offline Web API must never affect
+    local playback.
+  - **Done:** `PlaybackTelemetry` observes `PlayerManager` ticks and lifecycle
+    events; `PlaybackEventsApi` posts the same contract as web/desktop.
+    Podcasts are excluded. `PlaybackTelemetryTest` covers classification and
+    segment boundaries; `PlaybackEventsApiTest` covers the POST path, bearer
+    auth and JSON body.
+
+- [x] **P4.7 — Automatic Music_History sync**
+  - Add a durable `History_Sync_Queue` outbox (Room v10); enqueue the local
+    history id on every non-podcast play.
+  - Debounce and push only `MusicHistory` via `POST /sync/import`; clear rows
+    only after server acceptance, so offline/failed pushes retry on the next
+    play or app start.
+  - Dedupe pulled history by `(song_file, date_played)` and re-key a server id
+    that collides with a different local row.
+  - Keep the full Settings Push for catalog/files and clear only outbox rows
+    included in that snapshot.
+  - **Done:** `HistoryRepository` enqueues; `SyncRepository.pushPendingHistory`
+    flushes; `RemoteWriter.historyPayload` emits the scoped payload;
+    `RemoteSync` natural-key dedupe/re-key; `HistorySyncOutboxTest` covers the
+    queue, natural key and bounded manual-push clearing. Saving Web API
+    settings also triggers a pending flush.
+
 ---
 
 ## 3. Verification
@@ -420,6 +452,8 @@ Add tests alongside the feature:
 | Fuzzy search | table-driven Kotlin tests |
 | Lyrics | chapter key/offset parser tests; existing `SyncApiTest` |
 | Discover/AI DJ | JSON contract tests (Robolectric), state-machine tests |
+| Playback telemetry | segment classification/boundary unit tests; POST path/auth contract test |
+| History sync | outbox/enqueue/natural-key DAO tests; scoped import + clear against a fake server |
 | Runtime config | settings persistence + fake-server connection test |
 
 Manual smoke pass on BlueStacks: install the debug APK and exercise the new
@@ -480,3 +514,7 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **P4.4 — cross-device resume** | Pause pushes a spot to `/sync/playback`; Home shows a “Continue on …” card that restores queue + position. |
 | 2026-11-14 | **P4.5 — accounts** | Dropped by product decision: API-key entry only, no mobile login. |
 | 2026-11-14 | **Test runner** | `scripts/test.ps1` now tolerates Gradle/adb stderr warnings, so it no longer aborts on the SDK XML warning. |
+| 2026-11-16 | **P4.6 — playback telemetry** | Mobile posts one completion/skip segment per non-podcast track; pause/resume stays one segment, repeat/track change/queue end flush. `PlaybackTelemetryTest` + `PlaybackEventsApiTest` added. |
+| 2026-11-16 | **P4.7 — automatic history sync** | Durable history outbox + debounced scoped import; natural-key pull dedupe and id-collision re-key. `HistorySyncOutboxTest` added; Room v10 migration. |
+| 2026-11-16 | **Live pipeline validation** | Deployed server confirmed natural-key dedupe and desktop outbox push/clear; Settings Save now flushes pending history. |
+| 2026-11-16 | **Live mobile playback** | AVD: played a real MP3 from All Songs; server received the history row automatically, and Next sent a skipped playback event (insights 60→61). Instrumentation suite: 6/6 passed. |

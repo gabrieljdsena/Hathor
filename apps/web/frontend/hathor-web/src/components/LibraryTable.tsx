@@ -8,9 +8,17 @@ import Icon from './ui/icons'
 import SongMenu, { type SongMenuHandle } from './ui/SongMenu'
 import SongRow, { SONG_ROW_GRID } from './ui/SongRow'
 import SortableHeader, { type SortColumn } from './ui/SortableHeader'
+import { usePersistedSort, SORT_STORAGE } from '../hooks/usePersistedSort'
 import { EmptyState, LoadingState } from './ui/states'
 
 export type SortKey = 'Title' | 'Album' | 'Duration' | 'DateDownload'
+
+export const SONG_SORT_KEYS: readonly SortKey[] = [
+  'Title',
+  'Album',
+  'Duration',
+  'DateDownload',
+]
 
 const COLUMNS: Array<SortColumn<SortKey>> = [
   { key: 'Title', label: 'Song' },
@@ -109,8 +117,10 @@ export default function LibraryTable(props: Props) {
   const navigate = useNavigate()
   const [legacySearch, setLegacySearch] = useState('')
   const legacyDebounced = useDebouncedValue(legacySearch)
-  const [legacySort, setLegacySort] = useState<SortKey | null>(null)
-  const [legacyDir, setLegacyDir] = useState<'asc' | 'desc'>('asc')
+  const legacy = usePersistedSort(
+    lp ? SORT_STORAGE.mix : null,
+    SONG_SORT_KEYS,
+  )
   const menuRefs = useRef(new Map<string, SongMenuHandle | null>())
   const openMenu = (file: string, x: number, y: number) =>
     menuRefs.current.get(file)?.openAt(x, y)
@@ -124,11 +134,11 @@ export default function LibraryTable(props: Props) {
     const list = (lp.songs ?? []).filter(
       (s) => legacyDebounced.trim().length === 0 || fuzzyFields([s.title, s.artist, s.album], legacyDebounced),
     )
-    if (!legacySort) return list
-    const d = legacyDir === 'asc' ? 1 : -1
+    if (!legacy.sort) return list
+    const d = legacy.dir === 'asc' ? 1 : -1
     return [...list].sort((a, b) => {
-      if (legacySort === 'Duration') return (a.duration - b.duration) * d
-      if (legacySort === 'DateDownload') {
+      if (legacy.sort === 'Duration') return (a.duration - b.duration) * d
+      if (legacy.sort === 'DateDownload') {
         // ISO timestamps sort lexicographically; missing dates go last.
         const av = a.dateDownload ?? ''
         const bv = b.dateDownload ?? ''
@@ -136,11 +146,11 @@ export default function LibraryTable(props: Props) {
         if (!bv) return -1
         return av < bv ? -d : av > bv ? d : 0
       }
-      const av = (a[legacySort === 'Title' ? 'title' : 'album'] ?? '').toLowerCase()
-      const bv = (b[legacySort === 'Title' ? 'title' : 'album'] ?? '').toLowerCase()
+      const av = (a[legacy.sort === 'Title' ? 'title' : 'album'] ?? '').toLowerCase()
+      const bv = (b[legacy.sort === 'Title' ? 'title' : 'album'] ?? '').toLowerCase()
       return av < bv ? -d : av > bv ? d : 0
     })
-  }, [lp, legacyDebounced, legacySort, legacyDir])
+  }, [lp, legacyDebounced, legacy.sort, legacy.dir])
 
   // Pages identity comes from React Query (stable across parent renders);
   // key the memo on it, not on the props object (new identity each render).
@@ -171,7 +181,7 @@ export default function LibraryTable(props: Props) {
   // must NOT reset it (that would collapse the list on every fetch).
   const resetKey = pp
     ? `${pp.search}|${pp.sort}|${pp.dir}`
-    : `${legacyDebounced}|${legacySort}|${legacyDir}`
+    : `${legacyDebounced}|${legacy.sort}|${legacy.dir}`
   useEffect(() => {
     setRenderLimit(PAGE)
   }, [resetKey])
@@ -261,14 +271,14 @@ export default function LibraryTable(props: Props) {
       else pp.onSortChange(key, 'asc')
       return
     }
-    if (legacySort === key) setLegacyDir(legacyDir === 'asc' ? 'desc' : 'asc')
-    else {
-      setLegacySort(key)
-      setLegacyDir('asc')
+    if (legacy.sort === key) {
+      legacy.setSort(key, legacy.dir === 'asc' ? 'desc' : 'asc')
+    } else {
+      legacy.setSort(key, 'asc')
     }
   }
-  const sortValue = pp ? pp.sort : legacySort
-  const dirValue = pp ? pp.dir : legacyDir
+  const sortValue = pp ? pp.sort : legacy.sort
+  const dirValue = pp ? pp.dir : legacy.dir
   const total = pp ? pp.total : flattened.length
 
   const onPlayRow = (song: Song) => {

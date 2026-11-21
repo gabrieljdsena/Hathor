@@ -3,6 +3,8 @@ package com.musicplayer.android.data.api
 import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.musicplayer.android.data.local.MusicHistoryEntity
+import com.musicplayer.android.data.remote.RemoteWriter
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -178,5 +180,44 @@ class ApiContractTest {
         assertEquals("playlist", spot.queueSourceType)
         assertEquals("7", spot.queueSourceId)
         assertNull(PlaybackApi.parseSpot("null"))
+    }
+
+    @Test
+    fun `maps playback telemetry to the server contract`() {
+        val event = PlaybackEvent(
+            segmentId = "segment-1",
+            file = "a.mp3",
+            positionSec = 199.5,
+            durationSec = 200.0,
+            completed = true,
+            skipped = false,
+            startedAtUtc = "2026-11-15T12:00:00Z"
+        )
+        val json = event.toJson()
+
+        assertEquals("segment-1", json.getString("SegmentId"))
+        assertEquals("a.mp3", json.getString("File"))
+        assertEquals(199.5, json.getDouble("PositionSec"), 0.0001)
+        assertEquals(200.0, json.getDouble("DurationSec"), 0.0001)
+        assertTrue(json.getBoolean("Completed"))
+        assertFalse(json.getBoolean("Skipped"))
+        assertEquals("2026-11-15T12:00:00Z", json.getString("StartedAtUtc"))
+    }
+
+    @Test
+    fun `history outbox payload uses the sync import shape`() {
+        val json = RemoteWriter.historyPayload(
+            listOf(
+                MusicHistoryEntity(
+                    id = 9,
+                    songFile = "a.mp3",
+                    datePlayed = "2026-11-15 12:00:00",
+                )
+            )
+        )
+        val row = json.getJSONArray("MusicHistory").getJSONObject(0)
+        assertEquals(9L, row.getLong("Id"))
+        assertEquals("a.mp3", row.getString("SongFile"))
+        assertEquals("2026-11-15T12:00:00Z", row.getString("DatePlayedUtc"))
     }
 }

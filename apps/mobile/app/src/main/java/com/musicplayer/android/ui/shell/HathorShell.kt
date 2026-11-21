@@ -129,7 +129,7 @@ fun HathorShell(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Brand tile: the Ht app mark on zinc-950, like the launcher icon.
+                // Brand tile: the HT app mark on zinc-950, like the launcher icon.
                 Box(
                     modifier = Modifier
                         .size(44.dp)

@@ -31,6 +31,9 @@ Delta contract (server must speak this; see
         "daily_mix": [{mix_date, song_files}],
         "deletions": [{table_name, row_key}] }
 
+Podcast tag-link tombstones use ``row_key = "<tagId>:<file>"`` (split on
+the first colon, so filenames may contain colons).
+
 Stdlib only (urllib) — no new pip dependency.
 
 Wire notes: the server speaks camelCase JSON (ASP.NET Core default) while
@@ -44,18 +47,22 @@ import json
 import logging
 import os
 import sqlite3
-import urllib.error
 import urllib.parse
-import urllib.request
 
-API_URL_ENV = "HATHOR_API_URL"
-API_KEY_ENV = "HATHOR_API_KEY"
+from contextlib import closing
+
+from .api_config import (
+    API_KEY_ENV,
+    API_URL_ENV,
+    get_api_config as _runtime_api_config,
+)
+from .hathor_api import HathorApi, HathorApiError
 
 _log = logging.getLogger("hathor.sync")
 
 NOT_CONFIGURED = (
-    "No sync server configured. "
-    f"Set {API_URL_ENV} (e.g. http://<server>:5051) and {API_KEY_ENV} in .env."
+    "No sync server configured. Open Settings -> Web API "
+    f"(or set {API_URL_ENV}/{API_KEY_ENV} in .env)."
 )
 SERVER_MISSING = (
     "Sync server does not speak the sync-file endpoints yet "
@@ -75,10 +82,9 @@ def sync_backend():
     return "unconfigured"
 
 
-def get_api_config():
-    url = (os.getenv(API_URL_ENV) or "").strip().rstrip("/")
-    key = (os.getenv(API_KEY_ENV) or "").strip()
-    return url, key
+def get_api_config(db_path=None):
+    """Runtime Settings pair first, .env fallback (kept for callers)."""
+    return _runtime_api_config(db_path)
 
 
 # server-field -> local-field per delta section (server sends camelCase;
@@ -143,7 +149,7 @@ AUDIO_DELETION_TABLES = frozenset({
     "songs", "playlists", "lyrics", "music_history", "playlist_history",
 })
 PODCAST_DELETION_TABLES = frozenset({
-    "podcasts", "podcast_tags", "podcast_chapters",
+    "podcasts", "podcast_tags", "podcast_tag_links", "podcast_chapters",
 })
 
 
@@ -300,6 +306,24 @@ def _iso(dt):
     return s
 
 
+def _local_stamp(dt):
+    """Normalize a local/server datetime to the SQLite history shape.
+
+    Server responses use ISO-8601 while local rows use
+    'YYYY-MM-DD HH:MM:SS'; comparing them raw creates duplicate history
+    rows after a server re-key. History dedupe is second-precision, matching
+    the client-generated values.
+    """
+    if not dt:
+        return None
+    s = str(dt).strip().replace("T", " ", 1)
+    if s.endswith("Z"):
+        s = s[:-1]
+    if len(s) < 19:
+        return s
+    return s[:19]
+
+
 def cursor_path(db_path, library="all"):
     """Each library keeps its own delta cursor so separate Push/Pull buttons
     never skip changes belonging to the other library."""
@@ -328,65 +352,53 @@ class ApiSyncClient:
     def __init__(self, db_path, timeout=30):
         self.db_path = db_path
         self.timeout = timeout
-        base_url, api_key = get_api_config()
+        base_url, api_key = get_api_config(db_path)
         if not base_url or not api_key:
             raise ApiSyncError(NOT_CONFIGURED)
+        self.api_base = base_url
         self.base = base_url + "/api/v1/sync"
         self.key = api_key
+        self.client = HathorApi(base_url, api_key, timeout=timeout)
+
+    def _sync_path(self, path):
+        return "/api/v1/sync" + path
 
     # -- transport ------------------------------------------------------
     def _request(self, method, path, payload=None, query=None):
-        url = self.base + path
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
-        data = None
-        headers = {
-            "Authorization": f"Bearer {self.key}",
-            "User-Agent": "hathor-desktop/1",
-            "Accept": "application/json",
-        }
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = resp.read()
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                raise ApiSyncError(
-                    "Sync server rejected the API key (401). Check "
-                    f"{API_KEY_ENV} — it needs library:read + library:write scope."
-                )
-            if e.code == 404:
-                raise ApiSyncError(SERVER_MISSING)
-            try:
-                detail = json.loads(e.read().decode("utf-8")).get("message")
-            except Exception:
-                detail = None
-            raise ApiSyncError(f"Sync server error ({e.code}): {detail or e.reason}")
-        except urllib.error.URLError as e:
-            raise ApiSyncError(
-                f"Cannot reach sync server at {self.base}. Is the server running? ({e.reason})"
+            return self.client.request(
+                method, self._sync_path(path), payload=payload, query=query
             )
-        try:
-            return json.loads(body.decode("utf-8")) if body else {}
-        except ValueError:
-            raise ApiSyncError("Sync server returned a non-JSON response.")
+        except HathorApiError as exc:
+            if exc.status == 401:
+                raise ApiSyncError(
+                    "Sync server rejected the API key (401). Check Settings -> "
+                    "Web API or the HATHOR_API_KEY value; the key needs "
+                    "library:read + library:write."
+                ) from exc
+            if exc.status == 404:
+                raise ApiSyncError(SERVER_MISSING) from exc
+            raise ApiSyncError(exc.message) from exc
 
     def get_delta(self, cursor):
         return self._request("GET", "/delta", query={"cursor": cursor} if cursor else {})
 
     # -- cross-device resume --------------------------------------------
-    def push_playback(self, device_id, device_label, file, position_secs, is_podcast):
+    def push_playback(self, device_id, device_label, file, position_secs, is_podcast,
+                      queue_files=None, queue_source=None):
         """Upsert this device's paused spot (server keeps one row per device)."""
-        return self._request("POST", "/playback", payload={
+        payload = {
             "deviceId": device_id,
             "deviceLabel": device_label,
             "file": file,
             "positionSec": max(0.0, float(position_secs or 0)),
             "isPodcast": bool(is_podcast),
-        })
+        }
+        if queue_files is not None:
+            payload["queueFiles"] = list(queue_files)[:200]
+        if queue_source is not None:
+            payload["queueSource"] = queue_source
+        return self._request("POST", "/playback", payload=payload)
 
     def get_latest_playback(self, device_id):
         """Newest paused spot from another device (server excludes ours)."""
@@ -487,6 +499,10 @@ class ApiSyncClient:
         _emit_progress(progress, library, "done", total, total, message=msg)
         return msg
 
+    def download_file(self, folder, filename, library="songs"):
+        """Public wrapper used by AI DJ to fill a missing batch track."""
+        return self._fetch_missing(folder, filename, library)
+
     def _fetch_missing(self, folder, filename, library="songs"):
         """Download one file if absent on disk. Returns True when fetched."""
         if not filename or "/" in filename or "\\" in filename:
@@ -495,49 +511,72 @@ class ApiSyncClient:
         if os.path.exists(dest):
             return False
         os.makedirs(folder, exist_ok=True)
-        tmp = dest + ".hathor-part"
         _log.info("download %s/%s", library, filename)
-        req = urllib.request.Request(
-            self.base + "/files/" + urllib.parse.quote(filename)
-            + "?" + urllib.parse.urlencode({"library": library}),
-            headers={
-                "Authorization": f"Bearer {self.key}",
-                "User-Agent": "hathor-desktop/1",
-            },
-            method="GET",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as f:
-                while True:
-                    chunk = resp.read(256 * 1024)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-        except urllib.error.HTTPError as e:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            if e.code == 404:
+            self.client.stream_to_file(
+                self._sync_path("/files/" + urllib.parse.quote(filename)),
+                dest,
+                query={"library": library},
+                timeout=120,
+            )
+        except HathorApiError as exc:
+            if exc.status == 404:
                 _log.warning("download %s/%s: server has no file",
                              library, filename)
-                raise ApiSyncError(SERVER_MISSING)
-            _log.error("download %s/%s failed: HTTP %s",
-                       library, filename, e.code)
-            raise ApiSyncError(f"File download failed ({e.code}): {filename}")
-        except urllib.error.URLError as e:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            _log.error("download %s/%s failed: %s", library, filename, e.reason)
-            raise ApiSyncError(f"File download failed: {e.reason}")
-        os.replace(tmp, dest)
+                raise ApiSyncError(SERVER_MISSING) from exc
+            _log.error("download %s/%s failed: %s", library, filename, exc)
+            raise ApiSyncError(f"File download failed: {exc.message}") from exc
         _log.info("downloaded %s/%s (%d bytes)", library, filename,
                   os.path.getsize(dest))
         return True
 
     # -- push -----------------------------------------------------------
+    def push_pending_history(self, limit=200):
+        """Push only queued Music_History rows (automatic play sync).
+
+        The outbox is cleared only after the server accepts the import, so a
+        failed/offline push retries the same rows on the next notify/startup.
+        Returns the number of rows accepted.
+        """
+        limit = max(1, int(limit or 200))
+        try:
+            with closing(sqlite3.connect(self.db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS History_Sync_Queue ("
+                    "history_id INTEGER PRIMARY KEY)"
+                )
+                conn.execute(
+                    "DELETE FROM History_Sync_Queue WHERE history_id NOT IN "
+                    "(SELECT id FROM Music_History)"
+                )
+                conn.commit()
+                rows = conn.execute(
+                    "SELECT h.id, h.song_file, h.date_played "
+                    "FROM History_Sync_Queue q "
+                    "JOIN Music_History h ON h.id = q.history_id "
+                    "ORDER BY h.id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return 0
+        if not rows:
+            return 0
+        payload = {
+            "MusicHistory": [
+                {"Id": row_id, "SongFile": song_file,
+                 "DatePlayedUtc": _iso(date_played)}
+                for row_id, song_file, date_played in rows
+            ]
+        }
+        self._request("POST", "/import", payload=payload)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                "DELETE FROM History_Sync_Queue WHERE history_id = ?",
+                [(row[0],) for row in rows],
+            )
+            conn.commit()
+        return len(rows)
+
     def push_once(self, library="all"):
         library = normalize_library(library)
         _log.info("push(%s) start", library)
@@ -548,6 +587,10 @@ class ApiSyncClient:
             return f"Error reading local DB: {e}"
         counts = {key: len(value) for key, value in payload.items()
                   if isinstance(value, list)}
+        history_max_id = max(
+            (row.get("Id") or 0 for row in payload.get("MusicHistory") or []),
+            default=0,
+        )
         _log.info("push(%s) payload rows: %s", library, counts)
         try:
             resp = self._request("POST", "/import", payload=payload)
@@ -592,6 +635,22 @@ class ApiSyncClient:
         except Exception as e:
             _log.exception("push(%s): clearing tombstones failed", library)
             return f"Push accepted but could not clear tombstones: {e}"
+        # The full audio push included every history row that existed when
+        # the payload was collected. Clear only those outbox entries; a play
+        # that happened during the upload keeps its newer row queued.
+        if library in ("all", "songs") and history_max_id:
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS History_Sync_Queue ("
+                        "history_id INTEGER PRIMARY KEY)"
+                    )
+                    conn.execute(
+                        "DELETE FROM History_Sync_Queue WHERE history_id <= ?",
+                        (history_max_id,),
+                    )
+            except sqlite3.OperationalError:
+                pass
         if library == "songs":
             msg = "Push complete: audios sent to server."
         elif library == "podcasts":
@@ -707,29 +766,20 @@ class ApiSyncClient:
                 break
         else:
             return False
-        with open(src, "rb") as f:
-            data = f.read()
-        _log.info("upload %s/%s (%d bytes)", library, filename, len(data))
-        req = urllib.request.Request(
-            self.base + "/files/" + urllib.parse.quote(filename)
-            + "?" + urllib.parse.urlencode({"library": library}),
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.key}",
-                "User-Agent": "hathor-desktop/1",
-                "Content-Type": "audio/mpeg",
-            },
-            method="PUT",
-        )
+        _log.info("upload %s/%s (%d bytes)", library, filename,
+                  os.path.getsize(src))
         try:
-            with urllib.request.urlopen(req, timeout=300):
-                pass
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                raise ApiSyncError(SERVER_MISSING)
-            raise ApiSyncError(f"File upload failed ({e.code}): {filename}")
-        except urllib.error.URLError as e:
-            raise ApiSyncError(f"File upload failed: {e.reason}")
+            self.client.upload_file(
+                self._sync_path("/files/" + urllib.parse.quote(filename)),
+                src,
+                query={"library": library},
+                content_type="audio/mpeg",
+                timeout=300,
+            )
+        except HathorApiError as exc:
+            if exc.status == 404:
+                raise ApiSyncError(SERVER_MISSING) from exc
+            raise ApiSyncError(f"File upload failed: {exc.message}") from exc
         return True
 
     # -- merge (same semantics as the retired JDBC pull) ------------------
@@ -862,12 +912,33 @@ class ApiSyncClient:
             except sqlite3.OperationalError:
                 pass
         for h in snap.get("music_history") or []:
-            conn.execute(
-                "INSERT INTO Music_History (id, song_file, date_played) VALUES (?, ?, ?)"
-                " ON CONFLICT(id) DO UPDATE SET song_file = excluded.song_file,"
-                " date_played = excluded.date_played",
-                (h.get("id"), h.get("song_file"), h.get("date_played")),
-            )
+            song_file = h.get("song_file")
+            stamp = _local_stamp(h.get("date_played"))
+            if not song_file or not stamp:
+                continue
+            # Dedupe on the natural key before the id so a row re-keyed by
+            # the server does not reappear as a second local play.
+            duplicate = conn.execute(
+                "SELECT id FROM Music_History WHERE song_file = ? "
+                "AND replace(substr(date_played, 1, 19), 'T', ' ') = ?",
+                (song_file, stamp),
+            ).fetchone()
+            if duplicate:
+                continue
+            row_id = h.get("id")
+            id_taken = row_id is not None and conn.execute(
+                "SELECT 1 FROM Music_History WHERE id = ?", (row_id,)
+            ).fetchone()
+            if id_taken or row_id is None:
+                conn.execute(
+                    "INSERT INTO Music_History (song_file, date_played) VALUES (?, ?)",
+                    (song_file, stamp),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO Music_History (id, song_file, date_played) VALUES (?, ?, ?)",
+                    (row_id, song_file, stamp),
+                )
         for h in snap.get("playlist_history") or []:
             conn.execute(
                 "INSERT INTO Playlist_History (id, playlist_id, date_played) VALUES (?, ?, ?)"
@@ -888,6 +959,14 @@ class ApiSyncClient:
                 " ON CONFLICT(id) DO UPDATE SET podcast_file = excluded.podcast_file,"
                 " tag_id = excluded.tag_id",
                 (l.get("id"), l.get("podcast_file"), l.get("tag_id")),
+            )
+            # The server's assignment is newer than any local unassign
+            # tombstone for the same natural key; cancel it so a later Push
+            # does not delete the link again.
+            conn.execute(
+                "DELETE FROM Sync_Deletions "
+                "WHERE lower(table_name) = 'podcast_tag_links' AND row_key = ?",
+                (f"{l.get('tag_id')}:{l.get('podcast_file')}",),
             )
         if tag_links:
             keep = {(l.get("tag_id"), l.get("podcast_file")) for l in tag_links}
@@ -964,6 +1043,19 @@ class ApiSyncClient:
                 elif table == "podcast_tags":
                     conn.execute("DELETE FROM Podcast_Tag_Links WHERE tag_id = ?", (key,))
                     conn.execute("DELETE FROM Podcast_Tags WHERE id = ?", (key,))
+                elif table == "podcast_tag_links":
+                    raw_tag, sep, podcast_file = str(key).partition(":")
+                    if sep and podcast_file:
+                        try:
+                            link_tag = int(raw_tag)
+                        except ValueError:
+                            link_tag = None
+                        if link_tag is not None:
+                            conn.execute(
+                                "DELETE FROM Podcast_Tag_Links "
+                                "WHERE tag_id = ? AND podcast_file = ?",
+                                (link_tag, podcast_file),
+                            )
                 elif table == "podcast_chapters":
                     conn.execute("DELETE FROM Podcast_Chapters WHERE podcast_file = ?", (key,))
             except Exception as e:

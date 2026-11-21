@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.HistoryItem
@@ -140,7 +142,9 @@ fun HistoryScreen(
                     val meta = remember(item) { item.toMeta() }
                     val active = item.file == nowPlayingFile
                     Row(
-                        modifier = Modifier.fillMaxWidth().hathorGlass()
+                        // Fixed three-line card: title / artist / date. Long
+                        // metadata can only ellipsize, never change row height.
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 76.dp).hathorGlass()
                             .combinedClickable(
                                 onClick = { onPlaySong(meta, metas, source) },
                                 onLongClick = { menuItem = item }
@@ -151,29 +155,39 @@ fun HistoryScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         SongCover(repo = metadata, fileName = item.file, size = 44.dp)
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.Center
+                        ) {
                             Text(
                                 item.title,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = if (active) HathorColors.AccentBright else HathorColors.TextPrimary,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    item.artist,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = HathorColors.TextHint,
-                                    modifier = Modifier.clickable(
-                                        enabled = item.artist.isNotBlank() && item.artist != "Unknown"
-                                    ) { onOpenArtist(item.artist) }
-                                )
-                                Text("· ${item.date ?: "unknown date"}", style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-                                if (active && isPlaying) {
-                                    Text("· Playing", style = MaterialTheme.typography.bodySmall, color = HathorColors.AccentBright)
-                                }
-                            }
+                            Text(
+                                item.artist.ifBlank { "Unknown" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = HathorColors.TextHint,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.clickable(
+                                    enabled = item.artist.isNotBlank() && item.artist != "Unknown"
+                                ) { onOpenArtist(item.artist) }
+                            )
+                            Text(
+                                buildString {
+                                    append(item.date ?: "unknown date")
+                                    if (active && isPlaying) append(" · Playing")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (active && isPlaying) HathorColors.AccentBright else HathorColors.TextHint,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        IconButton(onClick = { menuItem = item }) {
+                        IconButton(onClick = { menuItem = item }, modifier = Modifier.size(40.dp)) {
                             Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = HathorColors.TextHint, modifier = Modifier.size(20.dp))
                         }
                     }

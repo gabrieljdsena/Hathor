@@ -128,6 +128,13 @@
         </svg>
         Chapters…
     </button>
+    <button id="podm-move-song"
+        class="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-white/5 hover:text-white transition-colors flex items-center gap-2 cursor-pointer">
+        <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+        </svg>
+        Move to Songs
+    </button>
     <button id="podm-delete"
         class="w-full text-left px-4 py-2 text-sm hover:bg-white/5 transition-colors flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer">
         <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -355,6 +362,37 @@
         }
     }
 
+    async function _podMoveToSongs(file) {
+        _podCloseMenu();
+        const confirmed = (typeof Swal !== 'undefined')
+            ? (await Swal.fire({
+                title: 'Move to Songs?',
+                text: 'Podcast tags and chapters for this file are removed. The audio file is kept.',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Move it',
+                cancelButtonText: 'Cancel'
+            })).isConfirmed
+            : confirm('Move this episode to Songs? Tags and chapters are removed; the audio file is kept.');
+        if (!confirmed) return;
+        try {
+            const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+            if (!api || typeof api.move_podcast_to_song !== 'function') return;
+            const result = await api.move_podcast_to_song({ File: file });
+            if (!result || !result.ok) {
+                _podNotifyErr((result && result.message) || 'The episode could not be moved.');
+                return;
+            }
+            if (typeof window._podReload === 'function') await window._podReload();
+            _podNotifyOk(result.newFile === result.oldFile
+                ? 'Moved to Songs.'
+                : `Moved to Songs as ${result.newFile}.`);
+        } catch (e) {
+            console.error('Failed to move podcast:', e);
+            _podNotifyErr('The episode could not be moved.');
+        }
+    }
+
     window._podRender = function () {
         const list = document.getElementById("podcasts-list");
         if (!list) return;
@@ -450,8 +488,9 @@
         const map = window._podTagMap || {};
         document.querySelectorAll("#podcasts-list .podcast-row").forEach(row => {
             const s = row._songData || {};
-            const hay = `${s.Title || ''} ${s.Artist || ''}`.toLowerCase();
-            const qOk = !q || hay.indexOf(q) > -1;
+            const qOk = !q || (window.fuzzyFields
+                ? window.fuzzyFields([s.Title || '', s.Artist || ''], q)
+                : `${s.Title || ''} ${s.Artist || ''}`.toLowerCase().indexOf(q) > -1);
             const tOk = (active === null || active === undefined) ||
                 ((map[s.File] || []).indexOf(active) > -1);
             row.style.display = (qOk && tOk) ? "" : "none";
@@ -604,6 +643,7 @@
         byId('podm-edit', () => { const f = window._podMenuFile; if (f) _podEdit(f); });
         byId('podm-tags', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) window._podOpenAssign(f); });
         byId('podm-chapters', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) window._podOpenChapters(f); });
+        byId('podm-move-song', () => { const f = window._podMenuFile; if (f) _podMoveToSongs(f); });
         byId('podm-delete', () => { const f = window._podMenuFile; _podCloseMenu(); if (f) _podDelete(f); });
     })();
 

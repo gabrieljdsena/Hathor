@@ -161,12 +161,14 @@
     };
 
     window._allApplySearch = function (value) {
+        const query = String(value || '').trim();
         document.querySelectorAll("#all-table-body .song-row-container").forEach(container => {
             const songData = container._songData || {};
-            const title = (songData.Title || "").toLowerCase();
-            const artist = (songData.Artist || "").toLowerCase();
-            const album = (songData.Album || "").toLowerCase();
-            container.style.display = (title.indexOf(value) > -1 || artist.indexOf(value) > -1 || album.indexOf(value) > -1) ? "" : "none";
+            const fields = [songData.Title || "", songData.Artist || "", songData.Album || ""];
+            const match = window.fuzzyFields
+                ? window.fuzzyFields(fields, query)
+                : fields.join(' ').toLowerCase().indexOf(query.toLowerCase()) > -1;
+            container.style.display = match ? "" : "none";
         });
     };
 

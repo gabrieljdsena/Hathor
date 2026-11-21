@@ -81,25 +81,46 @@ public sealed class DeletePodcastTagHandler(
 public sealed record AssignPodcastTagCommand(Guid UserId, string File, long TagId) : IRequest<bool>;
 public sealed record UnassignPodcastTagCommand(Guid UserId, string File, long TagId) : IRequest<bool>;
 
-public sealed class AssignPodcastTagHandler(IPodcastTagRepository tags)
+public sealed class AssignPodcastTagHandler(
+    IPodcastTagRepository tags, ITombstoneRepository tombstones)
     : IRequestHandler<AssignPodcastTagCommand, bool>
 {
     public async Task<bool> Handle(AssignPodcastTagCommand cmd, CancellationToken ct)
     {
         if (await tags.GetByIdAsync(cmd.UserId, cmd.TagId, ct) is null) return false;
+        // Re-assigning before other devices pull must cancel the old
+        // unassign tombstone ("<tagId>:<file>").
+        await tombstones.RemoveAsync(
+            cmd.UserId, "podcast_tag_links", PodcastTagLinkKeys.For(cmd.TagId, cmd.File), ct);
         await tags.AssignAsync(cmd.UserId, cmd.File, cmd.TagId, ct);
         await tags.SaveChangesAsync(ct);
+        await tombstones.SaveChangesAsync(ct);
         return true;
     }
 }
 
-public sealed class UnassignPodcastTagHandler(IPodcastTagRepository tags)
+public sealed class UnassignPodcastTagHandler(
+    IPodcastTagRepository tags, ITombstoneRepository tombstones)
     : IRequestHandler<UnassignPodcastTagCommand, bool>
 {
     public async Task<bool> Handle(UnassignPodcastTagCommand cmd, CancellationToken ct)
     {
         await tags.UnassignAsync(cmd.UserId, cmd.File, cmd.TagId, ct);
+        // The link row is a hard delete, so deltas need a tombstone to
+        // propagate the unassign to desktop/mobile. Replace any older
+        // tombstone for this key with a fresh timestamp.
+        var key = PodcastTagLinkKeys.For(cmd.TagId, cmd.File);
+        await tombstones.RemoveAsync(cmd.UserId, "podcast_tag_links", key, ct);
+        await tombstones.RecordAsync(cmd.UserId, "podcast_tag_links", key, ct);
         await tags.SaveChangesAsync(ct);
+        await tombstones.SaveChangesAsync(ct);
         return true;
     }
+}
+
+// Natural key shared by desktop/mobile: "<tagId>:<file>". Only the first
+// colon is the separator, so filenames may contain colons.
+public static class PodcastTagLinkKeys
+{
+    public static string For(long tagId, string file) => $"{tagId}:{file}";
 }

@@ -110,11 +110,14 @@ share this wire shape and these rules.
 ## Rules every app follows
 
 1. **Taste profile** = recency-weighted top artists, tracks, genres and played
-   files from `Music_History` joined to `Songs` (`Unknown`/blank artist
-   excluded). Half-life defaults to 60 days; older plays still contribute but
-   decay. Recent `Playback_Events` completion/skip telemetry multiplies each
-   file's weight (`0.2 + 0.8 * completionRate`; no events = 1.0, so
-   desktop/mobile clients keep the legacy behavior). Top 5 tracks seed
+   files from the shared play stream joined to `Songs` (`Unknown`/blank artist
+   excluded). The stream prefers `Playback_Events`; `Music_History` rows are
+   merged for legacy/offline plays and dropped when an event for the same file
+   lands within ±5 minutes, so one play is never counted twice. Half-life
+   defaults to 60 days; older plays still contribute but decay. Recent event
+   completion/skip telemetry supplies the quality multiplier
+   (`0.2 + 0.8 * completionRate`; no events = 1.0, with history-only files
+   using start-to-start inference). Top 5 tracks seed
    similar-recording expansion; top played files weight the CLAP audio
    centroid, so audio similarity follows actual song history. Genre matching
    is fuzzy, not exact: containment (`Rock` ↔ `Alternative Rock`), shared
@@ -151,11 +154,12 @@ share this wire shape and these rules.
    (default 90). Feedback never affects another user, and cached responses
    are filtered on read so dismissals/downloads disappear immediately.
 10. **Playback telemetry** (`POST /player/playback-events`, `player:control`):
-    the web player reports one segment per music track play with
-    `{segmentId, file, positionSec, durationSec, completed, skipped,
+    the web, desktop and mobile players report one segment per music track play
+    with `{segmentId, file, positionSec, durationSec, completed, skipped,
     startedAtUtc}`. `SegmentId` is client-generated and unique per user, so
     unload/retry reports are idempotent. Events are server-only (not synced)
-    and feed the taste weighting; podcasts are not reported.
+    and are the preferred play signal for the recommendation read models;
+    `Music_History` remains the synced fallback. Podcasts are not reported.
 11. **Learned priors** (local, per user): download/dismiss outcomes produce
     smoothed conversion rates per source and per artist/seed. The ranker
     blends the static source prior 50/50 with the learned one and adds capped
@@ -184,12 +188,14 @@ share this wire shape and these rules.
     populated for every source the same way. The ranker compares log10
     counts to the user's median historical band; unknown values stay
     neutral. The top-track popularity profile is cached per user/track set.
-15. **Cross-client playback quality**: explicit `Playback_Events` (web) take
-    precedence. For files with no events (desktop/mobile), completion/skip is
-    inferred from `Music_History` start-to-start gaps versus
+15. **Cross-client playback quality**: explicit `Playback_Events`
+    (web/desktop/mobile) are the preferred play signal. The shared stream
+    merges `Music_History` rows that are not within ±5 minutes of an event;
+    history-only files infer completion/skip from start-to-start gaps versus
     `Songs.DurationSecs`: a gap of at least 90% of duration counts as
     completed; gaps over `duration + 60s` are unknown and skipped. Set
-    `InferPlaybackQuality=false` to disable.
+    `InferPlaybackQuality=false` to disable the inference for history-only
+    files.
 16. **Evaluation-driven tuning**: `POST /discover/tuning` compares the current
     order and preset weight vectors on stored snapshot features, using
     `0.6*nDCG@K + 0.3*precision@K + 0.1*conversion@K`. It persists a model

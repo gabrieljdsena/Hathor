@@ -6,6 +6,7 @@ import json
 import logging
 import platform
 import pygame
+import threading
 import uuid
 import Download
 import settings
@@ -24,6 +25,12 @@ from services import (
     DownloadManager,
     startup_maintenance
 )
+from services.discover import DiscoverService
+from services.ai_dj import AiDjController
+from services.images import normalize_image_data_uri
+from services.telemetry import PlaybackTelemetry
+from services.history_sync import HistorySync
+from services.player_hub import PlayerHub
 
 # ==========================================================================
 # Native Windows window chrome
@@ -173,6 +180,13 @@ class Api:
         self.lyrics = LyricsService(self)
         self.apple = AppleService(self)
         self.download_manager = DownloadManager(self)
+        self.discover = DiscoverService(self)
+        self.ai_dj = AiDjController(self)
+        self.telemetry = PlaybackTelemetry(self)
+        self.history_sync = HistorySync(self.db_path)
+        self.player_hub = PlayerHub(self)
+        self._volume_publish_timer = None
+        self._suppress_preview_stop = False
 
     def _ensure_schema(self):
         """Add columns/tables introduced after the database was first created."""
@@ -194,6 +208,10 @@ class Api:
                         conn.execute(f"ALTER TABLE Settings ADD COLUMN {column} {ddl}")
                     except sqlite3.OperationalError:
                         pass
+                # Runtime Web API columns live beside the other settings and
+                # are also covered by database.sql for fresh installs.
+                from services.api_config import ensure_settings_columns
+                ensure_settings_columns(conn)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS Download_Queue (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,6 +225,11 @@ class Api:
                         filename TEXT,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS History_Sync_Queue (
+                        history_id INTEGER PRIMARY KEY
                     )
                 """)
                 conn.execute("""
@@ -350,7 +373,18 @@ class Api:
         return self.playback.chapter_seek(-1)
 
     def play_button(self, current_song=None, opening=False):
-        return self.playback.play_button(current_song, opening)
+        result = self.playback.play_button(current_song, opening)
+        # Track changes publish through the playback listener; an empty
+        # play_button call is the play/pause toggle and needs transport sync.
+        if current_song is None:
+            try:
+                if getattr(self, 'player_hub', None):
+                    threading.Thread(
+                        target=self.player_hub.publish_transport, daemon=True
+                    ).start()
+            except Exception:
+                pass
+        return result
 
     # ==========================
     # Cross-device resume (server playback spots)
@@ -374,10 +408,26 @@ class Api:
                     (getattr(self, 'last_song', None) or {}).get('IsPodcast'))
             from services.api_sync import ApiSyncClient
             client = ApiSyncClient(self.db_path, timeout=8)
+            queue_files = [filename]
+            try:
+                for song in getattr(self.playback, 'next_songs', []) or []:
+                    name = (song or {}).get('File')
+                    if name:
+                        queue_files.append(str(name))
+                    if len(queue_files) >= 200:
+                        break
+            except Exception:
+                pass
+            try:
+                source = self.playback._read_source()
+            except Exception:
+                source = None
             client.push_playback(
                 getattr(self, '_device_id', None),
                 getattr(self, '_device_label', None),
-                filename, position_secs, is_podcast)
+                filename, position_secs, is_podcast,
+                queue_files=queue_files,
+                queue_source=source)
             return True
         except Exception as e:
             print(f" [Python] Resume push skipped: {e}")
@@ -411,6 +461,18 @@ class Api:
                         'is_podcast': is_podcast,
                         'device': raw.get('device') or '',
                         'updated_utc': raw.get('updatedUtc') or '',
+                        'queue_files': [
+                            str(item) for item in (
+                                raw.get('queueFiles')
+                                or raw.get('QueueFiles')
+                                or []
+                            ) if item
+                        ],
+                        'queue_source': (
+                            raw.get('queueSource')
+                            or raw.get('QueueSource')
+                            or None
+                        ),
                     }
                     # Friendly pill text: resolve the local title when we
                     # already have the file (the web does the same lookup).
@@ -437,20 +499,74 @@ class Api:
         self._resume_spot_next_at = time.time() + (10 if spot else 20)
         return spot
 
-    def resume_spot_play(self, file, position_secs, is_podcast=False):
-
-        """Play a synced resume spot at its position. Returns True on success."""
+    def resume_spot_play(self, file_or_spot, position_secs=None, is_podcast=False,
+                         queue_files=None, queue_source=None):
+        """Play a synced resume spot and restore its Up Next snapshot."""
+        if isinstance(file_or_spot, dict):
+            spot = file_or_spot
+            file = spot.get('file')
+            position_secs = spot.get('position_secs')
+            is_podcast = bool(spot.get('is_podcast'))
+            queue_files = spot.get('queue_files')
+            queue_source = spot.get('queue_source')
+        else:
+            file = file_or_spot
         try:
-            table = 'Podcasts' if is_podcast else 'Songs'
-            with sqlite3.connect(self.db_path) as conn:
-                row = conn.execute(
-                    f"SELECT file, title, artist FROM {table} WHERE file = ?", (file,)
-                ).fetchone()
-            if not row:
+            file = os.path.basename(str(file or ''))
+            if not file:
+                return False
+            ordered = []
+            seen = set()
+            for name in [file] + list(queue_files or []):
+                name = os.path.basename(str(name or ''))
+                if not name or name.lower() in seen:
+                    continue
+                seen.add(name.lower())
+                ordered.append((name, name == file))
+                if len(ordered) >= 50:
+                    break
+
+            songs = []
+            current = None
+            for name, is_current in ordered:
+                bases = (
+                    [settings.podcasts_path, settings.path]
+                    if is_podcast else [settings.path, settings.podcasts_path]
+                )
+                resolved = None
+                for base in bases:
+                    path = os.path.join(base, name)
+                    if not os.path.isfile(path):
+                        continue
+                    try:
+                        resolved = self.metadata.get_song_metadata(
+                            path, name, include_cover=is_current)
+                    except Exception:
+                        resolved = {'File': name, 'Title': name, 'Artist': '', 'Duration': 0}
+                    resolved['File'] = name
+                    resolved['IsPodcast'] = (base == settings.podcasts_path)
+                    break
+                if not resolved:
+                    continue
+                if is_current:
+                    current = resolved
+                songs.append(resolved)
+            if current is None:
                 return False  # Not downloaded here: nothing to resume.
-            song = {'File': row[0], 'Title': row[1], 'Artist': row[2],
-                    'IsPodcast': bool(is_podcast)}
-            self.playback.play_button(song)
+
+            source = queue_source if isinstance(queue_source, dict) else None
+            if source:
+                source = {
+                    'type': source.get('type') or source.get('Type'),
+                    'id': source.get('id') if 'id' in source else source.get('Id'),
+                }
+            if not source or not source.get('type'):
+                source = {
+                    'type': 'podcast' if is_podcast else 'all_songs',
+                    'id': None,
+                }
+            self.playback.populate_queue_from_list(current, songs, None, source)
+            self.playback.play_button(current)
             try:
                 position = max(0.0, float(position_secs or 0))
             except (TypeError, ValueError):
@@ -475,7 +591,7 @@ class Api:
     def play_prev(self):
         return self.playback.play_prev()
 
-    def progress_slider_click(self, sec):
+    def progress_slider_click(self, sec, publish=True):
         try:
             self.playback._cancel_crossfade()
         except Exception:
@@ -500,6 +616,15 @@ class Api:
                 self.playback._push_resume_spot()
             except Exception:
                 pass
+        try:
+            if publish and getattr(self, 'player_hub', None):
+                threading.Thread(
+                    target=self.player_hub.publish_seek,
+                    args=(float(sec),),
+                    daemon=True,
+                ).start()
+        except Exception:
+            pass
 
     # ==========================
     # Metadata & Files Wrappers
@@ -516,6 +641,12 @@ class Api:
     def delete_song(self, song_data):
         return self.metadata.delete_song(song_data)
 
+    def move_song_to_podcast(self, song_data):
+        return self.metadata.move_song_to_podcast(song_data)
+
+    def move_podcast_to_song(self, song_data):
+        return self.metadata.move_podcast_to_song(song_data)
+
     def update_song_metadata(self, song_data):
         return self.metadata.update_song_metadata(song_data)
 
@@ -523,13 +654,18 @@ class Api:
     # Lyrics Wrappers
     # ==========================
     def romanize_text(self, text, is_lrc=False):
-        return self.lyrics.romanize_text(text, is_lrc)
+        return self.lyrics.romanize_with_server(text, is_lrc)
 
     def get_lyrics(self, track_name, artist_name, album_name=None, duration_seconds=None):
         return self.lyrics.get_lyrics(track_name, artist_name, album_name, duration_seconds)
 
     def search_lyrics(self, track_name, artist_name, album_name=None, duration_seconds=None):
         return self.lyrics.search_lyrics(track_name, artist_name, album_name, duration_seconds)
+
+    def search_lyrics_candidates(self, track_name, artist_name, album_name=None, duration_seconds=None):
+        """Explicit-context candidate search for the lyrics Search/Replace panel."""
+        return self.lyrics.search_lyrics_candidates(
+            track_name, artist_name, album_name, duration_seconds)
 
     def save_lyrics(self, synced, plain, chapter_id=None):
         return self.lyrics.save_lyrics_for_current(synced, plain, chapter_id)
@@ -759,12 +895,22 @@ class Api:
         return self.db.load_playlists()
 
     def new_playlist(self, data):
+        data = dict(data or {})
+        if data.get("Cover"):
+            data["Cover"] = normalize_image_data_uri(data["Cover"])
         return self.db.new_playlist(data)
 
     def getImage(self, id):
         return self.db.getImage(id)
 
     def update_playlist(self, playlist_id, data):
+        data = dict(data or {})
+        if "thumbnail" in data:
+            thumb = data.get("thumbnail")
+            if thumb in (None, "", "REMOVE"):
+                data["thumbnail"] = None
+            else:
+                data["thumbnail"] = normalize_image_data_uri(thumb)
         return self.db.update_playlist(playlist_id, data)
 
     def delete_playlist(self, playlist_id):
@@ -895,11 +1041,11 @@ class Api:
     def get_recently_downloaded(self, limit=15):
         return self.db.get_recently_downloaded(limit)
 
-    def get_download_history(self, page=1, limit=10):
-        return self.db.get_download_history(page, limit)
+    def get_download_history(self, page=1, limit=10, include_cover=True):
+        return self.db.get_download_history(page, limit, include_cover)
 
-    def get_played_history(self, page=1, limit=10):
-        return self.db.get_played_history(page, limit)
+    def get_played_history(self, page=1, limit=10, include_cover=True):
+        return self.db.get_played_history(page, limit, include_cover)
 
     def sync_local_songs_to_db(self):
         return self.db.sync_local_songs_to_db()
@@ -986,7 +1132,7 @@ class Api:
     # ==========================
     # Native Application Logic
     # ==========================
-    def volume_slider(self, volume):
+    def volume_slider(self, volume, publish=True):
         pygame.mixer.music.set_volume(float(volume))
         settings.volume = float(volume)
         try:
@@ -999,6 +1145,38 @@ class Api:
             self.playback.sync_output_volume()
         except Exception:
             pass
+        # Discover previews and AI DJ voice are separate webview audio
+        # elements; keep their level aligned with the main slider.
+        if self._window:
+            try:
+                self._window.evaluate_js(
+                    f"if (window.DiscoverPreview) window.DiscoverPreview.setVolume({float(volume)});"
+                    f"if (window.AiDjVoice) window.AiDjVoice.setVolume({float(volume)});"
+                )
+            except Exception:
+                pass
+        try:
+            if publish and getattr(self, 'player_hub', None):
+                previous = getattr(self, '_volume_publish_timer', None)
+                if previous is not None:
+                    try:
+                        previous.cancel()
+                    except Exception:
+                        pass
+                timer = threading.Timer(
+                    0.35, self.player_hub.publish_volume, args=(float(volume),)
+                )
+                timer.daemon = True
+                self._volume_publish_timer = timer
+                timer.start()
+        except Exception:
+            pass
+
+    def get_current_volume(self):
+        try:
+            return max(0.0, min(1.0, float(settings.volume)))
+        except (TypeError, ValueError):
+            return 0.7
 
     def get_playback_settings(self):
         """Crossfade + chapter-skip prefs for the Settings UI."""
@@ -1240,6 +1418,147 @@ class Api:
     def retry_download(self, data):
         return self.download_manager.retry(data)
 
+    # ==========================
+    # Discover
+    # ==========================
+    def _discover_call(self, method, *args):
+        try:
+            data = method(*args)
+            return {"ok": True, "data": data}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def discover_get(self):
+        return self._discover_call(self.discover.feed)
+
+    def discover_refresh(self):
+        return self._discover_call(self.discover.refresh)
+
+    def discover_insights(self, window_days=90):
+        return self._discover_call(self.discover.insights, window_days)
+
+    def discover_tune(self, window_days=90):
+        return self._discover_call(self.discover.tune, window_days)
+
+    def discover_feedback(self, payload):
+        try:
+            self.discover.feedback(payload)
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def discover_check_download(self, title, artist="", library="songs"):
+        try:
+            result = self.discover.check_owned(title, artist, library)
+            return {"ok": True, **result}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def check_download(self, title, artist="", library="songs"):
+        """Shared owned-copy guard for Discover and the Download screen."""
+        return self.discover_check_download(title, artist, library)
+
+    def download_check_owned(self, query, library="songs"):
+        """Owned check for a direct/batch download query."""
+        try:
+            result = self.discover.check_owned_query(query, library)
+            return {"ok": True, **result}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def discover_download(self, title, artist=""):
+        try:
+            result = self.discover.submit_download(title, artist)
+            return {"ok": True, **result}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def resolve_discover_preview(self, title, artist=""):
+        try:
+            return {"ok": True, **self.discover.resolve_preview(title, artist)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def resolve_discover_video(self, title, artist=""):
+        try:
+            return {"ok": True, **self.discover.resolve_video(title, artist)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    # ==========================
+    # Discover preview / main handoff
+    # ==========================
+    def pause_for_preview(self):
+        """Pause main playback before a Discover preview starts."""
+        try:
+            if not self.playing:
+                return False
+            self._suppress_preview_stop = True
+            try:
+                self.playback.play_button(None)
+            finally:
+                self._suppress_preview_stop = False
+            return True
+        except Exception as exc:
+            print(f" [Python] Preview pause failed: {exc}")
+            return False
+
+    # ==========================
+    # AI DJ / Vohithe
+    # ==========================
+    def ai_dj_view(self):
+        return self.ai_dj.view()
+
+    def ai_dj_refresh(self):
+        return self.ai_dj.refresh()
+
+    def ai_dj_start(self, brief=""):
+        return self.ai_dj.start(brief)
+
+    def ai_dj_stop(self):
+        return self.ai_dj.stop()
+
+    def ai_dj_feedback(self, event, track_file=None):
+        try:
+            return {"ok": self.ai_dj.feedback(event, track_file)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def ai_dj_transcribe(self, audio, language=None):
+        try:
+            return {"ok": True, "text": self.ai_dj.transcribe(audio, language)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def ai_dj_clip_url(self, clip_id):
+        try:
+            return {"ok": True, "url": self.ai_dj.clip_url(clip_id)}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def ai_dj_voice_finished(self, generation):
+        return self.ai_dj.voice_finished(generation)
+
+    def ai_dj_voice_error(self, generation, message):
+        return self.ai_dj.voice_error(generation, message)
+
+    def set_ai_dj_duck(self, level):
+        return self.ai_dj.set_duck(level)
+
+    def _stop_discover_preview(self):
+        """Called by playback when a main track starts/resumes."""
+        if getattr(self, '_suppress_preview_stop', False):
+            return
+        if not self._window:
+            return
+        try:
+            self._window.evaluate_js(
+                "if (window.DiscoverPreview && window.DiscoverPreview.isActive "
+                "&& window.DiscoverPreview.isActive()) { window.DiscoverPreview.stop(); }"
+            )
+        except Exception:
+            pass
+
     def send_song_list(self):
         path = Path(settings.path)
         files = [f.name for f in path.iterdir() if f.is_file() and f.suffix.lower() == '.mp3']
@@ -1275,6 +1594,59 @@ class Api:
         safe_podcasts = json.dumps(getattr(settings, 'podcasts_path', ''))
         if self._window:
             self._window.evaluate_js(f"if (typeof window.load_settings === 'function') window.load_settings({settings.volume}, {settings.limit_downloads}, {safe_bg}, {safe_path}, {safe_podcasts});")
+
+    # ---- Runtime Web API configuration -------------------------------
+    def get_api_config_view(self):
+        """Settings payload; the full API key never crosses the bridge."""
+        from services.api_config import get_api_config_view
+        return get_api_config_view(self.db_path)
+
+    def _push_api_config(self, config=None):
+        if not self._window:
+            return
+        try:
+            payload = config or self.get_api_config_view()
+            self._window.evaluate_js(
+                "if (typeof window.load_api_config === 'function') "
+                f"window.load_api_config({json.dumps(payload)});"
+            )
+        except Exception as exc:
+            print(f" [Python] API config UI update failed: {exc}")
+
+    def save_api_config(self, url, key=""):
+        """Persist the server URL/key. A blank key keeps the saved one."""
+        from services.api_config import save_api_config
+        try:
+            config = save_api_config(url, key, self.db_path)
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+        self._push_api_config(config)
+        try:
+            self.history_sync.notify()
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "message": "Web API settings saved.",
+            "config": config,
+        }
+
+    def clear_api_config(self):
+        from services.api_config import clear_api_config
+        try:
+            config = clear_api_config(self.db_path)
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+        self._push_api_config(config)
+        return {
+            "ok": True,
+            "message": "Saved Web API settings cleared; .env fallback still applies.",
+            "config": config,
+        }
+
+    def test_api_connection(self, url=None, key=""):
+        from services.api_config import test_connection
+        return test_connection(url, key, self.db_path)
 
     def load_current_song(self):
         try:
@@ -1361,6 +1733,16 @@ class Api:
                 songs = self.db.get_recently_played()
             elif stype == 'recently_downloaded':
                 songs = self.db.get_recently_downloaded()
+            elif stype == 'download_history':
+                history = self.db.get_download_history(1, 5000, include_cover=False)
+                raw = history.get('items', []) if isinstance(history, dict) else []
+                seen = set()
+                songs = []
+                for item in raw:
+                    name = (item or {}).get('File')
+                    if name and name not in seen:
+                        seen.add(name)
+                        songs.append(item)
             elif stype == 'podcast' and file:
                 # Single-episode queue (no playlists/queue for podcasts). The
                 # episode may be gone (folder moved, file deleted) -> fall back.
@@ -1477,5 +1859,7 @@ class Api:
                 file_types=('Image Files (*.bmp;*.jpg;*.jpeg;*.gif;*.png)', 'All files (*.*)')
             )
             if result and len(result) > 0:
-                return self.get_local_image_base64(result[0])
+                return normalize_image_data_uri(
+                    self.get_local_image_base64(result[0])
+                )
         return None

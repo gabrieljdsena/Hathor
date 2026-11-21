@@ -181,7 +181,7 @@ def on_resized(width, height):
 from services.api_sync import sync_backend as _sync_backend
 remote_configured = _sync_backend() == "api"
 if not remote_configured:
-    print(" [Sync] No sync server configured in .env (HATHOR_API_URL/HATHOR_API_KEY), sync disabled.")
+    print(" [Sync] No sync server configured in Settings -> Web API or .env, sync disabled.")
 
 def _run_startup_maintenance(window):
     """Background FFmpeg auto-download + YouTube-lib update checks.
@@ -360,6 +360,39 @@ def _prompt_remote_sync(window):
     
     threading.Thread(target=do_prompt, daemon=True).start()
 
+def on_closing():
+    """Flush playlist metadata held back because pygame owned the file."""
+    try:
+        pygame.mixer.music.stop()
+        if hasattr(pygame.mixer.music, 'unload'):
+            pygame.mixer.music.unload()
+    except Exception:
+        pass
+    try:
+        api.playing = False
+        api.current_filename = None
+        api.last_song = {}
+    except Exception:
+        pass
+    try:
+        if getattr(api, 'metadata', None):
+            api.metadata.apply_pending_edits()
+    except Exception as e:
+        print(f" [Python] Pending metadata flush on close failed: {e}")
+    try:
+        if getattr(api, 'telemetry', None):
+            api.telemetry.flush(wait=True)
+    except Exception as e:
+        print(f" [Python] Playback telemetry flush on close failed: {e}")
+    try:
+        if getattr(api, 'history_sync', None):
+            api.history_sync.close()
+    except Exception as e:
+        print(f" [Python] History sync shutdown failed: {e}")
+
+
 if __name__ == '__main__':
     window.events.resized += on_resized
+    if hasattr(window.events, 'closing'):
+        window.events.closing += on_closing
     webview.start(on_start, window, debug=False)

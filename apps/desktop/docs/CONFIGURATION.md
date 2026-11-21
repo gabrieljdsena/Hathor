@@ -3,7 +3,7 @@
 Hathor has two configuration surfaces:
 
 1. **Persisted app settings** — stored in the `Settings` row of the local SQLite database and editable from the UI.
-2. **Environment configuration** — a `.env` file used exclusively for the optional **Hathor server sync**.
+2. **Environment fallback** — a `.env` file used for the optional **Hathor server sync** when the runtime Web API fields are empty.
 
 ## App settings (SQLite `Settings` table)
 
@@ -20,8 +20,10 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 | Crossfade | `crossfade_enabled`, `crossfade_seconds` | off, `5.0` | 1–12 s equal-power overlap on auto-advance |
 | Current song | `current_song` | — | Resumed on next launch |
 | Current playlist | `current_playlist` | — | Playlist resumed on next launch (legacy; superseded by `queue_source`) |
-| Queue source | `queue_source` | — | Playback-context JSON `{type, id}` rebuilt on launch |
-| Custom queue | `queue_songs`, `custom_queue` | — | Manually built queue restored verbatim |
+| Queue source | `queue_source` | – | Playback-context JSON `{type, id}` rebuilt on launch |
+| Custom queue | `queue_songs`, `custom_queue` | – | Manually built queue restored verbatim |
+| Web API URL | `hathor_api_url` | *(empty)* | Runtime server root; `.env` fallback when empty |
+| Web API key | `hathor_api_key` | *(empty)* | Scoped `hth_` token; masked in the UI |
 
 `api.py` exposes the corresponding setters to the JS UI:
 
@@ -33,20 +35,28 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 - `set_crossfade(enabled, seconds)` / `get_playback_settings()`
 - `pick_background()`
 
-## Sync server (`.env`)
+## Sync server (Settings → Web API, `.env` fallback)
 
-Sync is **disabled by default**. It is only activated when `HATHOR_API_URL` and `HATHOR_API_KEY` are present in the environment (loaded by `python-dotenv` in `main.py`). Without them, `main.py` prints:
+Sync is **disabled by default**. Point the app at a server in **Settings → Web API**:
+
+1. Enter the server root (for example `http://192.168.1.10:5051`).
+2. Paste a scoped `hth_` API key.
+3. Press **Test** to verify reachability and read access, then **Save**.
+
+The pair is stored in the local `Settings` row (`hathor_api_url`/`hathor_api_key`); no restart is needed. If both fields are empty, `HATHOR_API_URL` and `HATHOR_API_KEY` from `.env` (loaded by `python-dotenv` in `main.py`) remain the fallback. Without either source, `main.py` prints:
 
 ```
-[Sync] No sync server configured in .env (HATHOR_API_URL/HATHOR_API_KEY), sync disabled.
+[Sync] No sync server configured in Settings -> Web API or .env, sync disabled.
 ```
 
-### Environment variables
+### Runtime fields / environment variables
 
-| Variable | Required | Example | Purpose |
-| -------- | -------- | ------- | ------- |
-| `HATHOR_API_URL` | yes | `http://192.168.1.10:5051` | Hathor server on the LAN |
-| `HATHOR_API_KEY` | yes | `hth_…` | Per-device key (`library:read` + `library:write`) |
+| Field / variable | Required | Example | Purpose |
+| ---------------- | -------- | ------- | ------- |
+| `hathor_api_url` / `HATHOR_API_URL` | yes | `http://192.168.1.10:5051` | Hathor server on the LAN |
+| `hathor_api_key` / `HATHOR_API_KEY` | yes | `hth_...` | Per-device key (`library:read` + `library:write`; add `player:read` + `player:control` for AI DJ) |
+
+The full key stays in Python/SQLite; Settings only receives a masked hint.
 
 A minimal `.env`:
 
@@ -54,6 +64,8 @@ A minimal `.env`:
 HATHOR_API_URL=http://192.168.1.10:5051
 HATHOR_API_KEY=hth_your-device-key
 ```
+
+Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `WEB_API=hth_...` for the key (or `WEB_API=http://...` when the key uses the canonical name).
 
 > **Security**: `.env` is ignored by `.gitignore` — never commit real credentials.
 
@@ -68,8 +80,8 @@ HATHOR_API_KEY=hth_your-device-key
 
 - On **first run** with sync configured, the app prompts the user to load the server library (songs, podcasts, playlists, lyrics, daily mix, history) and download missing files into their respective folders.
 - After that, everything is manual: **Push to Server** uploads rows + new file bytes; **Sync from Server** pulls the incremental delta down (see [Database & sync](DATABASE.md) and [Sync API migration](SYNC_API_MIGRATION.md)).
-- Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history).
+- Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history, podcast tags and podcast tag links).
 
 ## Turning sync off
 
-Delete or comment out `HATHOR_API_URL`/`HATHOR_API_KEY`, or remove the `.env` file entirely. The next launch will run fully local.
+Press **Clear** in Settings → Web API and delete or comment out `HATHOR_API_URL`/`HATHOR_API_KEY` in `.env` (or remove the file entirely). The next launch will run fully local.

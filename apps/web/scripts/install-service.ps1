@@ -19,6 +19,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $publishDir = Join-Path $root 'artifacts\publish'
 $dll = Join-Path $publishDir 'Hathor.Api.dll'
+# APK drop folder for the Android sideload updater (MobileAppController).
+# Persistent: never inside artifacts/publish, which build.ps1 deletes.
+$apkDir = Join-Path $StorageRoot 'apk'
 
 if ($Uninstall) {
     if (Get-Service $ServiceName -ErrorAction SilentlyContinue) {
@@ -94,16 +97,18 @@ else {
 # Library paths refresh on every install (not just first registration):
 # the service runs as LocalSystem, whose %APPDATA% is NOT yours — without
 # these the API serves an empty library from the SYSTEM profile.
-foreach ($dir in @($SongsPath, $PodcastsPath, $StorageRoot)) {
+foreach ($dir in @($SongsPath, $PodcastsPath, $StorageRoot, $apkDir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
 [Environment]::SetEnvironmentVariable('Library__SongsPath', $SongsPath, 'Machine')
 [Environment]::SetEnvironmentVariable('Library__PodcastsPath', $PodcastsPath, 'Machine')
 [Environment]::SetEnvironmentVariable('Database__StorageRoot', $StorageRoot, 'Machine')
+[Environment]::SetEnvironmentVariable('MobileApp__ApkDirectory', $apkDir, 'Machine')
 Write-Host "[ok] library paths pinned as machine env:"
 Write-Host "     songs=$SongsPath"
 Write-Host "     podcasts=$PodcastsPath"
 Write-Host "     storage=$StorageRoot"
+Write-Host "     apk=$apkDir"
 
 # LAN access: the service binds 0.0.0.0, but Windows Firewall drops inbound
 # LAN traffic by default. Profile Any (same as the MyHomeLab 443/8080 rules):

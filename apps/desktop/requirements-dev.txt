@@ -1,0 +1,4 @@
+# Desktop test tooling (CI and local contributors).
+# The test suite itself is stdlib-based, so this is optional for a quick run;
+# `python -m unittest discover -s tests` also works.
+pytest>=8.0

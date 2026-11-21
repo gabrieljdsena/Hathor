@@ -64,6 +64,10 @@
                         d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
                 </svg>
                 <span class="text-white/70 text-xs font-medium tracking-wide">Change Image</span>
+                <button type="button" onclick="event.stopPropagation(); removePlaylistCover()"
+                    class="mt-1 rounded-full border border-white/20 bg-black/40 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-red-200 hover:bg-red-500/30 hover:text-white transition-colors cursor-pointer">
+                    Remove cover
+                </button>
             </div>
         </div>
 
@@ -213,6 +217,7 @@
     // ── Edit mode state ──
     window._pvEditMode = false;
     window._pvNewCover = null; // holds picked base64 cover during editing
+    window._pvRemoveCover = false;
 
     function toggleEditPlaylist() {
         if (window._pvEditMode) {
@@ -225,6 +230,7 @@
     function enterEditMode() {
         window._pvEditMode = true;
         window._pvNewCover = null;
+        window._pvRemoveCover = false;
 
         const titleEl = document.getElementById("pv-title");
         const descEl = document.getElementById("pv-description");
@@ -238,6 +244,7 @@
         window._pvOrigTitle = titleEl.innerText;
         window._pvOrigDesc = descEl.innerText;
         window._pvOrigCoverSrc = document.getElementById("pv-cover").src;
+        window._pvOrigHasCover = !document.getElementById("pv-cover").classList.contains("hidden");
 
         // Make fields editable
         titleEl.contentEditable = "true";
@@ -293,8 +300,10 @@
             description: newDesc
         };
 
-        // If a new cover was picked, include it
-        if (window._pvNewCover) {
+        // If a new cover was picked, include it; removal stores NULL.
+        if (window._pvRemoveCover) {
+            updateData.thumbnail = null;
+        } else if (window._pvNewCover) {
             updateData.thumbnail = window._pvNewCover;
         }
 
@@ -309,6 +318,12 @@
                     window.currentPlaylist.Title = newTitle;
                     window.currentPlaylist.description = newDesc;
                     window.currentPlaylist.Description = newDesc;
+                    if (window._pvRemoveCover) {
+                        window.currentPlaylist.thumbnail = null;
+                        window.currentPlaylist.Thumbnail = null;
+                    } else if (window._pvNewCover) {
+                        window.currentPlaylist.thumbnail = window._pvNewCover;
+                    }
                 }
 
                 // Show success notification
@@ -335,8 +350,15 @@
 
         titleEl.innerText = window._pvOrigTitle || titleEl.innerText;
         descEl.innerText = window._pvOrigDesc || descEl.innerText;
-        if (window._pvOrigCoverSrc) {
+        const fallbackEl = document.getElementById("pv-cover-fallback");
+        if (window._pvOrigHasCover && window._pvOrigCoverSrc) {
             imgEl.src = window._pvOrigCoverSrc;
+            imgEl.classList.remove("hidden");
+            if (fallbackEl) fallbackEl.classList.add("hidden");
+        } else {
+            imgEl.removeAttribute("src");
+            imgEl.classList.add("hidden");
+            if (fallbackEl) fallbackEl.classList.remove("hidden");
         }
 
         exitEditModeUI();
@@ -375,6 +397,20 @@
 
         window._pvEditMode = false;
         window._pvNewCover = null;
+        window._pvRemoveCover = false;
+    }
+
+    function removePlaylistCover() {
+        if (!window._pvEditMode) return;
+        window._pvRemoveCover = true;
+        window._pvNewCover = null;
+        const imgEl = document.getElementById("pv-cover");
+        const fallbackEl = document.getElementById("pv-cover-fallback");
+        if (imgEl) {
+            imgEl.removeAttribute("src");
+            imgEl.classList.add("hidden");
+        }
+        if (fallbackEl) fallbackEl.classList.remove("hidden");
     }
 
     async function pickPlaylistImage() {
@@ -384,6 +420,7 @@
                 const base64 = await window.pywebview.api.pick_playlist_image();
                 if (base64) {
                     window._pvNewCover = base64;
+                    window._pvRemoveCover = false;
                     const imgEl = document.getElementById("pv-cover");
                     const fallbackEl = document.getElementById("pv-cover-fallback");
                     imgEl.src = base64;
@@ -554,21 +591,18 @@
         // Re-apply active search filter after sort
         const searchInput = document.getElementById("pv_txt_search");
         if (searchInput && searchInput.value.trim()) {
-            const value = searchInput.value.toLowerCase();
+            const value = searchInput.value;
             document.querySelectorAll("#pv-songs-container .song-row-container").forEach(row => {
                 const rawStr = row.getAttribute('data-path');
                 let songData = {};
                 if (rawStr) {
                     try { songData = JSON.parse(rawStr.replace(/&quot;/g, '"')); } catch (err) { }
                 }
-                const title = (songData.Title || "").toLowerCase();
-                const artist = (songData.Artist || "").toLowerCase();
-                const album = (songData.Album || "").toLowerCase();
-                if (title.indexOf(value) > -1 || artist.indexOf(value) > -1 || album.indexOf(value) > -1) {
-                    row.style.display = "";
-                } else {
-                    row.style.display = "none";
-                }
+                const fields = [songData.Title || "", songData.Artist || "", songData.Album || ""];
+                const match = window.fuzzyFields
+                    ? window.fuzzyFields(fields, value)
+                    : fields.join(' ').toLowerCase().indexOf(value.toLowerCase()) > -1;
+                row.style.display = match ? "" : "none";
             });
         }
     };
@@ -580,7 +614,7 @@
         document.addEventListener("keyup", function (e) {
             if (e.target && e.target.id === "pv_txt_search") {
                 clearTimeout(pvSearchTimeout);
-                const value = e.target.value.toLowerCase();
+                const value = e.target.value;
 
                 const clearBtn = document.getElementById('pv_clearBtn');
                 if (clearBtn) {
@@ -599,14 +633,11 @@
                         if (rawStr) {
                             try { songData = JSON.parse(rawStr.replace(/&quot;/g, '"')); } catch (err) { }
                         }
-                        const title = (songData.Title || "").toLowerCase();
-                        const artist = (songData.Artist || "").toLowerCase();
-                        const album = (songData.Album || "").toLowerCase();
-                        if (title.indexOf(value) > -1 || artist.indexOf(value) > -1 || album.indexOf(value) > -1) {
-                            container.style.display = "";
-                        } else {
-                            container.style.display = "none";
-                        }
+                        const fields = [songData.Title || "", songData.Artist || "", songData.Album || ""];
+                        const match = window.fuzzyFields
+                            ? window.fuzzyFields(fields, value)
+                            : fields.join(' ').toLowerCase().indexOf(value.toLowerCase()) > -1;
+                        container.style.display = match ? "" : "none";
                     });
                 }, 150);
             }

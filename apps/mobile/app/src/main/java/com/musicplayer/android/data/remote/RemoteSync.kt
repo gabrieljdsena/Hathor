@@ -168,9 +168,19 @@ object RemoteSync {
             }
         }
         for (row in snapshot.musicHistory) {
-            db.playlistDao().insertMusicHistoryIgnore(
-                MusicHistoryEntity(row.id, row.songFile, dateText(row.datePlayedMillis)),
+            val date = dateText(row.datePlayedMillis)
+            // Natural-key dedupe first: a server-rekeyed row must not
+            // reappear locally as a second play.
+            if (db.playlistDao().musicHistoryIdFor(row.songFile, date) != null) continue
+            val inserted = db.playlistDao().insertMusicHistoryIgnore(
+                MusicHistoryEntity(row.id, row.songFile, date),
             )
+            if (inserted == -1L) {
+                // The server id collides with a different local row.
+                db.playlistDao().insertMusicHistoryIgnore(
+                    MusicHistoryEntity(0, row.songFile, date),
+                )
+            }
         }
         for (row in snapshot.playlistHistory) {
             db.playlistDao().insertPlaylistHistoryIgnore(
@@ -186,6 +196,10 @@ object RemoteSync {
         for (row in snapshot.tagLinks) {
             db.podcastTagLinkDao().insertLinkIgnore(
                 PodcastTagLinkEntity(row.id, row.podcastFile, row.tagId),
+            )
+            // The server's assignment supersedes a local unassign tombstone.
+            db.syncDeletionDao().delete(
+                "podcast_tag_links", tagLinkKey(row.tagId, row.podcastFile),
             )
         }
         // Episode chapters (upsert by id; empty delta never wipes local).
@@ -246,6 +260,17 @@ object RemoteSync {
             .apply()
     }
 
+    // Podcast tag-link tombstone key: "<tagId>:<file>". Split on the first
+    // colon so a filename containing colons still round-trips.
+    internal fun parseTagLinkKey(key: String): Pair<Long, String>? {
+        val sep = key.indexOf(':')
+        if (sep <= 0 || sep == key.lastIndex) return null
+        val tagId = key.substring(0, sep).toLongOrNull() ?: return null
+        return tagId to key.substring(sep + 1)
+    }
+
+    private fun tagLinkKey(tagId: Long, file: String) = "$tagId:$file"
+
     // Server-authoritative tombstones (delta lists deletions-since): drop
     // the local rows AND the bytes, so deletes converge instead of
     // resurrecting on the next push. One bad tombstone never aborts.
@@ -284,6 +309,9 @@ object RemoteSync {
                     "podcast_tags" -> d.rowKey.toLongOrNull()?.let { id ->
                         db.podcastTagDao().deleteLinksForTags(listOf(id))
                         db.podcastTagDao().deleteTagById(id)
+                    }
+                    "podcast_tag_links" -> parseTagLinkKey(d.rowKey)?.let { (tagId, file) ->
+                        db.podcastTagLinkDao().deleteLink(file, tagId)
                     }
                     "podcast_chapters" -> db.podcastChapterDao().deleteForEpisode(d.rowKey)
                 }

@@ -1,5 +1,6 @@
 using Hathor.Application.Ports;
 using Hathor.Application.Playlists;
+using Hathor.Application.PodcastTags;
 using Hathor.Application.Sync;
 using Hathor.Domain.Entities;
 using Hathor.Infrastructure.Ef;
@@ -403,11 +404,16 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 }
             }
 
+        var linkTombstoneKeys = new List<string>();
         if (s.PodcastTagLinks is not null)
             foreach (var r in s.PodcastTagLinks)
             {
                 var tid = tagRemap.GetValueOrDefault(r.TagId, r.TagId);
                 keepTagLinks?.Add((tid, r.PodcastFile));
+                // A re-assignment cancels any older unassign tombstone for
+                // this natural key; otherwise a later full pull could delete
+                // the link again.
+                linkTombstoneKeys.Add(PodcastTagLinkKeys.For(tid, r.PodcastFile));
                 var existing = await db.PodcastTagLinks.FindAsync([r.Id], ct);
                 if (existing is null)
                 {
@@ -432,6 +438,15 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 }
                 await FlushAsync();
             }
+
+        if (linkTombstoneKeys.Count > 0)
+        {
+            var stale = await db.SyncDeletions.Where(d =>
+                    d.UserId == userId && d.TableName == "podcast_tag_links"
+                    && linkTombstoneKeys.Contains(d.RowKey))
+                .ToListAsync(ct);
+            if (stale.Count > 0) db.SyncDeletions.RemoveRange(stale);
+        }
 
         // Pull reconciliation: drop local link rows absent from a full remote
         // snapshot (unlinks + parent-deletes with cascaded remote links).
@@ -495,26 +510,33 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 await FlushAsync();
             }
 
-        // Append-only history: insert-if-absent by id (desktop INSERT IGNORE),
-        // re-keying on cross-user collisions.
+        // Append-only history: natural-key idempotency (same user/file/second)
+        // plus id-collision re-keying. Two devices can generate the same local
+        // autoincrement id; the second row must be inserted under a new id
+        // instead of being dropped.
         if (s.MusicHistory is not null)
             foreach (var r in s.MusicHistory)
             {
-                if (!await db.MusicHistory.AnyAsync(h => h.Id == r.Id, ct))
+                var playedAt = r.DatePlayedUtc.Kind == DateTimeKind.Unspecified
+                    ? DateTime.SpecifyKind(r.DatePlayedUtc, DateTimeKind.Utc)
+                    : r.DatePlayedUtc.ToUniversalTime();
+                var secondStart = playedAt.AddTicks(
+                    -(playedAt.Ticks % TimeSpan.TicksPerSecond));
+                var secondEnd = secondStart.AddSeconds(1);
+                var exists = await db.MusicHistory.AnyAsync(h =>
+                    h.UserId == userId && h.SongFile == r.SongFile &&
+                    h.DatePlayedUtc >= secondStart && h.DatePlayedUtc < secondEnd, ct);
+                if (!exists)
                 {
-                    await db.MusicHistory.AddAsync(new MusicHistoryEntry
+                    var idTaken = await db.MusicHistory.AnyAsync(h => h.Id == r.Id, ct);
+                    var row = new MusicHistoryEntry
                     {
-                        Id = r.Id, UserId = userId, SongFile = r.SongFile, DatePlayedUtc = r.DatePlayedUtc,
-                    }, ct);
-                    counts[7]++;
-                }
-                else if (!await db.MusicHistory.AnyAsync(
-                    h => h.Id == r.Id && h.UserId == userId, ct))
-                {
-                    await db.MusicHistory.AddAsync(new MusicHistoryEntry
-                    {
-                        UserId = userId, SongFile = r.SongFile, DatePlayedUtc = r.DatePlayedUtc,
-                    }, ct);
+                        UserId = userId,
+                        SongFile = r.SongFile,
+                        DatePlayedUtc = playedAt,
+                    };
+                    if (!idTaken) row.Id = r.Id;
+                    await db.MusicHistory.AddAsync(row, ct);
                     counts[7]++;
                 }
                 await FlushAsync();
@@ -651,6 +673,9 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
                 .Where(x => x.UserId == userId && x.PlaylistId == hid).ExecuteDeleteAsync(ct),
             "podcast_tags" when long.TryParse(key, out var tid) => await db.PodcastTags
                 .Where(x => x.UserId == userId && x.Id == tid).ExecuteDeleteAsync(ct),
+            "podcast_tag_links" when TryParseTagLinkKey(key, out var linkTagId, out var linkFile) =>
+                await db.PodcastTagLinks.Where(x => x.UserId == userId
+                    && x.TagId == linkTagId && x.PodcastFile == linkFile).ExecuteDeleteAsync(ct),
             "podcast_chapters" => await db.PodcastTimestamps
                 .Where(x => x.UserId == userId && x.PodcastFile == key).ExecuteDeleteAsync(ct),
             _ => 0,
@@ -667,5 +692,18 @@ public sealed class EfSyncService(HathorDbContext db, ILibraryStorage? storage =
             return true;
         }
         return false;
+    }
+
+    // Podcast tag-link tombstone key: "<tagId>:<file>". Split on the first
+    // colon so a filename containing colons still round-trips.
+    private static bool TryParseTagLinkKey(string key, out long tagId, out string file)
+    {
+        tagId = 0;
+        file = "";
+        var sep = key.IndexOf(':');
+        if (sep <= 0 || sep == key.Length - 1) return false;
+        if (!long.TryParse(key.AsSpan(0, sep), out tagId)) return false;
+        file = key[(sep + 1)..];
+        return true;
     }
 }

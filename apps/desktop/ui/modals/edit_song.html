@@ -71,6 +71,11 @@
                 </div>
             </div>
 
+            <div id="edit-pending-notice"
+                class="hidden rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Pending edit &mdash; applies when the track changes.
+            </div>
+
             <div class="flex justify-end space-x-3 pt-4 border-t border-white/10 mt-5">
                 <button type="button" onclick="closeEditModal()"
                     class="px-4 py-2 hover:cursor-pointer bg-white/[0.06] text-zinc-300 font-medium rounded-lg border border-white/10 hover:bg-white/[0.12] hover:text-white focus:outline-none transition-all duration-300 hover:scale-105 active:scale-95">Cancel</button>
@@ -88,6 +93,8 @@
         document.getElementById('edit-title').value = song.Title !== 'Unknown' ? song.Title : '';
         document.getElementById('edit-artist').value = song.Artist !== 'Unknown' ? song.Artist : '';
         document.getElementById('edit-album').value = song.Album !== 'Unknown' ? song.Album : '';
+        const pendingNotice = document.getElementById('edit-pending-notice');
+        if (pendingNotice) pendingNotice.classList.add('hidden');
         document.getElementById('edit-year').value = song.Year !== 'Unknown' ? song.Year : '';
         document.getElementById('edit-cover-art-data').value = song.CoverArt || '';
         document.getElementById('edit-is-podcast').value = song.IsPodcast ? '1' : '';
@@ -186,9 +193,25 @@
         async function saveMetadata(data) {
             try {
                 const result = await window.pywebview.api.update_song_metadata(data);
-                if (result === false) {
+                if (result === false || (result && result.ok === false)) {
                     const notyf = new Notyf({ position: { x: 'right', y: 'bottom' } });
                     notyf.error({ message: 'Failed to save metadata. Check the file is accessible.', duration: 0, dismissible: true });
+                    return;
+                }
+                if (result && result.pending) {
+                    const notice = document.getElementById('edit-pending-notice');
+                    if (notice) {
+                        notice.textContent = result.message || 'Pending edit — applies when the track changes.';
+                        notice.classList.remove('hidden');
+                    }
+                    const notyf = new Notyf({ position: { x: 'right', y: 'bottom' } });
+                    notyf.open({
+                        message: '<b>Pending edit</b> — applies when the track changes.',
+                        background: '#f59e0b',
+                        duration: 4000,
+                        dismissible: true
+                    });
+                    setTimeout(closeEditModal, 1400);
                     return;
                 }
                 closeEditModal();

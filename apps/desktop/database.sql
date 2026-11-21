@@ -52,6 +52,10 @@ create table if not exists Settings(
     crossfade_seconds real DEFAULT 5,
     chapter_skip integer DEFAULT 0,
     normalize_volume integer DEFAULT 1,
+    hathor_api_url text,
+    hathor_api_key text,
+    device_id text,
+    device_label text,
     FOREIGN KEY (current_song) REFERENCES Songs(file)
 );
 
@@ -83,6 +87,10 @@ create table if not exists Music_History(
     song_file varchar(255) not null,
     date_played datetime default CURRENT_TIMESTAMP,
     FOREIGN KEY (song_file) REFERENCES Songs(file)
+);
+
+create table if not exists History_Sync_Queue(
+    history_id INTEGER PRIMARY KEY
 );
 
 create table if not exists Playlist_History(

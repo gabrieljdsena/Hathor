@@ -63,6 +63,12 @@ data class MusicHistoryEntity(
     @ColumnInfo(name = "date_played") val datePlayed: String?
 )
 
+/** Local history rows waiting for the automatic Web API flush. */
+@Entity(tableName = "History_Sync_Queue")
+data class HistorySyncQueueEntity(
+    @PrimaryKey @ColumnInfo(name = "history_id") val historyId: Long
+)
+
 @Entity(tableName = "Playlist_History")
 data class PlaylistHistoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -234,6 +240,9 @@ interface SyncDeletionDao {
     @Query("SELECT * FROM Sync_Deletions")
     suspend fun all(): List<SyncDeletionEntity>
 
+    @Query("DELETE FROM Sync_Deletions WHERE table_name = :table AND row_key = :key")
+    suspend fun delete(table: String, key: String)
+
     @Query("DELETE FROM Sync_Deletions WHERE table_name IN (:tables)")
     suspend fun clearTables(tables: List<String>)
 }
@@ -309,7 +318,16 @@ interface PlaylistDao {
     suspend fun insertLink(link: SongPlaylistEntity)
 
     @Insert
-    suspend fun insertMusicHistory(entry: MusicHistoryEntity)
+    suspend fun insertMusicHistory(entry: MusicHistoryEntity): Long
+
+    @Query("SELECT * FROM Music_History WHERE id IN (:ids)")
+    suspend fun musicHistoryByIds(ids: List<Long>): List<MusicHistoryEntity>
+
+    @Query(
+        "SELECT id FROM Music_History WHERE song_file = :file " +
+            "AND replace(substr(date_played, 1, 19), 'T', ' ') = :date LIMIT 1"
+    )
+    suspend fun musicHistoryIdFor(file: String, date: String?): Long?
 
     @Query("SELECT * FROM Music_History ORDER BY date_played DESC")
     suspend fun getMusicHistory(): List<MusicHistoryEntity>
@@ -382,6 +400,24 @@ interface PlaylistDao {
     @Query("SELECT * FROM Playlist_History ORDER BY id")
     suspend fun allPlaylistHistoryOrdered(): List<PlaylistHistoryEntity>
 
+}
+
+@Dao
+interface HistorySyncQueueDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun enqueue(entry: HistorySyncQueueEntity)
+
+    @Query("SELECT history_id FROM History_Sync_Queue ORDER BY history_id")
+    suspend fun pendingIds(): List<Long>
+
+    @Query("DELETE FROM History_Sync_Queue WHERE history_id IN (:ids)")
+    suspend fun clear(ids: List<Long>)
+
+    @Query("DELETE FROM History_Sync_Queue WHERE history_id <= :maxId")
+    suspend fun clearUpTo(maxId: Long)
+
+    @Query("DELETE FROM History_Sync_Queue")
+    suspend fun clearAll()
 }
 
 @Dao
@@ -584,17 +620,19 @@ interface SettingsDao {
     entities = [
         SongEntity::class, PlaylistEntity::class, SongPlaylistEntity::class,
         LyricEntity::class, MusicHistoryEntity::class, PlaylistHistoryEntity::class,
+        HistorySyncQueueEntity::class,
         SyncDeletionEntity::class, SettingsEntity::class, DownloadJobEntity::class,
         PodcastEntity::class, DailyMixEntity::class,
         PodcastTagEntity::class, PodcastTagLinkEntity::class,
         PodcastChapterEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songDao(): SongDao
     abstract fun playlistDao(): PlaylistDao
+    abstract fun historySyncQueueDao(): HistorySyncQueueDao
     abstract fun settingsDao(): SettingsDao
     abstract fun downloadJobDao(): DownloadJobDao
     abstract fun podcastDao(): PodcastDao
@@ -722,13 +760,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Durable outbox for automatic Music_History sync.
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS History_Sync_Queue (" +
+                        "history_id INTEGER PRIMARY KEY NOT NULL)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "music_player.db" // same filename as desktop
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { INSTANCE = it }
             }
     }
 }

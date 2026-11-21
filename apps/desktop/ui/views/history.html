@@ -68,6 +68,7 @@
 <script>
   window.loadDownloadHistory = async function (page) {
     page = page || 1;
+    window._historyDownloadQueue = null;
     var container = document.getElementById("download-history-container");
     if (!container) return;
     container.innerHTML = '<div class="text-center py-8 text-zinc-500"><span class="spinner"></span> Loading Download History...</div>';
@@ -152,6 +153,7 @@
 
   window.loadPlayedHistory = async function (page) {
     page = page || 1;
+    window._historyPlayedQueue = null;
     var container = document.getElementById("played-history-container");
     if (!container) return;
     container.innerHTML = '<div class="text-center py-8 text-zinc-500"><span class="spinner"></span> Loading Played History...</div>';
@@ -206,6 +208,7 @@
       }
 
       song._historyId = dateField + '_' + song.File + '_' + (song[dateField] || i);
+      song._historyTab = dateField === 'DateDownload' ? 'download' : 'played';
       
       var isCurrentSong = false;
       var currentSong = window.current_playing_song || null;
@@ -311,6 +314,19 @@
         actions.appendChild(redlBtn);
       }
 
+      var menuBtn = document.createElement('button');
+      menuBtn.className = 'history-menu-btn cursor-pointer flex items-center justify-center w-10 h-10 rounded-full bg-white/[0.04] text-zinc-400 hover:bg-white/10 hover:text-orange-400 transition-colors shadow-md';
+      menuBtn.title = 'More actions';
+      menuBtn.innerHTML = '<svg class="w-5 h-5 pointer-events-none" fill="currentColor" viewBox="0 0 24 24"><path d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Zm0 6a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z"/></svg>';
+      menuBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (typeof window.openSongContextMenu === 'function') {
+          window.openSongContextMenu(this._songData, e.clientX, e.clientY);
+        }
+      });
+      menuBtn._songData = song;
+      actions.appendChild(menuBtn);
+
       row.appendChild(thumb);
       row.appendChild(info);
       row.appendChild(actions);
@@ -391,11 +407,49 @@
     if (typeof window.updateHistoryPlayState === 'function') window.updateHistoryPlayState();
   });
 
+  window._historyDownloadQueue = null;
+  window._historyPlayedQueue = null;
+
+  async function historyQueueFor(tab) {
+    const cacheKey = tab === 'download' ? '_historyDownloadQueue' : '_historyPlayedQueue';
+    if (window[cacheKey]) return window[cacheKey];
+    const api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+    if (!api) return [];
+    try {
+      const result = tab === 'download'
+        ? await api.get_download_history(1, 5000, false)
+        : await api.get_played_history(1, 5000, false);
+      const items = (result && (result.items || result)) || [];
+      const seen = {};
+      window[cacheKey] = items.filter(function (song) {
+        if (!song || !song.File || seen[song.File]) return false;
+        seen[song.File] = true;
+        return true;
+      });
+    } catch (e) {
+      console.error('History queue prefetch failed:', e);
+      window[cacheKey] = [];
+    }
+    return window[cacheKey];
+  }
+
   window.playHistorySong = function (songData) {
     if (window.pywebview && window.pywebview.api) {
       window.current_playing_song = songData;
       if (typeof window.set_active_song_ui === 'function') window.set_active_song_ui(songData);
-      window.pywebview.api.populate_queue(songData).then(function () {
+      const tab = songData._historyTab === 'download' ? 'download' : 'played';
+      const source = tab === 'download'
+          ? { type: 'download_history', id: null }
+          : { type: 'recently_played', id: null };
+      historyQueueFor(tab).then(function (songs) {
+        const list = (songs && songs.length) ? songs : [songData];
+        const inList = list.some(function (s) { return s.File === songData.File; });
+        const queue = inList ? list : [songData].concat(list);
+        if (window.pywebview.api.populate_queue_from_list) {
+          return window.pywebview.api.populate_queue_from_list(songData, queue, null, source);
+        }
+        return window.pywebview.api.populate_queue(songData);
+      }).then(function () {
         window.play_button(songData);
       });
     }

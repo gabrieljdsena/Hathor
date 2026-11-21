@@ -5,11 +5,31 @@ import re
 import sqlite3
 import unicodedata
 
+from .api_config import get_api_config
+from .hathor_api import HathorApi
+
 try:
     import pykakasi
     kks = pykakasi.kakasi()
 except ImportError:
     kks = None
+
+
+def _pick(data, *names, default=None):
+    if not isinstance(data, dict):
+        return default
+    for name in names:
+        if name in data and data[name] is not None:
+            return data[name]
+    return default
+
+
+def _text(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() == "null" else text
+
 
 class LyricsService:
     CHAPTER_KEY_MARKER = "::chapter:"
@@ -121,9 +141,6 @@ class LyricsService:
         return None
 
     def _lyrics_payload(self, synced, plain, chapter=None):
-        if kks:
-            synced = self.romanize_text(synced, is_lrc=True) if synced else None
-            plain = self.romanize_text(plain, is_lrc=False) if plain else None
         payload = {"synced": synced, "plain": plain}
         if chapter:
             payload.update({
@@ -161,8 +178,26 @@ class LyricsService:
                 
         return '\n'.join(romanized_lines)
 
+    def romanize_with_server(self, text, is_lrc=False):
+        """Prefer the Web API romanizer, fall back to local pykakasi."""
+        if not text:
+            return text
+        try:
+            url, key = get_api_config(self.api.db_path)
+            if url and key:
+                response = HathorApi(url, key, timeout=8).post(
+                    "/api/v1/lyrics/romanize",
+                    payload={"Text": text, "IsLrc": bool(is_lrc)},
+                )
+                converted = _text(_pick(response, "text", "Text"))
+                if converted:
+                    return converted
+        except Exception as exc:
+            print(f" [Python] Server romanization unavailable: {exc}")
+        return self.romanize_text(text, is_lrc)
+
     def _clean_track_artist(self, track_name, artist_name):
-        clean_track = track_name.replace('？', '?').replace('！', '!')
+        clean_track = track_name.replace('ï¼Ÿ', '?').replace('ï¼', '!')
         clean_track = re.sub(r'\s*[\(\[].*?(remaster|mix|version|edit|live|feat\.|ft\.).*?[\)\]]', '', clean_track, flags=re.IGNORECASE).strip()
         clean_artist = artist_name or ""
 
@@ -211,9 +246,6 @@ class LyricsService:
                 if not synced and not plain:
                     return None
                 self.save_lyrics_for_current(synced, plain)
-                if kks:
-                    synced = self.romanize_text(synced, is_lrc=True) if synced else None
-                    plain = self.romanize_text(plain, is_lrc=False) if plain else None
                 return {"synced": synced, "plain": plain}
             return None
         except urllib.error.HTTPError as e:
@@ -246,6 +278,70 @@ class LyricsService:
             print(f" [Python] Lyrics search failed: {e}")
             return []
 
+    def _server_lyrics_search(self, track, artist, album_name=None, duration_seconds=None):
+        """Call the Hathor Web API candidate search when configured."""
+        try:
+            url, key = get_api_config(self.api.db_path)
+            if not url or not key:
+                return None
+            payload = {"Track": track, "Artist": artist or ""}
+            if album_name:
+                payload["Album"] = album_name
+            if duration_seconds:
+                payload["Duration"] = int(duration_seconds)
+            response = HathorApi(url, key, timeout=6).post(
+                "/api/v1/lyrics/search", payload=payload)
+            return response if isinstance(response, list) else None
+        except Exception as exc:
+            print(f" [Python] Server lyrics search unavailable: {exc}")
+            return None
+
+    def _normalize_candidates(self, results):
+        hits = []
+        seen = set()
+        for item in results or []:
+            if not isinstance(item, dict):
+                continue
+            if bool(_pick(item, "instrumental", "Instrumental", default=False)):
+                continue
+            synced = _pick(item, "syncedLyrics", "SyncedLyrics", "synced")
+            plain = _pick(item, "plainLyrics", "PlainLyrics", "plain")
+            if not synced and not plain:
+                continue
+            track = _text(_pick(item, "trackName", "TrackName", "track"))
+            artist = _text(_pick(item, "artistName", "ArtistName", "artist"))
+            key = (track.lower(), artist.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append({
+                "id": _pick(item, "id", "Id"),
+                "trackName": track,
+                "artistName": artist,
+                "albumName": _pick(item, "albumName", "AlbumName", "album"),
+                "duration": _pick(item, "duration", "Duration"),
+                "syncedLyrics": synced,
+                "plainLyrics": plain,
+            })
+            if len(hits) >= 10:
+                break
+        return hits
+
+    def search_lyrics_candidates(self, track_name, artist_name,
+                                 album_name=None, duration_seconds=None):
+        """Candidates from the Web API when configured, else lrclib."""
+        clean_track, clean_artist = self._clean_track_artist(
+            track_name or "", artist_name or "")
+        if not clean_track:
+            return []
+        remote = self._server_lyrics_search(
+            clean_track, clean_artist, album_name, duration_seconds)
+        if remote:
+            return self._normalize_candidates(remote)
+        return self._normalize_candidates(
+            self._lrclib_search(
+                clean_track, clean_artist, album_name, duration_seconds))
+
     def _pick_chapter_candidate(self, title, artist, results):
         """First candidate whose normalized title/artist match the chapter."""
         want_title = self._normalize_title(title)
@@ -273,7 +369,7 @@ class LyricsService:
         title, artist = self._split_chapter_name(chapter.get('name'))
         if not title:
             return None
-        results = self._lrclib_search(title, artist)
+        results = self.search_lyrics_candidates(title, artist)
         best = self._pick_chapter_candidate(title, artist, results)
         if not best:
             return None
@@ -292,7 +388,8 @@ class LyricsService:
             return False
         try:
             lyrics_json = json.dumps({"synced": synced, "plain": plain})
-            with sqlite3.connect(self.api.db_path) as conn:
+            conn = sqlite3.connect(self.api.db_path)
+            try:
                 rows = conn.execute(
                     "SELECT id FROM Lyrics WHERE song_file = ? ORDER BY id",
                     (cache_key,)
@@ -309,6 +406,17 @@ class LyricsService:
                         "INSERT INTO Lyrics (song_file, lyrics, offset_ms) VALUES (?, ?, 0)",
                         (cache_key, lyrics_json)
                     )
+                try:
+                    conn.execute(
+                        "DELETE FROM Sync_Deletions "
+                        "WHERE lower(table_name) = 'lyrics' AND row_key = ?",
+                        (cache_key,),
+                    )
+                except sqlite3.Error:
+                    pass
+                conn.commit()
+            finally:
+                conn.close()
             return True
         except Exception as e:
             print(f" [Python] Lyrics cache write error: {e}")
@@ -322,8 +430,9 @@ class LyricsService:
         cache_key = song_file
         if chapter_id is not None:
             chapter = self._chapter_by_id(chapter_id)
-            if chapter:
-                cache_key = self.chapter_key(song_file, chapter['id'])
+            if not chapter:
+                return False
+            cache_key = self.chapter_key(song_file, chapter['id'])
         return self._save_lyrics_row(cache_key, synced, plain)
 
     def delete_lyrics_for_current(self, chapter_id=None):
@@ -334,12 +443,25 @@ class LyricsService:
         cache_key = song_file
         if chapter_id is not None:
             chapter = self._chapter_by_id(chapter_id)
-            if chapter:
-                cache_key = self.chapter_key(song_file, chapter['id'])
+            if not chapter:
+                return False
+            cache_key = self.chapter_key(song_file, chapter['id'])
         try:
-            with sqlite3.connect(self.api.db_path) as conn:
+            conn = sqlite3.connect(self.api.db_path)
+            try:
                 cur = conn.execute("DELETE FROM Lyrics WHERE song_file = ?", (cache_key,))
+                if cur.rowcount > 0:
+                    try:
+                        conn.execute(
+                            "INSERT INTO Sync_Deletions (table_name, row_key) VALUES ('lyrics', ?)",
+                            (cache_key,),
+                        )
+                    except sqlite3.Error:
+                        pass
+                conn.commit()
                 return cur.rowcount > 0
+            finally:
+                conn.close()
         except Exception as e:
             print(f" [Python] Lyrics delete error: {e}")
             return False
@@ -352,16 +474,19 @@ class LyricsService:
         # 1. Check local cache first (enables offline lyrics)
         if cache_key:
             try:
-                with sqlite3.connect(self.api.db_path) as conn:
+                conn = sqlite3.connect(self.api.db_path)
+                try:
                     cursor = conn.execute(
                         "SELECT lyrics FROM Lyrics WHERE song_file = ? ORDER BY id LIMIT 1",
                         (cache_key,)
                     )
                     row = cursor.fetchone()
-                    if row and row[0]:
-                        cached = json.loads(row[0])
-                        return self._lyrics_payload(
-                            cached.get("synced"), cached.get("plain"), chapter)
+                finally:
+                    conn.close()
+                if row and row[0]:
+                    cached = json.loads(row[0])
+                    return self._lyrics_payload(
+                        cached.get("synced"), cached.get("plain"), chapter)
             except Exception as e:
                 print(f" [Python] Lyrics cache read error: {e}")
 
@@ -422,7 +547,7 @@ class LyricsService:
         return None
 
     def search_lyrics(self, track_name, artist_name, album_name=None, duration_seconds=None):
-        """Search lrclib for candidate lyrics when an exact match isn't found."""
+        """Search candidates (Web API first, lrclib fallback)."""
         chapter = self._active_chapter(self.api.current_filename)
         if chapter:
             # Chapter search is strict: normalized title must match and, when
@@ -430,55 +555,20 @@ class LyricsService:
             title, artist = self._split_chapter_name(chapter.get('name'))
             if not title:
                 return []
-            results = self._lrclib_search(title, artist)
+            results = self.search_lyrics_candidates(title, artist)
             suggestions = []
             for item in results:
                 if self._pick_chapter_candidate(title, artist, [item]) is None:
                     continue
-                suggestions.append({
-                    "id": item.get("id"),
-                    "trackName": item.get("trackName") or "",
-                    "artistName": item.get("artistName") or "",
-                    "albumName": item.get("albumName"),
-                    "duration": item.get("duration"),
-                    "syncedLyrics": item.get("syncedLyrics"),
-                    "plainLyrics": item.get("plainLyrics"),
-                    "chapterId": chapter['id'],
-                    "chapterStartSecs": chapter.get('start_secs') or 0,
-                })
+                hit = dict(item)
+                hit["chapterId"] = chapter['id']
+                hit["chapterStartSecs"] = chapter.get('start_secs') or 0
+                suggestions.append(hit)
                 if len(suggestions) >= 10:
                     break
             return suggestions
 
         if not track_name:
             return []
-
-        clean_track, clean_artist = self._clean_track_artist(track_name, artist_name)
-        results = self._lrclib_search(
-            clean_track, clean_artist, album_name, duration_seconds)
-
-        suggestions = []
-        seen = set()
-        for item in results:
-            if item.get("instrumental"):
-                continue
-            if not (item.get("syncedLyrics") or item.get("plainLyrics")):
-                continue
-            track = item.get("trackName") or ""
-            artist = item.get("artistName") or ""
-            key = (track.lower(), artist.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            suggestions.append({
-                "id": item.get("id"),
-                "trackName": track,
-                "artistName": artist,
-                "albumName": item.get("albumName"),
-                "duration": item.get("duration"),
-                "syncedLyrics": item.get("syncedLyrics"),
-                "plainLyrics": item.get("plainLyrics"),
-            })
-            if len(suggestions) >= 10:
-                break
-        return suggestions
+        return self.search_lyrics_candidates(
+            track_name, artist_name, album_name, duration_seconds)

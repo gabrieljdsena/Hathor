@@ -105,6 +105,35 @@ public sealed class Phase2HandlerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UnassignPodcastTag_RecordsLinkTombstone_AssignClearsIt()
+    {
+        var create = new CreatePodcastTagHandler(Tags);
+        var id = await create.Handle(new CreatePodcastTagCommand(_userId, "Tech"), CancellationToken.None);
+        await Tags.AssignAsync(_userId, "e.mp3", id);
+        await Tags.SaveChangesAsync();
+
+        var key = $"{id}:e.mp3";
+        var unassign = new UnassignPodcastTagHandler(Tags, Tombstones);
+        (await unassign.Handle(
+            new UnassignPodcastTagCommand(_userId, "e.mp3", id), CancellationToken.None))
+            .Should().BeTrue();
+
+        _db.PodcastTagLinks.Should().BeEmpty();
+        _db.SyncDeletions.Should().ContainSingle(d =>
+            d.TableName == "podcast_tag_links" && d.RowKey == key);
+
+        var assign = new AssignPodcastTagHandler(Tags, Tombstones);
+        (await assign.Handle(
+            new AssignPodcastTagCommand(_userId, "e.mp3", id), CancellationToken.None))
+            .Should().BeTrue();
+
+        _db.PodcastTagLinks.Should().ContainSingle(l =>
+            l.TagId == id && l.PodcastFile == "e.mp3");
+        _db.SyncDeletions.AsNoTracking().Should().NotContain(d =>
+            d.TableName == "podcast_tag_links" && d.RowKey == key);
+    }
+
+    [Fact]
     public async Task UpdateSongMetadata_PreservesGenre_WritesImmediatelyWhenNotCurrent()
     {
         var storage = Substitute.For<ILibraryStorage>();

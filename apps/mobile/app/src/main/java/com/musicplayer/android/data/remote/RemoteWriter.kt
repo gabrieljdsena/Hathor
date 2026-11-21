@@ -4,6 +4,7 @@ import android.util.Log
 import com.musicplayer.android.data.api.SyncApi
 import com.musicplayer.android.data.api.SyncApiException
 import com.musicplayer.android.data.local.AppDatabase
+import com.musicplayer.android.data.local.MusicHistoryEntity
 import com.musicplayer.android.engine.DownloadEngine
 import java.io.File
 import java.time.Instant
@@ -29,7 +30,8 @@ object RemoteWriter {
     private val songTables = listOf(
         "songs", "playlists", "lyrics", "music_history", "playlist_history",
     )
-    private val podcastTables = listOf("podcasts", "podcast_tags", "podcast_chapters")
+    private val podcastTables =
+        listOf("podcasts", "podcast_tags", "podcast_tag_links", "podcast_chapters")
 
     data class PushReport(val rows: Int, val message: String)
 
@@ -52,7 +54,9 @@ object RemoteWriter {
             JSONObject().put("Id", it.id).put("SongFile", it.songFile)
                 .put("LyricsJson", it.lyrics).put("OffsetMs", it.offsetMs)
         }.also { rows += it.size }))
-        payload.put("MusicHistory", JSONArray(db.playlistDao().allMusicHistoryOrdered().map {
+        val historyRows = db.playlistDao().allMusicHistoryOrdered()
+        val historyMaxId = historyRows.maxOfOrNull { it.id } ?: 0L
+        payload.put("MusicHistory", JSONArray(historyRows.map {
             JSONObject().put("Id", it.id).put("SongFile", it.songFile)
                 .put("DatePlayedUtc", isoDate(it.datePlayed))
         }.also { rows += it.size }))
@@ -69,6 +73,11 @@ object RemoteWriter {
             api.postImport(payload)
         } catch (e: SyncApiException) {
             throw IllegalStateException(e.message)
+        }
+        // The full audio payload included every history row collected above;
+        // a play that happened during the upload keeps its newer outbox entry.
+        if (historyMaxId > 0) {
+            db.historySyncQueueDao().clearUpTo(historyMaxId)
         }
         val uploaded = uploadMissing(api, engine.outputDir(), "songs", result)
         db.syncDeletionDao().clearTables(songTables)
@@ -113,6 +122,13 @@ object RemoteWriter {
         .put("Title", title)
         .put("DateDownloadUtc", isoDate(localDate))
         .put("Artist", artist)
+
+    /** Scoped payload for the automatic per-play history flush. */
+    fun historyPayload(rows: List<MusicHistoryEntity>): JSONObject =
+        JSONObject().put("MusicHistory", JSONArray(rows.map {
+            JSONObject().put("Id", it.id).put("SongFile", it.songFile)
+                .put("DatePlayedUtc", isoDate(it.datePlayed))
+        }))
 
     private suspend fun deletionsJson(db: AppDatabase, tables: List<String>): JSONArray =
         JSONArray(db.syncDeletionDao().forTables(tables).map {

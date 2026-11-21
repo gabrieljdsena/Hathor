@@ -3,13 +3,14 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { usePlayer } from '../store/player'
-import LibraryTable, { resolveSong, type SortKey } from '../components/LibraryTable'
+import LibraryTable, { resolveSong, SONG_SORT_KEYS } from '../components/LibraryTable'
 import Modal from '../components/ui/Modal'
 import { GhostButton, PrimaryButton } from '../components/ui/fields'
 import { PlayCircleButton } from '../components/ui/buttons'
 import PlaylistFormModal from '../components/ui/PlaylistFormModal'
 import { EmptyState, LoadingState } from '../components/ui/states'
 import { useDebouncedValue } from '../components/ui/SearchInput'
+import { SORT_STORAGE, usePersistedSort } from '../hooks/usePersistedSort'
 import { PlaylistCover } from './Playlists'
 import { SONGS_PAGE_SIZE } from './Songs'
 
@@ -26,8 +27,10 @@ export default function PlaylistDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [search, setSearch] = useState('')
   const debounced = useDebouncedValue(search)
-  const [sort, setSort] = useState<SortKey | null>(null)
-  const [dir, setDir] = useState<'asc' | 'desc'>('asc')
+  const { sort, dir, setSort } = usePersistedSort(
+    SORT_STORAGE.playlist,
+    SONG_SORT_KEYS,
+  )
 
   const { data: playlists } = useQuery({ queryKey: ['playlists'], queryFn: api.playlists })
   const playlist = playlists?.find((p) => p.id === playlistId)
@@ -133,10 +136,7 @@ export default function PlaylistDetail() {
         onSearchChange={setSearch}
         sort={sort}
         dir={dir}
-        onSortChange={(s, d) => {
-          setSort(s)
-          setDir(d)
-        }}
+        onSortChange={setSort}
         getFiles={getFiles}
         loadingLabel="Loading playlist songs…"
         emptyTitle="Nothing here yet"

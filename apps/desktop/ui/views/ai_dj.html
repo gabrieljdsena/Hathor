@@ -1,0 +1,450 @@
+<div class="mx-auto max-w-[1400px] px-6 sm:px-8 pt-8 pb-10">
+    <div class="grid items-center gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(340px,0.95fr)] lg:gap-14">
+        <section class="min-w-0">
+            <div class="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.32em] text-zinc-500">
+                <span>Hathor private radio</span>
+                <span class="h-px w-8 bg-orange-500/50"></span>
+                <span class="text-orange-300/80">AI DJ</span>
+            </div>
+
+            <h1 class="mt-5 text-[clamp(4rem,10vw,8rem)] font-semibold leading-[0.82] tracking-[-0.075em] text-zinc-50">Vohithe</h1>
+
+            <div class="mt-7 flex flex-wrap items-center gap-x-5 gap-y-3 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
+                <span class="inline-flex items-center gap-2">
+                    <span id="ai-dj-status-dot" class="inline-block h-2 w-2 rounded-full bg-zinc-600"></span>
+                    <span id="ai-dj-status-label">Ready</span>
+                </span>
+                <span class="text-zinc-700">/</span>
+                <span id="ai-dj-language">English</span>
+                <span id="ai-dj-set-sep" class="hidden text-zinc-700">/</span>
+                <span id="ai-dj-set-number" class="hidden"></span>
+            </div>
+
+            <div class="mt-9 max-w-xl rounded-2xl border border-white/10 bg-zinc-900/45 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl">
+                <div class="px-3 pt-2 font-mono text-[9px] uppercase tracking-[0.26em] text-zinc-500">Set the vibe</div>
+                <textarea id="ai-dj-brief" rows="3" spellcheck="false"
+                    placeholder="warm evening indie, no sad songs, more female vocals"
+                    class="mt-1 w-full resize-none bg-transparent px-3 py-3 text-base leading-relaxed text-zinc-100 placeholder-zinc-600 outline-none"></textarea>
+                <div class="flex flex-wrap items-center justify-between gap-2 p-1">
+                    <button id="ai-dj-speak" type="button" title="Speak the vibe"
+                        class="flex items-center gap-2 rounded-full px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors cursor-pointer bg-white/[0.05] text-zinc-400 hover:bg-white/[0.09] hover:text-zinc-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>
+                        <span id="ai-dj-speak-label">Speak</span>
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <button id="ai-dj-stop" type="button"
+                            class="hidden px-4 py-2.5 text-sm font-semibold text-zinc-300 bg-white/5 hover:bg-red-500/20 hover:text-red-200 border border-white/10 rounded-lg transition-colors cursor-pointer">
+                            Stop
+                        </button>
+                        <button id="ai-dj-start" type="button"
+                            class="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-400 rounded-lg shadow-lg shadow-orange-500/20 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4"><path d="M8 5v14l11-7z"/></svg>
+                            <span id="ai-dj-start-label">Start</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="ai-dj-recorder-error" class="mt-3 hidden text-sm text-red-300"></div>
+            <div id="ai-dj-error" class="mt-3 hidden text-sm text-red-300"></div>
+            <div id="ai-dj-disabled" class="mt-4 hidden max-w-xl rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">
+                AI DJ is disabled on the server.
+            </div>
+            <div id="ai-dj-unconfigured" class="mt-4 hidden max-w-xl rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">
+                Set the assistant URL/token in Hathor secrets to let Vohithe choose and speak.
+            </div>
+            <div id="ai-dj-apiconfig" class="mt-4 hidden max-w-xl rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">
+                Configure the Web API in Settings first (<code>player:read</code> + <code>player:control</code>).
+            </div>
+
+            <div id="ai-dj-feedback" class="mt-5 hidden flex flex-wrap gap-2">
+                <button id="ai-dj-like" type="button"
+                    class="px-4 py-2 text-sm font-medium text-zinc-300 bg-white/5 hover:bg-white/[0.09] border border-white/10 rounded-lg transition-colors cursor-pointer">
+                    More like this
+                </button>
+                <button id="ai-dj-dislike" type="button"
+                    class="px-4 py-2 text-sm font-medium text-zinc-300 bg-white/5 hover:bg-white/[0.09] border border-white/10 rounded-lg transition-colors cursor-pointer">
+                    Less like this
+                </button>
+            </div>
+        </section>
+
+        <section class="relative mx-auto aspect-square w-full max-w-[470px]">
+            <div class="absolute inset-[8%] rounded-full bg-orange-500/[0.06] blur-3xl"></div>
+            <canvas id="ai-dj-visualizer" class="absolute inset-0 h-full w-full" aria-hidden="true"></canvas>
+            <div class="absolute inset-[15%] overflow-hidden rounded-full border border-white/15 bg-zinc-900 shadow-[0_30px_80px_rgba(0,0,0,0.55)]">
+                <img src="../assets/vohithe-portrait.jpg" alt="Vohithe" class="h-full w-full object-cover">
+                <div class="absolute inset-0 rounded-full ring-1 ring-inset ring-white/10"></div>
+            </div>
+            <div class="absolute bottom-[3%] left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/10 bg-zinc-950/85 px-4 py-2 font-mono text-[9px] uppercase tracking-[0.22em] text-zinc-300 shadow-xl backdrop-blur-xl">
+                <span id="ai-dj-pill-dot" class="inline-block h-2 w-2 rounded-full bg-zinc-600"></span>
+                <span id="ai-dj-pill-label">Ready</span>
+            </div>
+        </section>
+    </div>
+
+    <div class="mt-12 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section class="rounded-2xl border border-white/10 bg-zinc-900/35 p-5 md:col-span-2">
+            <div class="mb-4 flex items-center justify-between">
+                <div class="font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">Now playing</div>
+                <span id="ai-dj-current-count" class="font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-600">Idle</span>
+            </div>
+            <div class="flex min-h-[132px] items-center gap-5">
+                <div class="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl bg-zinc-800 shadow-2xl shadow-black/40">
+                    <div id="ai-dj-now-fallback" class="absolute inset-0 flex items-center justify-center text-zinc-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-10 w-10"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+                    </div>
+                    <img id="ai-dj-now-cover" alt="" class="absolute inset-0 h-full w-full object-cover hidden">
+                </div>
+                <div class="min-w-0">
+                    <div class="font-mono text-[10px] uppercase tracking-[0.24em] text-orange-300/80">Now playing</div>
+                    <div id="ai-dj-now-title" class="mt-2 truncate text-xl font-medium tracking-tight text-zinc-50">Waiting for the first track.</div>
+                    <div id="ai-dj-now-artist" class="mt-1 truncate text-sm text-zinc-400"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="rounded-2xl border border-white/10 bg-zinc-900/35 p-5">
+            <div class="font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">Next set</div>
+            <div id="ai-dj-next-count" class="mt-5 text-4xl font-semibold tracking-[-0.04em] text-zinc-100">--</div>
+            <div id="ai-dj-next-copy" class="mt-2 text-sm text-zinc-500">waiting for a set</div>
+            <div class="mt-5 h-px bg-white/5"></div>
+            <div class="mt-4 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-600">
+                <span id="ai-dj-next-dot" class="h-1.5 w-1.5 rounded-full bg-zinc-700"></span>
+                <span id="ai-dj-next-state">Not prepared</span>
+            </div>
+        </section>
+
+        <section class="rounded-2xl border border-white/10 bg-zinc-900/35 p-5">
+            <div class="flex items-center justify-between">
+                <div class="font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">Voice</div>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4 text-orange-400/70"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>
+            </div>
+            <canvas id="ai-dj-wave" class="mt-6 h-14 w-full" aria-hidden="true"></canvas>
+            <div class="mt-4 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-600">
+                <span id="ai-dj-voice-status">Idle</span>
+                <span id="ai-dj-voice-language">EN-US</span>
+            </div>
+        </section>
+    </div>
+</div>
+
+<script>
+    (function initAiDjView() {
+        'use strict';
+
+        var api = function () {
+            return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+        };
+        var view = null;
+        var recorderActive = false;
+        var visualizerRaf = 0;
+        var waveRaf = 0;
+        var disposed = false;
+
+        var els = {
+            dot: document.getElementById('ai-dj-status-dot'),
+            label: document.getElementById('ai-dj-status-label'),
+            language: document.getElementById('ai-dj-language'),
+            setSep: document.getElementById('ai-dj-set-sep'),
+            setNumber: document.getElementById('ai-dj-set-number'),
+            brief: document.getElementById('ai-dj-brief'),
+            speak: document.getElementById('ai-dj-speak'),
+            speakLabel: document.getElementById('ai-dj-speak-label'),
+            start: document.getElementById('ai-dj-start'),
+            startLabel: document.getElementById('ai-dj-start-label'),
+            stop: document.getElementById('ai-dj-stop'),
+            recorderError: document.getElementById('ai-dj-recorder-error'),
+            error: document.getElementById('ai-dj-error'),
+            disabled: document.getElementById('ai-dj-disabled'),
+            unconfigured: document.getElementById('ai-dj-unconfigured'),
+            apiConfig: document.getElementById('ai-dj-apiconfig'),
+            feedback: document.getElementById('ai-dj-feedback'),
+            like: document.getElementById('ai-dj-like'),
+            dislike: document.getElementById('ai-dj-dislike'),
+            nowCover: document.getElementById('ai-dj-now-cover'),
+            nowFallback: document.getElementById('ai-dj-now-fallback'),
+            nowTitle: document.getElementById('ai-dj-now-title'),
+            nowArtist: document.getElementById('ai-dj-now-artist'),
+            currentCount: document.getElementById('ai-dj-current-count'),
+            nextCount: document.getElementById('ai-dj-next-count'),
+            nextCopy: document.getElementById('ai-dj-next-copy'),
+            nextDot: document.getElementById('ai-dj-next-dot'),
+            nextState: document.getElementById('ai-dj-next-state'),
+            voiceStatus: document.getElementById('ai-dj-voice-status'),
+            voiceLanguage: document.getElementById('ai-dj-voice-language'),
+            pillDot: document.getElementById('ai-dj-pill-dot'),
+            pillLabel: document.getElementById('ai-dj-pill-label')
+        };
+
+        function show(el, visible) {
+            if (el) el.classList.toggle('hidden', !visible);
+        }
+
+        function setText(el, text) {
+            if (el) el.textContent = text == null ? '' : String(text);
+        }
+
+        function status(view) {
+            if (!view) return 'Ready';
+            if (view.waiting || view.voice === 'waiting') return 'Waiting for voice';
+            if (view.voice === 'speaking') return 'Speaking';
+            if (view.active) return 'On air';
+            if (!view.enabled) return 'Disabled';
+            return 'Ready';
+        }
+
+        function render(next) {
+            view = next || view || {};
+            var label = status(view);
+            var active = !!view.active;
+            var enabled = !!view.enabled;
+            var configured = !!view.configured;
+            var busy = !!view.busy;
+            var loading = !!view.loading;
+            var dotClass = (view.waiting || view.voice === 'waiting') ? 'bg-amber-400'
+                : view.voice === 'speaking' ? 'bg-orange-400'
+                : active ? 'bg-emerald-400' : 'bg-zinc-600';
+
+            [els.dot, els.pillDot].forEach(function (el) {
+                if (!el) return;
+                el.classList.remove('bg-amber-400', 'bg-orange-400', 'bg-emerald-400', 'bg-zinc-600');
+                el.classList.add(dotClass);
+            });
+            setText(els.label, label);
+            setText(els.pillLabel, label);
+            setText(els.language, view.settings && view.settings.language === 'pt-BR' ? 'Portugues' : 'English');
+            setText(els.voiceLanguage, view.settings && view.settings.language === 'pt-BR' ? 'PT-BR' : 'EN-US');
+            var current = view.currentBatch;
+            var nextSet = view.nextBatch;
+            var setNumber = current && current.number ? 'Set ' + String(current.number).padStart(2, '0') : '';
+            show(els.setSep, !!setNumber);
+            show(els.setNumber, !!setNumber);
+            setText(els.setNumber, setNumber);
+
+            setText(els.currentCount, current ? current.tracks.length + ' track set' : 'Idle');
+            var song = view.currentSong;
+            if (song && song.title) {
+                setText(els.nowTitle, song.title || 'Unknown');
+                setText(els.nowArtist, song.artist || '');
+                if (song.coverArt && els.nowCover) {
+                    els.nowCover.src = song.coverArt;
+                    els.nowCover.classList.remove('hidden');
+                    if (els.nowFallback) els.nowFallback.classList.add('hidden');
+                } else {
+                    if (els.nowCover) { els.nowCover.removeAttribute('src'); els.nowCover.classList.add('hidden'); }
+                    if (els.nowFallback) els.nowFallback.classList.remove('hidden');
+                }
+            } else {
+                setText(els.nowTitle, 'Waiting for the first track.');
+                setText(els.nowArtist, '');
+                if (els.nowCover) { els.nowCover.removeAttribute('src'); els.nowCover.classList.add('hidden'); }
+                if (els.nowFallback) els.nowFallback.classList.remove('hidden');
+            }
+
+            setText(els.nextCount, nextSet ? String(nextSet.tracks.length).padStart(2, '0') : '--');
+            setText(els.nextCopy, nextSet ? 'tracks prepared' : 'waiting for a set');
+            setText(els.nextState, nextSet ? 'Ready for the transition' : 'Not prepared');
+            if (els.nextDot) {
+                els.nextDot.classList.toggle('bg-orange-400', !!nextSet);
+                els.nextDot.classList.toggle('bg-zinc-700', !nextSet);
+            }
+
+            setText(els.voiceStatus, label);
+            show(els.feedback, active);
+            show(els.stop, active);
+            show(els.disabled, !!view && view.apiConfigured && !enabled);
+            show(els.unconfigured, !!view && view.apiConfigured && enabled && !configured);
+            show(els.apiConfig, !!view && !view.apiConfigured);
+            setText(els.startLabel, active ? 'New set' : 'Start');
+            if (els.start) {
+                els.start.disabled = loading || busy || !enabled || !view.apiConfigured;
+                els.start.title = !view.apiConfigured ? 'Configure Settings -> Web API first'
+                    : (!enabled ? 'AI DJ is disabled on the server' : (active ? 'Start a new set' : 'Start AI DJ'));
+            }
+            if (els.error) {
+                var text = view.error || '';
+                els.error.textContent = text;
+                els.error.classList.toggle('hidden', !text);
+            }
+            if (els.brief && document.activeElement !== els.brief && !recorderActive) {
+                // Keep user input; only clear if the server explicitly started
+                // a set and the page is idle.
+            }
+        }
+
+        async function start() {
+            var bridge = api();
+            if (!bridge || !bridge.ai_dj_start) return;
+            if (els.start) els.start.disabled = true;
+            try {
+                var next = await bridge.ai_dj_start(els.brief ? els.brief.value : '');
+                render(next);
+                if (next && next.active && els.brief) els.brief.value = '';
+            } catch (error) {
+                if (els.error) {
+                    els.error.textContent = error && error.message ? error.message : String(error);
+                    els.error.classList.remove('hidden');
+                }
+            } finally {
+                if (els.start) els.start.disabled = false;
+            }
+        }
+
+        async function stop() {
+            var bridge = api();
+            if (!bridge || !bridge.ai_dj_stop) return;
+            try { render(await bridge.ai_dj_stop()); } catch (error) {
+                if (els.error) {
+                    els.error.textContent = error && error.message ? error.message : String(error);
+                    els.error.classList.remove('hidden');
+                }
+            }
+        }
+
+        function appendBrief(text) {
+            if (!els.brief || !text) return;
+            els.brief.value = els.brief.value ? els.brief.value.trim() + ' ' + text : text;
+            els.brief.focus();
+        }
+
+        function toggleRecorder() {
+            if (!window.AiDjRecorder) return;
+            AiDjRecorder.toggle(
+                appendBrief,
+                function (recording, error) {
+                    recorderActive = !!recording;
+                    if (els.speak) {
+                        els.speak.classList.toggle('bg-red-500/15', !!recording);
+                        els.speak.classList.toggle('text-red-200', !!recording);
+                    }
+                    setText(els.speakLabel, recording ? 'Listening...' : 'Speak');
+                    if (error && els.recorderError) {
+                        els.recorderError.textContent = error;
+                        els.recorderError.classList.remove('hidden');
+                    }
+                },
+                function (error) {
+                    if (els.recorderError) {
+                        els.recorderError.textContent = error;
+                        els.recorderError.classList.remove('hidden');
+                    }
+                }
+            );
+        }
+
+        function drawVisualizer(time) {
+            if (disposed) return;
+            var canvas = document.getElementById('ai-dj-visualizer');
+            if (!canvas) return;
+            var rect = canvas.getBoundingClientRect();
+            if (rect.width < 2 || rect.height < 2) {
+                visualizerRaf = requestAnimationFrame(drawVisualizer);
+                return;
+            }
+            var dpr = Math.min(2, window.devicePixelRatio || 1);
+            if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+                canvas.width = Math.round(rect.width * dpr);
+                canvas.height = Math.round(rect.height * dpr);
+            }
+            var ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, rect.width, rect.height);
+            var cx = rect.width / 2;
+            var cy = rect.height / 2;
+            var size = Math.min(rect.width, rect.height);
+            var base = size * 0.335;
+            var max = size * 0.115;
+            var active = !!(view && view.active);
+            var voice = !!(view && (view.voice === 'speaking' || view.voice === 'waiting'));
+            var accent = voice ? '251, 146, 60' : '249, 115, 22';
+            ctx.beginPath(); ctx.arc(cx, cy, base, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.beginPath(); ctx.arc(cx, cy, base + max + 10, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,255,255,0.035)'; ctx.stroke();
+            for (var i = 0; i < 72; i += 1) {
+                var idle = 0.025 + (active ? 0.018 : 0.008) * Math.sin(time / 1200 + i * 0.55);
+                var pulse = voice ? 0.10 * Math.sin(time / 280 + i * 0.8) : 0;
+                var magnitude = Math.max(idle + pulse, 0);
+                var angle = (i / 72) * Math.PI * 2 - Math.PI / 2;
+                var start = base + 5;
+                var end = start + 4 + Math.min(1, magnitude) * max;
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(angle) * start, cy + Math.sin(angle) * start);
+                ctx.lineTo(cx + Math.cos(angle) * end, cy + Math.sin(angle) * end);
+                ctx.strokeStyle = 'rgba(' + accent + ',' + (0.12 + Math.min(1, magnitude) * 0.72) + ')';
+                ctx.lineWidth = i % 6 === 0 ? 2.2 : 1.4;
+                ctx.stroke();
+            }
+            visualizerRaf = requestAnimationFrame(drawVisualizer);
+        }
+
+        function drawWave(time) {
+            if (disposed) return;
+            var canvas = document.getElementById('ai-dj-wave');
+            if (!canvas) return;
+            var rect = canvas.getBoundingClientRect();
+            if (rect.width < 2 || rect.height < 2) {
+                waveRaf = requestAnimationFrame(drawWave);
+                return;
+            }
+            var dpr = Math.min(2, window.devicePixelRatio || 1);
+            if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+                canvas.width = Math.round(rect.width * dpr);
+                canvas.height = Math.round(rect.height * dpr);
+            }
+            var ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, rect.width, rect.height);
+            var active = !!(view && (view.active || view.voice === 'speaking' || view.voice === 'waiting'));
+            var bars = 64;
+            var gap = 2;
+            var width = Math.max(1, (rect.width - gap * (bars - 1)) / bars);
+            var mid = rect.height / 2;
+            for (var i = 0; i < bars; i += 1) {
+                var idle = active ? 0.08 + 0.04 * Math.sin(time / 900 + i * 0.5) : 0.03;
+                var voice = view && view.voice === 'speaking' ? 0.22 * Math.abs(Math.sin(time / 190 + i * 0.42)) : 0;
+                var level = Math.min(1, idle + voice);
+                var barHeight = 2 + level * (rect.height - 4);
+                ctx.fillStyle = 'rgba(249,115,22,' + (0.12 + level * 0.7) + ')';
+                ctx.fillRect(i * (width + gap), mid - barHeight / 2, width, barHeight);
+            }
+            waveRaf = requestAnimationFrame(drawWave);
+        }
+
+        function onState(event) {
+            if (event && event.detail) render(event.detail);
+        }
+
+        if (els.start) els.start.addEventListener('click', start);
+        if (els.stop) els.stop.addEventListener('click', stop);
+        if (els.speak) els.speak.addEventListener('click', toggleRecorder);
+        if (els.like) els.like.addEventListener('click', function () {
+            var bridge = api();
+            if (bridge && bridge.ai_dj_feedback) bridge.ai_dj_feedback('like', null).catch(function () {});
+        });
+        if (els.dislike) els.dislike.addEventListener('click', function () {
+            var bridge = api();
+            if (bridge && bridge.ai_dj_feedback) bridge.ai_dj_feedback('dislike', null).catch(function () {});
+        });
+        window.addEventListener('ai-dj-state', onState);
+        window._disposeCurrentView = function () {
+            disposed = true;
+            if (visualizerRaf) cancelAnimationFrame(visualizerRaf);
+            if (waveRaf) cancelAnimationFrame(waveRaf);
+            if (window.AiDjRecorder) AiDjRecorder.stop();
+            window.removeEventListener('ai-dj-state', onState);
+        };
+
+        render(window.AiDjUI && window.AiDjUI.view ? window.AiDjUI.view : null);
+        if (window.AiDjUI && window.AiDjUI.refresh) window.AiDjUI.refresh();
+        visualizerRaf = requestAnimationFrame(drawVisualizer);
+        waveRaf = requestAnimationFrame(drawWave);
+
+        window.addEventListener('resize', function () {
+            // Canvases resize themselves on the next frame.
+        });
+    })();
+</script>

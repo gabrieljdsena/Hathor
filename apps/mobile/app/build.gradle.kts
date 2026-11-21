@@ -16,6 +16,16 @@ val localPropsFile = rootProject.file("local.properties")
 if (localPropsFile.exists()) {
     localPropsFile.inputStream().use { stream -> localProps.load(stream) }
 }
+
+// Release signing is optional for local debug work. The file lives next to
+// settings.gradle.kts and is gitignored; never commit the keystore or passwords.
+val keystoreProps = Properties()
+val keystorePropsFile = rootProject.file("keystore.properties")
+val hasReleaseKeystore = keystorePropsFile.exists()
+if (hasReleaseKeystore) {
+    keystorePropsFile.inputStream().use { stream -> keystoreProps.load(stream) }
+}
+
 fun apiProp(name: String, default: String = ""): String {
     val v = localProps.getProperty(name, default)
         .replace("\\", "\\\\")
@@ -31,8 +41,8 @@ android {
         applicationId = "com.musicplayer.android"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.3.0-hathor"
+        versionCode = 6
+        versionName = "0.4.3-hathor"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -44,6 +54,17 @@ android {
         buildConfigField("String", "API_TOKEN", apiProp("API_TOKEN"))
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -51,6 +72,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
