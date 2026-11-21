@@ -2,26 +2,41 @@ package com.musicplayer.android.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import com.musicplayer.android.ui.theme.HathorTonalButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,7 +49,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -49,15 +68,16 @@ import com.musicplayer.android.data.update.UpdateState
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
 import com.musicplayer.android.ui.theme.HathorTextField
+import com.musicplayer.android.ui.theme.HathorTonalButton
 import com.musicplayer.android.ui.theme.HeaderIconTile
 import com.musicplayer.android.ui.theme.ModernSlider
 import com.musicplayer.android.ui.theme.hathorGlass
+import com.musicplayer.android.ui.theme.hathorPressable
 import kotlinx.coroutines.launch
 
 /**
- * Settings destination: everything in one place (desktop settings view +
- * the remote/local sync actions, which live here on desktop too — no
- * separate sync screen). Playback volume lives on the Now Playing sheet.
+ * Settings destination: the same actions as the desktop settings view, split
+ * into five collapsible groups so the page stays short on a phone.
  */
 @Composable
 fun SettingsScreen(
@@ -65,11 +85,16 @@ fun SettingsScreen(
     sync: SyncRepository,
     podcasts: com.musicplayer.android.data.PodcastRepository,
     updateRepo: UpdateRepository,
-    onPull: () -> Unit
+    onPull: () -> Unit,
+    wallpaper: android.graphics.Bitmap? = null
 ) {
     val limit by settings.limit.collectAsState()
     val syncState by sync.state.collectAsState()
     val updateState by updateRepo.state.collectAsState()
+    val xEnabled by settings.crossfadeEnabled.collectAsState()
+    val xSecs by settings.crossfadeSeconds.collectAsState()
+    val chapterSkip by settings.chapterSkip.collectAsState()
+    var openGroup by remember { mutableStateOf<SettingsGroup?>(SettingsGroup.Connection) }
     var rescanResult by remember { mutableStateOf<String?>(null) }
     var folderResult by remember { mutableStateOf<String?>(null) }
     var folderPath by remember { mutableStateOf(settings.musicFolder()) }
@@ -123,19 +148,23 @@ fun SettingsScreen(
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             HeaderIconTile {
                 Icon(Icons.Filled.Settings, contentDescription = null, tint = HathorColors.AccentBright)
             }
-            Column {
-                Text("Settings", style = MaterialTheme.typography.titleLarge)
-            }
+            Text("Settings", style = MaterialTheme.typography.titleLarge)
         }
 
-        // ---- Web API connection (runtime; no account/login on mobile) ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // ---- Connection ----
+        SettingsGroupCard(
+            group = SettingsGroup.Connection,
+            expanded = openGroup == SettingsGroup.Connection,
+            onToggle = {
+                openGroup = if (openGroup == SettingsGroup.Connection) null else SettingsGroup.Connection
+            }
+        ) {
             SectionLabel(Icons.Filled.Sync, "Web API")
             HathorTextField(
                 value = apiUrl,
@@ -178,24 +207,30 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f)
                 ) { Text(if (testingApi) "Testing…" else "Test") }
             }
-            apiMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint) }
-        }
+            apiMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+            }
 
-        // ---- Sync server (desktop settings view owns these actions) ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GroupDivider()
             SectionLabel(Icons.Filled.Sync, "Sync server")
             Text(settings.remoteStatus(), style = MaterialTheme.typography.bodySmall)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { onPull() },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HathorColors.Accent,
+                        contentColor = Color.White
+                    )
                 ) { Text("Pull") }
                 Button(
                     onClick = { scope.launch { sync.pushToRemote() } },
                     enabled = syncState !is SyncRepository.SyncState.Running,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = HathorColors.Accent, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HathorColors.Accent,
+                        contentColor = Color.White
+                    )
                 ) { Text("Push") }
             }
             pullProgress?.let { progress ->
@@ -215,13 +250,39 @@ fun SettingsScreen(
                     )
                 }
             ) { Text("Full resync files") }
+            when (val s = syncState) {
+                is SyncRepository.SyncState.Running ->
+                    Text(s.step, style = MaterialTheme.typography.bodySmall)
+                is SyncRepository.SyncState.Done ->
+                    Text(s.summary, style = MaterialTheme.typography.bodySmall)
+                is SyncRepository.SyncState.Error ->
+                    Text(
+                        "FAILED: ${s.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                else -> {}
+            }
+        }
+
+        // ---- Playback ----
+        SettingsGroupCard(
+            group = SettingsGroup.Playback,
+            expanded = openGroup == SettingsGroup.Playback,
+            onToggle = {
+                openGroup = if (openGroup == SettingsGroup.Playback) null else SettingsGroup.Playback
+            }
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Search YouTube for songs without links", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Search YouTube for songs without links",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
                 HathorSwitch(
                     checked = searchFallback,
@@ -231,27 +292,14 @@ fun SettingsScreen(
                     }
                 )
             }
-            when (val s = syncState) {
-                is SyncRepository.SyncState.Running -> Text(s.step, style = MaterialTheme.typography.bodySmall)
-                is SyncRepository.SyncState.Done -> Text(s.summary, style = MaterialTheme.typography.bodySmall)
-                is SyncRepository.SyncState.Error -> Text("FAILED: ${s.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                else -> {}
-            }
-        }
 
-        // ---- Crossfade (desktop Settings toggle + 1-12s, default off / 5s) ----
-        // Gapless handoff is always on; crossfade blends auto-advance only.
-        val xEnabled by settings.crossfadeEnabled.collectAsState()
-        val xSecs by settings.crossfadeSeconds.collectAsState()
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GroupDivider()
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Crossfade (${xSecs.toInt()}s)", style = MaterialTheme.typography.titleSmall)
-                }
+                Text("Crossfade (${xSecs.toInt()}s)", style = MaterialTheme.typography.titleSmall)
                 HathorSwitch(
                     checked = xEnabled,
                     onCheckedChange = { scope.launch { settings.setCrossfade(it, xSecs) } }
@@ -265,41 +313,83 @@ fun SettingsScreen(
                 enabled = xEnabled,
                 modifier = Modifier.fillMaxWidth()
             )
-        }
 
-        // ---- Chapter auto-skip (desktop Settings toggle, podcasts only) ----
-        // Timestamped episodes start at the first chapter and skip to the
-        // next chapter when one ends. Chapters are managed per episode.
-        val chapterSkip by settings.chapterSkip.collectAsState()
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GroupDivider()
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Chapter auto-skip", style = MaterialTheme.typography.titleSmall)
-                }
+                Text("Chapter auto-skip", style = MaterialTheme.typography.titleSmall)
                 HathorSwitch(
                     checked = chapterSkip,
                     onCheckedChange = { scope.launch { settings.setChapterSkip(it) } }
                 )
             }
-        }
 
-        // ---- Concurrency ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            GroupDivider()
             SectionLabel(Icons.Filled.Download, "Concurrent downloads ($limit)")
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HathorTonalButton(onClick = { scope.launch { settings.setLimit(limit - 1) } }, enabled = limit > 1) { Text("−") }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                HathorTonalButton(
+                    onClick = { scope.launch { settings.setLimit(limit - 1) } },
+                    enabled = limit > 1
+                ) { Text("−") }
                 Text("$limit", style = MaterialTheme.typography.titleMedium)
-                HathorTonalButton(onClick = { scope.launch { settings.setLimit(limit + 1) } }, enabled = limit < 20) { Text("+") }
+                HathorTonalButton(
+                    onClick = { scope.launch { settings.setLimit(limit + 1) } },
+                    enabled = limit < 20
+                ) { Text("+") }
             }
         }
 
-        // ---- Wallpaper (desktop background picker, same 40% scrim) ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionLabel(Icons.Filled.Image, "Wallpaper")
+        // ---- Appearance ----
+        SettingsGroupCard(
+            group = SettingsGroup.Appearance,
+            expanded = openGroup == SettingsGroup.Appearance,
+            onToggle = {
+                openGroup = if (openGroup == SettingsGroup.Appearance) null else SettingsGroup.Appearance
+            }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (wallpaper != null) {
+                    Image(
+                        bitmap = wallpaper.asImageBitmap(),
+                        contentDescription = "Wallpaper preview",
+                        modifier = Modifier.size(92.dp).clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(92.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(HathorColors.AccentFill),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.Image,
+                            contentDescription = null,
+                            tint = HathorColors.AccentBright,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Wallpaper", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (wallpaper == null) "Default" else "Custom",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HathorColors.TextHint
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HathorTonalButton(
                     onClick = { pickWallpaper.launch("image/*") }
@@ -311,8 +401,14 @@ fun SettingsScreen(
             wallpaperMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
 
-        // ---- Folder + rescan ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // ---- Storage ----
+        SettingsGroupCard(
+            group = SettingsGroup.Storage,
+            expanded = openGroup == SettingsGroup.Storage,
+            onToggle = {
+                openGroup = if (openGroup == SettingsGroup.Storage) null else SettingsGroup.Storage
+            }
+        ) {
             SectionLabel(Icons.Filled.Folder, "Music folder")
             Text(folderPath, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -333,10 +429,8 @@ fun SettingsScreen(
             }
             folderResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             rescanResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        }
 
-        // ---- Podcasts folder + rescan (desktop Podcasts Folder row) ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GroupDivider()
             SectionLabel(Icons.Filled.Folder, "Podcasts folder")
             Text(podFolderPath, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -360,8 +454,13 @@ fun SettingsScreen(
         }
 
         // ---- About ----
-        Column(modifier = Modifier.fillMaxWidth().hathorGlass().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            SectionLabel(Icons.Filled.Info, "About")
+        SettingsGroupCard(
+            group = SettingsGroup.About,
+            expanded = openGroup == SettingsGroup.About,
+            onToggle = {
+                openGroup = if (openGroup == SettingsGroup.About) null else SettingsGroup.About
+            }
+        ) {
             Text(
                 "Hathor ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
                 style = MaterialTheme.typography.titleSmall
@@ -413,8 +512,86 @@ fun SettingsScreen(
         }
     }
 }
+
+private enum class SettingsGroup(val title: String, val icon: ImageVector) {
+    Connection("Connection", Icons.Filled.Sync),
+    Playback("Playback", Icons.Filled.PlayArrow),
+    Appearance("Appearance", Icons.Filled.Image),
+    Storage("Storage", Icons.Filled.Folder),
+    About("About", Icons.Filled.Info)
+}
+
 @Composable
-private fun SectionLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+private fun SettingsGroupCard(
+    group: SettingsGroup,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().hathorGlass()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .hathorPressable(onToggle)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(HathorColors.AccentFill),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    group.icon,
+                    contentDescription = null,
+                    tint = HathorColors.AccentBright,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Text(
+                group.title,
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse ${group.title}" else "Expand ${group.title}",
+                tint = HathorColors.TextHint
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(animationSpec = tween(200)) +
+                fadeIn(animationSpec = tween(200)),
+            exit = shrinkVertically(animationSpec = tween(180)) +
+                fadeOut(animationSpec = tween(120))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                content = content
+            )
+        }
+    }
+}
+
+@Composable
+private fun GroupDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(HathorColors.BorderFaint)
+    )
+}
+
+@Composable
+private fun SectionLabel(icon: ImageVector, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(icon, contentDescription = null, tint = HathorColors.AccentBright)
         Text(text, style = MaterialTheme.typography.titleSmall)

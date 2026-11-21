@@ -4,10 +4,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
@@ -75,6 +77,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 
@@ -96,6 +99,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var player: PlayerManager
     private lateinit var previewPlayer: PreviewPlayer
     private lateinit var aiDjController: AiDjController
+
+    /** True once the first library/history preload has finished (or timed out). */
+    @Volatile private var startupReady = false
 
     companion object {
         const val DEFAULT_TEST_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -120,6 +126,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
+        splashScreen.setKeepOnScreenCondition { !startupReady }
         super.onCreate(savedInstanceState)
         configureSystemBars()
         deviceId = getSharedPreferences("hathor", MODE_PRIVATE).let { prefs ->
@@ -243,6 +251,22 @@ class MainActivity : ComponentActivity() {
                 syncRepo.refreshLocalList()
                 queueRepo.refresh()
             }
+        }
+        // Keep the splash visible while the first screen's data warms up.
+        // Minimum display avoids a flash; the timeout keeps startup bounded
+        // on very large libraries.
+        CoroutineScope(Dispatchers.IO).launch {
+            val started = SystemClock.elapsedRealtime()
+            withTimeoutOrNull(5_000L) {
+                runCatching { metadataRepo.refreshLibrary() }
+                runCatching { dailyMixRepo.getDailyMix() }
+                runCatching { dailyMixRepo.recentlyPlayed(15) }
+                runCatching { dailyMixRepo.recentlyDownloaded(15) }
+                runCatching { podcastRepo.refresh() }
+            }
+            val elapsed = SystemClock.elapsedRealtime() - started
+            if (elapsed < 1_200L) delay(1_200L - elapsed)
+            startupReady = true
         }
         setContent {
             HathorTheme {
@@ -658,7 +682,8 @@ class MainActivity : ComponentActivity() {
                                 syncRepo,
                                 podcastRepo,
                                 updateRepo,
-                                onPull = { enqueuePull() }
+                                onPull = { enqueuePull() },
+                                wallpaper = wallpaper
                             )
                             Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
                                 controller = aiDjController,
