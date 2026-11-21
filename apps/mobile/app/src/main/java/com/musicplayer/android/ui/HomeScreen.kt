@@ -1,21 +1,30 @@
 package com.musicplayer.android.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import com.musicplayer.android.ui.theme.hathorPressable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
@@ -37,7 +46,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.musicplayer.android.ui.theme.hathorPressable
 import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.DailyMixRepository
 import com.musicplayer.android.data.MetadataRepository
@@ -164,58 +178,59 @@ fun HomeScreen(
             }
         }
 
-        // Cards
-        HomeCard(
-            title = "All Songs",
-            subtitle = if (songs.isEmpty() && loading) "Loading library…"
-            else "${songs.size} song${if (songs.size == 1) "" else "s"} in your library",
-            hint = "Browse, search and sort your full library.",
-            icon = { Icon(Icons.Filled.MusicNote, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-            onClick = onOpenAllSongs
-        )
-        HomeCard(
-            title = "Daily Mix",
-            subtitle = if (mixSize == null) "Generating your mix…"
-            else "$mixSize songs · $mixDateShort",
-            hint = "Fresh every day.",
-            badge = "Today",
-            icon = { Icon(Icons.Filled.Refresh, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+        // Hero: the mix is the day's primary action.
+        DailyMixHero(
+            mixSize = mixSize,
+            mixDate = mixDateShort,
+            loading = loading,
             onClick = onOpenDailyMix
         )
-        HomeCard(
-            title = "Artists",
-            subtitle = "${songs.map { it.artist }.distinct().size} artists in your library",
-            hint = "Browse by artist, artwork and play-all.",
-            icon = { Icon(Icons.Filled.Person, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-            onClick = onOpenArtists
-        )
-        HomeCard(
-            title = "Albums",
-            subtitle = "${songs.map { it.album }.distinct().size} albums in your library",
-            hint = "Browse album artwork and track lists.",
-            icon = { Icon(Icons.Filled.Album, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-            onClick = onOpenAlbums
-        )
-        HomeCard(
-            title = "Podcasts",
-            subtitle = if (podcastEpisodes.isEmpty()) "No episodes yet"
-            else "${podcastEpisodes.size} episode${if (podcastEpisodes.size == 1) "" else "s"}",
-            hint = "Your podcast library, chapters and tags.",
-            icon = { Icon(Icons.Filled.Mic, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-            onClick = onOpenPodcasts,
-            onPlay = podcastEpisodes.firstOrNull()?.let { episode ->
-                { onPlayPodcast(episode) }
+
+        // Compact library shortcuts.
+        val artistCount = songs.map { it.artist }.distinct().size
+        val albumCount = songs.map { it.album }.distinct().size
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ShortcutCard(
+                    title = "All Songs",
+                    subtitle = if (songs.isEmpty() && loading) "Loading…"
+                    else "${songs.size} song${if (songs.size == 1) "" else "s"}",
+                    icon = Icons.Filled.MusicNote,
+                    onClick = onOpenAllSongs,
+                    modifier = Modifier.weight(1f)
+                )
+                ShortcutCard(
+                    title = "Artists",
+                    subtitle = "$artistCount artist${if (artistCount == 1) "" else "s"}",
+                    icon = Icons.Filled.Person,
+                    onClick = onOpenArtists,
+                    modifier = Modifier.weight(1f)
+                )
             }
-        )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ShortcutCard(
+                    title = "Albums",
+                    subtitle = "$albumCount album${if (albumCount == 1) "" else "s"}",
+                    icon = Icons.Filled.Album,
+                    onClick = onOpenAlbums,
+                    modifier = Modifier.weight(1f)
+                )
+                ShortcutCard(
+                    title = "Podcasts",
+                    subtitle = if (podcastEpisodes.isEmpty()) "No episodes"
+                    else "${podcastEpisodes.size} episode${if (podcastEpisodes.size == 1) "" else "s"}",
+                    icon = Icons.Filled.Mic,
+                    onClick = onOpenPodcasts,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
         resumeSpot?.let { spot ->
             val pos = "%d:%02d".format(spot.positionSec.toInt() / 60, spot.positionSec.toInt() % 60)
-            HomeCard(
+            ResumeCard(
                 title = "Continue on ${spot.device ?: "another device"}",
                 subtitle = "${resumeTitle ?: spot.file} · $pos",
-                hint = "Resume where you left off.",
-                icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-                onClick = { onResumeSpot(spot) },
-                onPlay = { onResumeSpot(spot) }
+                onClick = { onResumeSpot(spot) }
             )
         }
 
@@ -225,6 +240,7 @@ fun HomeScreen(
             songs = recent,
             emptyText = "Nothing played yet — play something and it will show up here.",
             library = library,
+            loading = loading,
             nowPlayingFile = nowPlayingFile,
             isPlaying = isPlaying,
             onSeeAll = onOpenHistory,
@@ -240,6 +256,7 @@ fun HomeScreen(
             songs = downloaded,
             emptyText = "Nothing downloaded yet — grab some music and it will show up here.",
             library = library,
+            loading = loading,
             nowPlayingFile = nowPlayingFile,
             isPlaying = isPlaying,
             onSeeAll = onOpenHistory,
@@ -290,53 +307,170 @@ fun HomeScreen(
 }
 
 @Composable
-private fun HomeCard(
-    title: String,
-    subtitle: String,
-    hint: String,
-    badge: String? = null,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit,
-    onPlay: (() -> Unit)? = null
+private fun DailyMixHero(
+    mixSize: Int?,
+    mixDate: String,
+    loading: Boolean,
+    onClick: () -> Unit
 ) {
+    val subtitle = when {
+        loading -> "Generating your mix…"
+        mixSize == null -> "Mix unavailable"
+        mixSize == 1 -> "1 song · $mixDate"
+        else -> "$mixSize songs · $mixDate"
+    }
     Row(
-        modifier = Modifier.fillMaxWidth().hathorGlass().hathorPressable(onClick).padding(20.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        HathorColors.Accent.copy(alpha = 0.34f),
+                        HathorColors.AccentDeep.copy(alpha = 0.12f),
+                        HathorColors.SurfaceGlass
+                    )
+                )
+            )
+            .border(
+                1.dp,
+                HathorColors.Accent.copy(alpha = 0.30f),
+                RoundedCornerShape(20.dp)
+            )
+            .hathorPressable(onClick)
+            .padding(18.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(56.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(18.dp))
                 .background(HathorColors.BrandGradient),
             contentAlignment = Alignment.Center
-        ) { icon() }
+        ) {
+            Icon(
+                Icons.Filled.Refresh,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(28.dp)
+            )
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                badge?.let {
+                Text("Daily Mix", style = MaterialTheme.typography.titleMedium)
+                if (!loading && mixSize != null) {
                     Text(
-                        it.uppercase(),
+                        "TODAY",
                         style = MaterialTheme.typography.bodySmall,
                         color = HathorColors.AccentBright
                     )
                 }
             }
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-            Text(hint, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextBody)
         }
-        if (onPlay != null) {
-            IconButton(onClick = onPlay) {
-                Icon(
-                    Icons.Filled.PlayArrow,
-                    contentDescription = "Play",
-                    tint = HathorColors.AccentBright
-                )
-            }
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = "Open Daily Mix",
+            tint = HathorColors.AccentBright
+        )
+    }
+}
+
+@Composable
+private fun ShortcutCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .height(124.dp)
+            .hathorGlass()
+            .hathorPressable(onClick)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        ShortcutIcon(icon)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
+    }
+}
+
+@Composable
+private fun ResumeCard(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .hathorGlass()
+            .hathorPressable(onClick)
+            .padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ShortcutIcon(Icons.Filled.PlayArrow)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = "Resume",
+            tint = HathorColors.AccentBright
+        )
+    }
+}
+
+@Composable
+private fun ShortcutIcon(icon: ImageVector) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(HathorColors.AccentFill)
+            .border(1.dp, HathorColors.Accent.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = HathorColors.AccentBright,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 
@@ -346,6 +480,7 @@ private fun StripSection(
     songs: List<SongMeta>,
     emptyText: String,
     library: MetadataRepository,
+    loading: Boolean = false,
     nowPlayingFile: String?,
     isPlaying: Boolean,
     onSeeAll: () -> Unit,
@@ -367,10 +502,16 @@ private fun StripSection(
                 )
             }
         }
-        if (songs.isEmpty()) {
-            Text(emptyText, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-        } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        when {
+            loading -> LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(3) { StripSkeleton() }
+            }
+            songs.isEmpty() -> Text(
+                emptyText,
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
+            else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(songs, key = { it.file }) { song ->
                     StripCard(
                         song = song,
@@ -383,5 +524,44 @@ private fun StripSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StripSkeleton() {
+    val transition = rememberInfiniteTransition(label = "strip-skeleton")
+    val pulse by transition.animateFloat(
+        initialValue = 0.10f,
+        targetValue = 0.24f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "strip-skeleton-alpha"
+    )
+    Column(
+        modifier = Modifier.width(156.dp).hathorGlass().padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(HathorColors.TextHint.copy(alpha = pulse))
+        )
+        Box(
+            modifier = Modifier
+                .height(14.dp)
+                .fillMaxWidth(0.85f)
+                .clip(RoundedCornerShape(4.dp))
+                .background(HathorColors.TextHint.copy(alpha = pulse))
+        )
+        Box(
+            modifier = Modifier
+                .height(10.dp)
+                .fillMaxWidth(0.55f)
+                .clip(RoundedCornerShape(4.dp))
+                .background(HathorColors.TextHint.copy(alpha = pulse))
+        )
     }
 }

@@ -1,12 +1,17 @@
 package com.musicplayer.android.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -32,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.ArtworkRepository
@@ -230,17 +236,59 @@ fun AllSongsScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(paged, key = { it.file }) { song ->
-                SongRow(
-                    song = song,
-                    repo = repo,
-                    isActive = song.file == nowPlayingFile,
-                    isPlaying = isPlaying && song.file == nowPlayingFile,
-                    onClick = {
-                        onPlay(song, sorted, PlaybackSource("all_songs", null))
-                    },
-                    onMenu = { menuSong = song }
-                )
+            if (paged.isEmpty()) {
+                item(key = "empty") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 56.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(HathorColors.AccentFill)
+                                .border(
+                                    1.dp,
+                                    HathorColors.Accent.copy(alpha = 0.2f),
+                                    RoundedCornerShape(16.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                if (debouncedQuery.isBlank()) Icons.Filled.MusicNote
+                                else Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = HathorColors.AccentBright,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Text(
+                            if (debouncedQuery.isBlank()) "Your library is empty"
+                            else "No songs match “${debouncedQuery.trim()}”",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            if (debouncedQuery.isBlank()) "Download music to see it here."
+                            else "Try a different search.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HathorColors.TextHint
+                        )
+                    }
+                }
+            } else {
+                items(paged, key = { it.file }) { song ->
+                    SongRow(
+                        song = song,
+                        repo = repo,
+                        isActive = song.file == nowPlayingFile,
+                        isPlaying = isPlaying && song.file == nowPlayingFile,
+                        onClick = {
+                            onPlay(song, sorted, PlaybackSource("all_songs", null))
+                        },
+                        onMenu = { menuSong = song }
+                    )
+                }
             }
             if (paged.size < sorted.size) {
                 // Lazy-loading footer: more rows compose as you scroll.
