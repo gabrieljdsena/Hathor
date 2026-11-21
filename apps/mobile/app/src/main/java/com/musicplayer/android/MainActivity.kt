@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -97,8 +98,27 @@ class MainActivity : ComponentActivity() {
         const val DEFAULT_TEST_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     }
 
+    @Suppress("DEPRECATION")
+    private fun configureSystemBars() {
+        // Keep the OS status/navigation bars on the app's zinc-950 surface
+        // with light icons. Without this, some devices fall back to a white
+        // navigation bar even though the Compose UI is dark.
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = android.graphics.Color.rgb(9, 9, 11)
+        window.navigationBarColor = android.graphics.Color.rgb(9, 9, 11)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureSystemBars()
         deviceId = getSharedPreferences("hathor", MODE_PRIVATE).let { prefs ->
             prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
                 prefs.edit().putString("device_id", it).apply()

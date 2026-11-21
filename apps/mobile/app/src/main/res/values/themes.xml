@@ -1,5 +1,9 @@
 <resources>
     <style name="Theme.AndroidPlayer" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:windowBackground">#FF09090B</item>
+        <item name="android:colorBackground">#FF09090B</item>
+        <item name="android:statusBarColor">#FF09090B</item>
+        <item name="android:navigationBarColor">#FF09090B</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

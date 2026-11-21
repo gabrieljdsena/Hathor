@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -52,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.MetadataRepository
@@ -371,7 +373,7 @@ private fun PlaylistDetail(
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(ordered.take(pvLimit), key = { it.file }) { song ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().hathorGlass()
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).hathorGlass()
                         // Desktop playlist row: queue from the playlist songs
                         // with the playlist id; long-press opens the menu.
                         .combinedClickable(
@@ -382,9 +384,20 @@ private fun PlaylistDetail(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    SongCover(repo = metadata, fileName = song.file, size = 44.dp)
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(song.title, style = MaterialTheme.typography.bodyMedium)
-                        Text(song.artist, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            song.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            song.artist,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     IconButton(
                         onClick = {
@@ -392,7 +405,8 @@ private fun PlaylistDetail(
                                 repo.removeSong(playlist.id, song.file)
                                 withContext(Dispatchers.Main) { reload() }
                             }
-                        }
+                        },
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = HathorColors.TextHint)
                     }
