@@ -19,7 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Explore
@@ -114,78 +114,67 @@ fun HathorShell(
     syncProgress: SyncProgress? = null,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(true) }
+    // The old icon-only "minimized" rail is now the open state. Closing the
+    // sidebar removes the rail entirely and reveals a hamburger bar instead.
+    var sidebarVisible by remember { mutableStateOf(true) }
 
     Column(modifier = Modifier.fillMaxSize().background(HathorColors.Background)) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            // ---- Sidebar (desktop aside#sidebar, collapsible) ----
-            Column(
-                modifier = Modifier
-                    .width(if (expanded) 88.dp else 60.dp)
-                    .fillMaxHeight()
-                    .background(Color(0x66000000))
-                    .verticalScroll(rememberScrollState())
-                    .padding(vertical = 12.dp, horizontal = if (expanded) 8.dp else 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                // Brand tile: the HT app mark on zinc-950, like the launcher icon.
-                Box(
+            if (sidebarVisible) {
+                // ---- Icon-only rail (the previous minimized layout) ----
+                Column(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF09090B)),
-                    contentAlignment = Alignment.Center
+                        .width(60.dp)
+                        .fillMaxHeight()
+                        .background(Color(0x66000000))
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 12.dp, horizontal = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.musicplayer.android.R.drawable.app_logo),
-                        contentDescription = "Hathor",
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-                if (expanded) {
-                    Text("Hathor", style = MaterialTheme.typography.bodySmall, color = HathorColors.TextBody)
-                }
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        if (expanded) Icons.Filled.ChevronLeft else Icons.Filled.ChevronRight,
-                        contentDescription = if (expanded) "Collapse sidebar" else "Expand sidebar",
-                        tint = HathorColors.TextHint
-                    )
-                }
-                val selectedRail = selected.railActive()
-                Dest.entries.filter { it.inRail }.forEach { dest ->
-                    val active = dest == selectedRail
-                    // Desktop group-[.active-nav] transitions, animated.
-                    val iconTint by androidx.compose.animation.animateColorAsState(
-                        targetValue = if (active) HathorColors.AccentBright else HathorColors.TextHint,
-                        animationSpec = tween(durationMillis = 300),
-                        label = "rail-icon"
-                    )
-                    val labelColor by androidx.compose.animation.animateColorAsState(
-                        targetValue = if (active) Color.White else HathorColors.TextHint,
-                        animationSpec = tween(durationMillis = 300),
-                        label = "rail-label"
-                    )
-                    Column(
+                    // Brand tile: the HT app mark on zinc-950, like the launcher icon.
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (active) HathorColors.AccentFill else Color.Transparent)
-                            .clickable { onSelect(dest) }
-                            .padding(vertical = 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .background(Color(0xFF09090B)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            dest.icon,
-                            contentDescription = dest.label,
-                            tint = iconTint
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.musicplayer.android.R.drawable.app_logo),
+                            contentDescription = "Hathor",
+                            modifier = Modifier.size(28.dp)
                         )
-                        if (expanded) {
-                            Text(
-                                dest.label,
-                                color = labelColor,
-                                style = MaterialTheme.typography.bodySmall
+                    }
+                    IconButton(onClick = { sidebarVisible = false }) {
+                        Icon(
+                            Icons.Filled.ChevronLeft,
+                            contentDescription = "Hide sidebar",
+                            tint = HathorColors.TextHint
+                        )
+                    }
+                    val selectedRail = selected.railActive()
+                    Dest.entries.filter { it.inRail }.forEach { dest ->
+                        val active = dest == selectedRail
+                        // Desktop group-[.active-nav] transitions, animated.
+                        val iconTint by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (active) HathorColors.AccentBright else HathorColors.TextHint,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "rail-icon"
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (active) HathorColors.AccentFill else Color.Transparent)
+                                .clickable { onSelect(dest) }
+                                .padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                dest.icon,
+                                contentDescription = dest.label,
+                                tint = iconTint
                             )
                         }
                     }
@@ -229,6 +218,23 @@ fun HathorShell(
                 )
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize()) {
+                        if (!sidebarVisible) {
+                            // Clean top strip: the only chrome when the rail is hidden.
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(onClick = { sidebarVisible = true }) {
+                                    Icon(
+                                        Icons.Filled.Menu,
+                                        contentDescription = "Show sidebar",
+                                        tint = HathorColors.TextBody
+                                    )
+                                }
+                            }
+                        }
                         if (syncProgress?.running == true) {
                             SyncProgressBar(syncProgress)
                         }
