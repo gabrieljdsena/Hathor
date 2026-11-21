@@ -128,6 +128,11 @@ describe('ResumeBento', () => {
     const menu = await screen.findByRole('menu', { name: 'Resume from another device' })
     expect(menu.className).toMatch(/bg-zinc-900/)
     expect(menu.className).toMatch(/orange/)
+    // Portaled above the z-40 lyrics sheet, like SongMenu — rendering inline
+    // trapped it in the player bar's z-20 stacking context.
+    expect(menu.className).toMatch(/fixed/)
+    expect(menu.className).toMatch(/z-\[90\]/)
+    expect(menu.parentElement).toBe(document.body)
     expect(menu.innerHTML).not.toMatch(/sky-/)
     // Device header precedes the song title in the menu.
     const devicePos = menu.innerHTML.indexOf('From Android')

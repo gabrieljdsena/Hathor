@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, type PlaybackSpot, type QueueSource, type Song } from '../../api/client'
 import { engine } from '../../audio/engine'
@@ -86,7 +87,9 @@ export default function ResumeBento({
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const hidden = done || !spot || spot.file === currentFile
   // Song lookup runs only while visible (a matching track costs zero
@@ -113,7 +116,8 @@ export default function ResumeBento({
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (!boxRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false)
         releaseMenu(menuId)
       }
@@ -146,6 +150,20 @@ export default function ResumeBento({
       } else releaseMenu(menuId)
       return next
     })
+  }
+
+  // The menu portals to <body> (like SongMenu): inside the player bar it
+  // used to be trapped by that z-20 stacking context and rendered under the
+  // z-40 lyrics sheet. Anchor it above the dots button in viewport space.
+  const openMenu = (button: HTMLButtonElement) => {
+    const rect = button.getBoundingClientRect()
+    const width = 288 // w-72
+    const right = Math.max(
+      8,
+      Math.min(window.innerWidth - rect.right, window.innerWidth - width - 8),
+    )
+    setAnchor({ right, bottom: window.innerHeight - rect.top + 8 })
+    toggle()
   }
 
   const resume = () => {
@@ -199,7 +217,7 @@ export default function ResumeBento({
   return (
     <div ref={boxRef} className="relative flex-shrink-0" onClick={(e) => e.stopPropagation()}>
       <button
-        onClick={toggle}
+        onClick={(e) => openMenu(e.currentTarget)}
         title={`Resume from ${device}: ${name} at ${formatTime(spot.positionSec)}`}
         aria-label="Resume from another device"
         aria-expanded={open}
@@ -210,41 +228,46 @@ export default function ResumeBento({
         <Icon name="dots" className="w-5 h-5" />
         <span aria-hidden="true" className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-orange-400" />
       </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label="Resume from another device"
-          className="absolute bottom-full mb-2 right-0 z-[90] w-72 overflow-hidden rounded-2xl bg-zinc-900 border border-orange-500/20 shadow-2xl"
-        >
-          <div className="px-4 pt-3 pb-2 border-b border-white/5">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-400/90 truncate">
-              From {device}
+      {open &&
+        anchor &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-label="Resume from another device"
+            className="fixed z-[90] w-72 overflow-hidden rounded-2xl bg-zinc-900 border border-orange-500/20 shadow-2xl"
+            style={{ right: anchor.right, bottom: anchor.bottom }}
+          >
+            <div className="px-4 pt-3 pb-2 border-b border-white/5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-400/90 truncate">
+                From {device}
+              </div>
+              {ago && <div className="text-[11px] text-zinc-500 mt-0.5">{ago}</div>}
             </div>
-            {ago && <div className="text-[11px] text-zinc-500 mt-0.5">{ago}</div>}
-          </div>
-          <div className="px-4 py-3">
-            <div className="text-sm font-medium text-zinc-100 truncate">{name}</div>
-            <div className="text-xs text-zinc-500 mt-0.5">
-              Saved at {formatTime(spot.positionSec)}
-              {spot.isPodcast ? ' · podcast' : ''}
+            <div className="px-4 py-3">
+              <div className="text-sm font-medium text-zinc-100 truncate">{name}</div>
+              <div className="text-xs text-zinc-500 mt-0.5">
+                Saved at {formatTime(spot.positionSec)}
+                {spot.isPodcast ? ' · podcast' : ''}
+              </div>
             </div>
-          </div>
-          {error && (
-            <p className="mx-4 mb-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
-          <div className="px-3 pb-3">
-            <button
-              onClick={resume}
-              disabled={busy}
-              className="w-full px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50"
-            >
-              {busy ? 'Loading…' : `Resume at ${formatTime(spot.positionSec)}`}
-            </button>
-          </div>
-        </div>
-      )}
+            {error && (
+              <p className="mx-4 mb-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+            <div className="px-3 pb-3">
+              <button
+                onClick={resume}
+                disabled={busy}
+                className="w-full px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {busy ? 'Loading…' : `Resume at ${formatTime(spot.positionSec)}`}
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
