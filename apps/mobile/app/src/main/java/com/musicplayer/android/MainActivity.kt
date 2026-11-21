@@ -196,7 +196,7 @@ class MainActivity : ComponentActivity() {
         // Settings might never be opened, but the player needs its prefs.
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                settingsRepo.load()
+                settingsRepo.load(includeBackground = false)
                 withContext(Dispatchers.Main) {
                     player.setChapterSkip(settingsRepo.chapterSkip.value)
                     player.setVolume(settingsRepo.volume.value)
@@ -259,20 +259,21 @@ class MainActivity : ComponentActivity() {
             HathorTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var showSplash by rememberSaveable { mutableStateOf(coldStart) }
+                    // Only the library scan blocks the splash. Daily Mix,
+                    // history strips, podcasts and queue restore fill in
+                    // behind Home's skeletons after the first frame.
                     LaunchedEffect(Unit) {
                         if (!showSplash) return@LaunchedEffect
                         val started = System.currentTimeMillis()
                         withTimeoutOrNull(5_000L) {
-                            withContext(Dispatchers.IO) {
-                                runCatching { metadataRepo.refreshLibrary() }
-                                runCatching { dailyMixRepo.getDailyMix() }
-                                runCatching { dailyMixRepo.recentlyPlayed(15) }
-                                runCatching { dailyMixRepo.recentlyDownloaded(15) }
-                                runCatching { podcastRepo.refresh() }
-                            }
+                            runCatching { metadataRepo.refreshLibraryIfStale() }
                         }
                         val elapsed = System.currentTimeMillis() - started
-                        if (elapsed < 1_200L) delay(1_200L - elapsed)
+                        if (elapsed < 500L) delay(500L - elapsed)
+                        android.util.Log.i(
+                            "HathorStartup",
+                            "library ready in ${System.currentTimeMillis() - started} ms"
+                        )
                         showSplash = false
                     }
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -291,7 +292,13 @@ class MainActivity : ComponentActivity() {
                     var syncProgress by remember { mutableStateOf<SyncProgress?>(null) }
                     // Manual-only sync elsewhere; the update check is throttled
                     // to 24 h and silently skipped when the Web API is off.
-                    LaunchedEffect(Unit) { updateRepo.checkOnStartup() }
+                    // Both it and the wallpaper decode wait until the splash is gone.
+                    LaunchedEffect(showSplash) {
+                        if (!showSplash) {
+                            updateRepo.checkOnStartup()
+                            settingsRepo.loadBackground()
+                        }
+                    }
                     LaunchedEffect(Unit) {
                         while (true) {
                             syncProgress = withContext(Dispatchers.IO) {
@@ -327,12 +334,14 @@ class MainActivity : ComponentActivity() {
                     // Desktop launch resume: custom manual queue restores
                     // verbatim first, else rebuild from the persisted source,
                     // else the general library. Silent, no autoplay.
-                    LaunchedEffect(Unit) {
-                        launch(Dispatchers.IO) {
-                            try {
-                                restorePlayback()
-                            } catch (e: Exception) {
-                                android.util.Log.w("MainActivity", "restore failed: ${e.message}")
+                    LaunchedEffect(showSplash) {
+                        if (!showSplash) {
+                            launch(Dispatchers.IO) {
+                                try {
+                                    restorePlayback()
+                                } catch (e: Exception) {
+                                    android.util.Log.w("MainActivity", "restore failed: ${e.message}")
+                                }
                             }
                         }
                     }
@@ -849,7 +858,7 @@ class MainActivity : ComponentActivity() {
         }
         if (currentName.isNullOrBlank()) return
         try {
-            metadataRepo.refreshLibrary()
+            metadataRepo.refreshLibraryIfStale()
         } catch (_: Exception) {
         }
         val source = try {

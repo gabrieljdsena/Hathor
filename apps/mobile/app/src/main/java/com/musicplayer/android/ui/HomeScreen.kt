@@ -124,7 +124,7 @@ fun HomeScreen(
     suspend fun reload() {
         loading = true
         try {
-            withContext(Dispatchers.IO) { library.refreshLibrary() }
+            library.refreshLibraryIfStale()
         } catch (_: Exception) {
         }
         try {

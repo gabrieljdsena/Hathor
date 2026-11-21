@@ -2,6 +2,7 @@ package com.musicplayer.android.data
 
 import android.content.Context
 import android.media.MediaMetadataRetriever
+import android.os.SystemClock
 import android.util.Log
 import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.local.SyncDeletionEntity
@@ -61,15 +62,29 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
     private data class CacheEntry(val lastModified: Long, val length: Long, val meta: SongMeta)
     private val metaCache = mutableMapOf<String, CacheEntry>()
     private val refreshMutex = Mutex()
+    private var lastRefreshElapsed = 0L
+    private var lastRefreshDir: String? = null
 
     /**
      * Mirror of send_song_list(): mp3s on disk + tags + Room date_download.
      * Incremental: unchanged files are served from [metaCache], so repeated
      * refreshes cost a directory listing, not N retriever opens.
+     *
+     * Concurrent callers share one scan: callers that only need a recent
+     * snapshot should use [refreshLibraryIfStale], which becomes a no-op while
+     * another refresh is in flight or just finished.
      */
-    suspend fun refreshLibrary() = withContext(Dispatchers.IO) {
+    suspend fun refreshLibrary(force: Boolean = true, maxAgeMs: Long = REFRESH_TTL_MS) =
+        withContext(Dispatchers.IO) {
         refreshMutex.withLock {
             val outDir = engine.outputDir()
+            val startedAt = SystemClock.elapsedRealtime()
+            if (!force &&
+                lastRefreshDir == outDir.absolutePath &&
+                startedAt - lastRefreshElapsed <= maxAgeMs
+            ) {
+                return@withLock
+            }
             val files = outDir.listFiles { f ->
                 f.isFile && f.extension.equals("mp3", ignoreCase = true)
             }?.sortedBy { it.name } ?: emptyList()
@@ -93,7 +108,14 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
                 metaCache.keys.retainAll { k -> !k.startsWith(outDir.absolutePath) || k in liveKeys }
             }
             _library.value = fresh
+            lastRefreshElapsed = SystemClock.elapsedRealtime()
+            lastRefreshDir = outDir.absolutePath
         }
+    }
+
+    /** Refresh only when no recent scan exists for the current folder. */
+    suspend fun refreshLibraryIfStale(maxAgeMs: Long = REFRESH_TTL_MS) {
+        refreshLibrary(force = false, maxAgeMs = maxAgeMs)
     }
 
     /**
@@ -427,5 +449,6 @@ class MetadataRepository(context: Context, val engine: DownloadEngine) {
 
     companion object {
         private const val TAG = "MetadataRepository"
+        const val REFRESH_TTL_MS = 30_000L
     }
 }
