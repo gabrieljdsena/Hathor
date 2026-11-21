@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,11 +19,14 @@ import com.musicplayer.android.data.api.PlaybackApi
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -41,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.musicplayer.android.data.ArtworkRepository
@@ -64,6 +67,7 @@ import com.musicplayer.android.ui.LyricsScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
+import com.musicplayer.android.ui.StartupSplashScreen
 import com.musicplayer.android.ui.SyncProgress
 import com.musicplayer.android.ui.UpdateDialog
 import com.musicplayer.android.ui.querySyncProgress
@@ -100,9 +104,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var previewPlayer: PreviewPlayer
     private lateinit var aiDjController: AiDjController
 
-    /** True once the first library/history preload has finished (or timed out). */
-    @Volatile private var startupReady = false
-
     companion object {
         const val DEFAULT_TEST_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     }
@@ -126,8 +127,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splashScreen = installSplashScreen()
-        splashScreen.setKeepOnScreenCondition { !startupReady }
+        // The native splash only bridges the initial window; the Compose
+        // splash below shows the loading indicator while data warms up.
+        val coldStart = savedInstanceState == null
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         configureSystemBars()
         deviceId = getSharedPreferences("hathor", MODE_PRIVATE).let { prefs ->
@@ -252,25 +255,27 @@ class MainActivity : ComponentActivity() {
                 queueRepo.refresh()
             }
         }
-        // Keep the splash visible while the first screen's data warms up.
-        // Minimum display avoids a flash; the timeout keeps startup bounded
-        // on very large libraries.
-        CoroutineScope(Dispatchers.IO).launch {
-            val started = SystemClock.elapsedRealtime()
-            withTimeoutOrNull(5_000L) {
-                runCatching { metadataRepo.refreshLibrary() }
-                runCatching { dailyMixRepo.getDailyMix() }
-                runCatching { dailyMixRepo.recentlyPlayed(15) }
-                runCatching { dailyMixRepo.recentlyDownloaded(15) }
-                runCatching { podcastRepo.refresh() }
-            }
-            val elapsed = SystemClock.elapsedRealtime() - started
-            if (elapsed < 1_200L) delay(1_200L - elapsed)
-            startupReady = true
-        }
         setContent {
             HathorTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
+                    var showSplash by rememberSaveable { mutableStateOf(coldStart) }
+                    LaunchedEffect(Unit) {
+                        if (!showSplash) return@LaunchedEffect
+                        val started = System.currentTimeMillis()
+                        withTimeoutOrNull(5_000L) {
+                            withContext(Dispatchers.IO) {
+                                runCatching { metadataRepo.refreshLibrary() }
+                                runCatching { dailyMixRepo.getDailyMix() }
+                                runCatching { dailyMixRepo.recentlyPlayed(15) }
+                                runCatching { dailyMixRepo.recentlyDownloaded(15) }
+                                runCatching { podcastRepo.refresh() }
+                            }
+                        }
+                        val elapsed = System.currentTimeMillis() - started
+                        if (elapsed < 1_200L) delay(1_200L - elapsed)
+                        showSplash = false
+                    }
+                    Box(modifier = Modifier.fillMaxSize()) {
                     var dest by remember { mutableStateOf(Dest.Library) }
                     // Deep-link into an artist's songs (e.g. history artist
                     // link); consumed once by the All Songs view.
@@ -785,6 +790,13 @@ class MainActivity : ComponentActivity() {
                             onInstall = updateRepo::install,
                             onRetry = updateRepo::retry,
                         )
+                    }
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        exit = fadeOut(animationSpec = tween(400))
+                    ) {
+                        StartupSplashScreen()
+                    }
                     }
                 }
             }

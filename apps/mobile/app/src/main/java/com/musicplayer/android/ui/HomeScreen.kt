@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -49,7 +50,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.ui.theme.hathorPressable
 import com.musicplayer.android.data.ArtworkRepository
@@ -68,6 +71,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
+
+private data class HomeShortcut(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit
+)
 
 /**
  * Home dashboard (desktop home.html): NOT a song list. Exactly: an All
@@ -163,108 +173,142 @@ fun HomeScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        // Header
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            HeaderIconTile {
-                Icon(Icons.Filled.Home, contentDescription = null, tint = HathorColors.AccentBright)
-            }
-            Column {
-                Text("Home", style = MaterialTheme.typography.titleLarge)
-                Text(dateSubtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-            }
-        }
-
-        // Hero: the mix is the day's primary action.
-        DailyMixHero(
-            mixSize = mixSize,
-            mixDate = mixDateShort,
-            loading = loading,
-            onClick = onOpenDailyMix
+    val configuration = LocalConfiguration.current
+    val wide = configuration.screenWidthDp >= 840
+    val compact = configuration.screenHeightDp < 500
+    val artistCount = songs.map { it.artist }.distinct().size
+    val albumCount = songs.map { it.album }.distinct().size
+    val shortcuts = listOf(
+        HomeShortcut(
+            title = "All Songs",
+            subtitle = if (songs.isEmpty() && loading) "Loading…"
+            else "${songs.size} song${if (songs.size == 1) "" else "s"}",
+            icon = Icons.Filled.MusicNote,
+            onClick = onOpenAllSongs
+        ),
+        HomeShortcut(
+            title = "Artists",
+            subtitle = "$artistCount artist${if (artistCount == 1) "" else "s"}",
+            icon = Icons.Filled.Person,
+            onClick = onOpenArtists
+        ),
+        HomeShortcut(
+            title = "Albums",
+            subtitle = "$albumCount album${if (albumCount == 1) "" else "s"}",
+            icon = Icons.Filled.Album,
+            onClick = onOpenAlbums
+        ),
+        HomeShortcut(
+            title = "Podcasts",
+            subtitle = if (podcastEpisodes.isEmpty()) "No episodes"
+            else "${podcastEpisodes.size} episode${if (podcastEpisodes.size == 1) "" else "s"}",
+            icon = Icons.Filled.Mic,
+            onClick = onOpenPodcasts
         )
+    )
 
-        // Compact library shortcuts.
-        val artistCount = songs.map { it.artist }.distinct().size
-        val albumCount = songs.map { it.album }.distinct().size
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ShortcutCard(
-                    title = "All Songs",
-                    subtitle = if (songs.isEmpty() && loading) "Loading…"
-                    else "${songs.size} song${if (songs.size == 1) "" else "s"}",
-                    icon = Icons.Filled.MusicNote,
-                    onClick = onOpenAllSongs,
-                    modifier = Modifier.weight(1f)
-                )
-                ShortcutCard(
-                    title = "Artists",
-                    subtitle = "$artistCount artist${if (artistCount == 1) "" else "s"}",
-                    icon = Icons.Filled.Person,
-                    onClick = onOpenArtists,
-                    modifier = Modifier.weight(1f)
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 1100.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 20.dp)
+        ) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HeaderIconTile {
+                    Icon(Icons.Filled.Home, contentDescription = null, tint = HathorColors.AccentBright)
+                }
+                Column {
+                    Text("Home", style = MaterialTheme.typography.titleLarge)
+                    Text(dateSubtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+                }
+            }
+
+            // Hero: the mix is the day's primary action.
+            DailyMixHero(
+                mixSize = mixSize,
+                mixDate = mixDateShort,
+                loading = loading,
+                compact = compact,
+                onClick = onOpenDailyMix
+            )
+
+            // Compact library shortcuts: one row on wide screens, 2x2 otherwise.
+            if (wide) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    shortcuts.forEach { shortcut ->
+                        ShortcutCard(
+                            title = shortcut.title,
+                            subtitle = shortcut.subtitle,
+                            icon = shortcut.icon,
+                            onClick = shortcut.onClick,
+                            compact = compact,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    shortcuts.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            row.forEach { shortcut ->
+                                ShortcutCard(
+                                    title = shortcut.title,
+                                    subtitle = shortcut.subtitle,
+                                    icon = shortcut.icon,
+                                    onClick = shortcut.onClick,
+                                    compact = compact,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            resumeSpot?.let { spot ->
+                val pos = "%d:%02d".format(spot.positionSec.toInt() / 60, spot.positionSec.toInt() % 60)
+                ResumeCard(
+                    title = "Continue on ${spot.device ?: "another device"}",
+                    subtitle = "${resumeTitle ?: spot.file} · $pos",
+                    onClick = { onResumeSpot(spot) }
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ShortcutCard(
-                    title = "Albums",
-                    subtitle = "$albumCount album${if (albumCount == 1) "" else "s"}",
-                    icon = Icons.Filled.Album,
-                    onClick = onOpenAlbums,
-                    modifier = Modifier.weight(1f)
-                )
-                ShortcutCard(
-                    title = "Podcasts",
-                    subtitle = if (podcastEpisodes.isEmpty()) "No episodes"
-                    else "${podcastEpisodes.size} episode${if (podcastEpisodes.size == 1) "" else "s"}",
-                    icon = Icons.Filled.Mic,
-                    onClick = onOpenPodcasts,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-        resumeSpot?.let { spot ->
-            val pos = "%d:%02d".format(spot.positionSec.toInt() / 60, spot.positionSec.toInt() % 60)
-            ResumeCard(
-                title = "Continue on ${spot.device ?: "another device"}",
-                subtitle = "${resumeTitle ?: spot.file} · $pos",
-                onClick = { onResumeSpot(spot) }
+
+            // Recently Played strip
+            StripSection(
+                title = "Recently Played",
+                songs = recent,
+                emptyText = "Nothing played yet — play something and it will show up here.",
+                library = library,
+                loading = loading,
+                nowPlayingFile = nowPlayingFile,
+                isPlaying = isPlaying,
+                onSeeAll = onOpenHistory,
+                onPlay = { song -> onPlay(song, recent, PlaybackSource("recently_played", null)) },
+                onMenu = { song ->
+                    menuSong = Triple(song, recent, PlaybackSource("recently_played", null))
+                }
+            )
+
+            // Recently Downloaded strip
+            StripSection(
+                title = "Recently Downloaded",
+                songs = downloaded,
+                emptyText = "Nothing downloaded yet — grab some music and it will show up here.",
+                library = library,
+                loading = loading,
+                nowPlayingFile = nowPlayingFile,
+                isPlaying = isPlaying,
+                onSeeAll = onOpenHistory,
+                onPlay = { song -> onPlay(song, downloaded, PlaybackSource("recently_downloaded", null)) },
+                onMenu = { song ->
+                    menuSong = Triple(song, downloaded, PlaybackSource("recently_downloaded", null))
+                }
             )
         }
-
-        // Recently Played strip
-        StripSection(
-            title = "Recently Played",
-            songs = recent,
-            emptyText = "Nothing played yet — play something and it will show up here.",
-            library = library,
-            loading = loading,
-            nowPlayingFile = nowPlayingFile,
-            isPlaying = isPlaying,
-            onSeeAll = onOpenHistory,
-            onPlay = { song -> onPlay(song, recent, PlaybackSource("recently_played", null)) },
-            onMenu = { song ->
-                menuSong = Triple(song, recent, PlaybackSource("recently_played", null))
-            }
-        )
-
-        // Recently Downloaded strip
-        StripSection(
-            title = "Recently Downloaded",
-            songs = downloaded,
-            emptyText = "Nothing downloaded yet — grab some music and it will show up here.",
-            library = library,
-            loading = loading,
-            nowPlayingFile = nowPlayingFile,
-            isPlaying = isPlaying,
-            onSeeAll = onOpenHistory,
-            onPlay = { song -> onPlay(song, downloaded, PlaybackSource("recently_downloaded", null)) },
-            onMenu = { song ->
-                menuSong = Triple(song, downloaded, PlaybackSource("recently_downloaded", null))
-            }
-        )
     }
 
     menuSong?.let { (song, visible, source) ->
@@ -311,6 +355,7 @@ private fun DailyMixHero(
     mixSize: Int?,
     mixDate: String,
     loading: Boolean,
+    compact: Boolean,
     onClick: () -> Unit
 ) {
     val subtitle = when {
@@ -338,14 +383,14 @@ private fun DailyMixHero(
                 RoundedCornerShape(20.dp)
             )
             .hathorPressable(onClick)
-            .padding(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(if (compact) 12.dp else 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(18.dp))
+                .size(if (compact) 44.dp else 56.dp)
+                .clip(RoundedCornerShape(if (compact) 14.dp else 18.dp))
                 .background(HathorColors.BrandGradient),
             contentAlignment = Alignment.Center
         ) {
@@ -353,7 +398,7 @@ private fun DailyMixHero(
                 Icons.Filled.Refresh,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(if (compact) 22.dp else 28.dp)
             )
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -387,17 +432,23 @@ private fun ShortcutCard(
     subtitle: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    compact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
-            .height(124.dp)
+            .height(if (compact) 86.dp else 124.dp)
             .hathorGlass()
             .hathorPressable(onClick)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(if (compact) 10.dp else 14.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)
     ) {
-        ShortcutIcon(icon)
+        ShortcutIcon(
+            icon,
+            size = if (compact) 30.dp else 40.dp,
+            iconSize = if (compact) 17.dp else 22.dp,
+            radius = if (compact) 10.dp else 12.dp
+        )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 title,
@@ -456,20 +507,25 @@ private fun ResumeCard(
 }
 
 @Composable
-private fun ShortcutIcon(icon: ImageVector) {
+private fun ShortcutIcon(
+    icon: ImageVector,
+    size: Dp = 40.dp,
+    iconSize: Dp = 22.dp,
+    radius: Dp = 12.dp
+) {
     Box(
         modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .size(size)
+            .clip(RoundedCornerShape(radius))
             .background(HathorColors.AccentFill)
-            .border(1.dp, HathorColors.Accent.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
+            .border(1.dp, HathorColors.Accent.copy(alpha = 0.2f), RoundedCornerShape(radius)),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             icon,
             contentDescription = null,
             tint = HathorColors.AccentBright,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(iconSize)
         )
     }
 }
