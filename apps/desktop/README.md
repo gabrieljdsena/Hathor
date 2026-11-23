@@ -22,6 +22,7 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 - **History** — download history and playback (played songs / played playlists) with pagination, full-tab queues, row action menus and re-download.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
+- **In-app updates** — checks the Hathor server for a newer packaged build, verifies the SHA-256, stages it, and lets a detached helper replace the app after Hathor exits. The same server/key used by Web API powers the channel.
 - **Discover** — server-backed out-of-library recommendations with source filters, YouTube preview queue, feedback/tuning and local downloads. Playback completion/skip segments are reported to the Web API for Discover quality. Configure the Web API in Settings first.
 - **AI DJ (Vohithe)** — server-planned sets with spoken intro/outro commentary, voice ducking, vibe briefs (typed or spoken), batch handoff, feedback and Home/player-bar entry points.
 - **Cross-device playback** — live player-hub polling keeps desktop and web/other clients aligned for play/pause/next/seek/volume, with local audio left untouched when a track is missing. Paused spots from other devices also expose their Up Next queue and resume at the saved position (explicit tap only).
@@ -68,6 +69,45 @@ pyinstaller music_player.spec
 
 The build is emitted to `dist/Hathor/`. The `.env` file must live next to the executable (never bundled) when running the frozen build.
 
+### Release and self-update package
+
+`version.json` is the desktop update channel's source of truth:
+
+```json
+{
+  "versionCode": 1,
+  "versionName": "1.0.0-hathor"
+}
+```
+
+Bump `versionCode` for every published build (the server selects the
+highest), then run:
+
+```powershell
+.\scripts\release.ps1 -Destination \\DELL-SERVER1\HathorDesktop
+```
+
+The script runs the Python/JS tests, rebuilds Tailwind, builds the PyInstaller
+folder, copies `version.json` next to `Hathor.exe`, and creates
+`dist/hathor-desktop-<versionCode>-<versionName>.zip`. It refuses to package
+`music_player.db`, `.env`, or `hathor.log`.
+
+The server exposes the channel at:
+
+- `GET /api/v1/desktop/latest` → metadata
+- `GET /api/v1/desktop/download/{fileName}` → the zip
+
+Both require the normal `hth_` key/JWT. **Settings → Application** shows the
+installed version, checks manually, downloads with progress, and offers
+**Install and restart**. The app also checks once at startup when the Web API
+is configured.
+
+Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with
+`HATHOR_UPDATE_DIR`). A detached PowerShell helper waits for Hathor to exit,
+moves the old `Hathor.exe`/`_internal`/`version.json` aside, copies the staged
+build, restarts Hathor, and removes the backup and package. The SQLite DB,
+`.env`, logs, and library folders are never touched.
+
 ## Configuration
 
 All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured in **Settings → Web API** (URL + scoped `hth_` key), with a `.env` file next to `main.py` (or the executable) as the fallback:
@@ -96,12 +136,15 @@ main.py            App entry point, window creation, startup + first-run flow
 api.py             pywebview JS bridge: every method the UI calls
 Download.py        yt-dlp YouTube downloader + iTunes metadata/artwork lookup
 database.sql       SQLite schema
+version.json      Desktop version/build used by the in-app updater
 services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
 services/history_sync.py  Debounced automatic Music_History outbox flush
+services/app_update.py  Desktop check/download/stage/swap pipeline
 settings.py        Loads persisted settings from the SQLite Settings table
 monitor.py         Debug RAM usage monitor (currently disabled)
 services/          Domain logic: playback (+crossfade), metadata, database, lyrics, windows_media, downloads, apple
 ui/                Frontend: views, modals, Tailwind/compiled CSS, vendored libs
+scripts/release.ps1  Build, package and publish a desktop release
 music_player.spec  PyInstaller build script
 ```
 

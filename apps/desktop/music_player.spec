@@ -17,6 +17,7 @@ a = Analysis(
     datas=[
         ('ui', 'ui'),
         ('database.sql', '.'),
+        ('version.json', '.'),
         ('node_modules', 'node_modules')
     ] + _extra_datas + collect_data_files('pykakasi'),
     hiddenimports=[

@@ -89,15 +89,31 @@ pip install pyinstaller
 pyinstaller music_player.spec
 ```
 
-Output: `dist/MusicPlayer/`.
+Output: `dist/Hathor/`.
 
-The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `node_modules/`, and `pykakasi` data files. Important details:
+The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, `node_modules/`, and `pykakasi` data files. Important details:
 
-- **`.env` is not bundled** — it must sit next to `MusicPlayer.exe` (runtime reads `os.path.dirname(sys.executable)`).
+- **`.env` is not bundled** — it must sit next to `Hathor.exe` (runtime reads `os.path.dirname(sys.executable)`).
 - The SQLite DB, `.env`, and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen.
 - Console is disabled (`console=False`), so stdout logs are invisible in the shipped app.
+- `version.json` is copied to the app root for the updater; the PyInstaller copy under `_internal` is only a fallback.
 
 > `dist/` and `build/` are git-ignored.
+
+### Publishing an update
+
+Bump `versionCode` in `version.json`, then run:
+
+```powershell
+.\scripts\release.ps1 -Destination \\DELL-SERVER1\HathorDesktop
+```
+
+`-SkipTests` and `-SkipTailwind` speed up local builds. The script emits
+`dist/hathor-desktop-<versionCode>-<versionName>.zip`, which is the artifact
+the server's `/api/v1/desktop/latest` endpoint serves. The app stages updates
+under `%LOCALAPPDATA%\Hathor\updates` and uses `services/app_update.py` plus a
+detached PowerShell helper for the swap. Never edit a published zip or reuse a
+`versionCode`.
 
 ## Code conventions
 

@@ -17,6 +17,7 @@ __all__ = [
     "DownloadManager",
     "DiscoverService",
     "AiDjController",
+    "AppUpdateService",
     "startup_maintenance",
 ]
 
@@ -30,6 +31,7 @@ _LAZY = {
     "DownloadManager": (".downloads", "DownloadManager"),
     "DiscoverService": (".discover", "DiscoverService"),
     "AiDjController": (".ai_dj", "AiDjController"),
+    "AppUpdateService": (".app_update", "AppUpdateService"),
     "startup_maintenance": (".startup_maintenance", None),
 }
 

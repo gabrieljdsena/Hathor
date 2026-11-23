@@ -41,7 +41,7 @@ Hathor is a **Python backend + HTML/JS frontend** desktop app. The UI runs insid
 5. **Instantiate `Api(db_path)`** and create the `pywebview` window (`title='Hathor'`, centered, `min_size=(895, 400)`).
 6. **Link `api._window`** so Python can push JS back via `window.evaluate_js(...)`.
 7. **Server sync** — manual-only. If the runtime **Settings → Web API** pair (or `.env` fallback) is set, a first run asks whether to import the server library (SweetAlert2 dialog); afterwards pushes/pulls happen exclusively through the Settings buttons (`Api.sync_local_to_remote` / `Api.sync_remote_to_local_and_download`). No background thread is started. `services/api_config.py` owns the runtime pair; `services/hathor_api.py` is the shared HTTP client for sync and future Discover/AI DJ calls.
-8. **`on_start`** — init `pygame.mixer`, `api.load_current_song()` (restores the current song *and* rebuilds its queue from the persisted `Settings.queue_source` context), start-up maintenance thread.
+8. **`on_start`** — init `pygame.mixer`, `api.load_current_song()` (restores the current song *and* rebuilds its queue from the persisted `Settings.queue_source` context), start-up maintenance thread. The webview then runs the desktop update check once the bridge is ready.
 
 Window resizes are debounced (`threading.Timer`, 0.4 s) and persisted to `Settings.window_width/height` on every resize.
 
@@ -57,6 +57,7 @@ Every public method on `Api` is callable from JavaScript because `pywebview` exp
 | Database | `load_playlists`, `new_playlist`, `update_playlist`, `delete_playlist`, `get_playlist_songs`, `update_song_playlists`, `get_songs_by_artist`, `get_songs_by_album`, `get_all_songs`, `get_daily_mix`, `get_recently_played`, `get_recently_downloaded`, `get_podcasts`, `get_podcast_details`, `delete` variants, `get_download_history`, `get_played_history`, `sync_local_songs_to_db`, `sync_local_podcasts_to_db`, `sync_local_to_remote`, `sync_remote_to_local_and_download` |
 | Downloads | `search_yt`, `recieve_download` (accepts `{url, title, is_podcast}`), `get_download_jobs`, `retry_download`, `download_check_owned`, `search_itunes_metadata`, `search_itunes_metadata_multi` |
 | Settings/UI | `volume_slider`, `get_current_volume`, `update_download_limit`, `update_background`, `update_songs_path`, `update_podcasts_path`, `load_settings`, `send_song_list`, `load_current_song`, `pick_folder`, `pick_podcasts_folder`, `pick_background`, `pick_playlist_image`, `get_api_config_view`, `save_api_config`, `clear_api_config`, `test_api_connection` |
+| App updates | `get_app_update_status`, `check_app_update`, `download_app_update`, `install_app_update`, `remove_app_update`; progress is pushed as `window.appUpdateProgress(...)` |
 | Discover | `discover_get`, `discover_refresh`, `discover_feedback`, `discover_insights`, `discover_tune`, `discover_check_download`, `discover_download`, `resolve_discover_preview`, `resolve_discover_video`, `pause_for_preview` |
 | AI DJ | `ai_dj_view`, `ai_dj_refresh`, `ai_dj_start`, `ai_dj_stop`, `ai_dj_feedback`, `ai_dj_transcribe`, `ai_dj_clip_url`, `ai_dj_voice_finished`, `ai_dj_voice_error`, `set_ai_dj_duck` |
 
@@ -78,6 +79,7 @@ Python → JS communication uses `self._window.evaluate_js("...")` with JSON-pay
 - **`discover.py` — `DiscoverService`** — server feed/refresh/feedback/insights/tuning, YouTube preview resolution (server first, local `yt-dlp` fallback), normalized owned guard, and local download submission. Preview audio is a global webview `<audio>` queue (`ui/js/discover-preview.js`); `PlaybackController.play_button` stops it before main playback, and `Api.pause_for_preview` pauses main without the stop callback.
 - **`ai_dj.py` — `AiDjController` / `AiDjApi`** — app-scoped Vohithe session: start/stop/feedback/transcribe, local batch resolution (downloads missing files through sync), boundary detection, voice sequencing and batch handoff. `player_sync.py` mirrors the local batch queue to `/player/queue`, `/player/play` and `/player/next`. `ui/js/ai-dj-voice.js` plays commentary clips; `PlaybackController.set_duck()` applies the voice duck factor to both normal and crossfade gain; `PlaybackController` emits track/queue/exhaustion callbacks used by the controller.
 - **`apple.py` — `AppleService`** — artist/album image lookups; **`startup_maintenance.py`** — FFmpeg auto-download + yt-dlp library update checks shown in the startup toast.
+- **`app_update.py` — `AppUpdateService`** — desktop sideload updater: `version.json`, authenticated `/api/v1/desktop/latest`, SHA-256 verification, safe zip staging under `%LOCALAPPDATA%\Hathor\updates`, and a detached PowerShell helper that swaps `Hathor.exe`/`_internal` after exit. `ui/js/app-update.js` owns the Settings card and startup prompt.
 
 ## Downloads (`Download.py`)
 

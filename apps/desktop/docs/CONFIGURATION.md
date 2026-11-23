@@ -82,6 +82,19 @@ Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `W
 - After that, everything is manual: **Push to Server** uploads rows + new file bytes; **Sync from Server** pulls the incremental delta down (see [Database & sync](DATABASE.md) and [Sync API migration](SYNC_API_MIGRATION.md)).
 - Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history, podcast tags and podcast tag links).
 
+## Desktop updates
+
+The updater reuses the Web API URL/key above. **Settings → Application** shows
+the installed `version.json`, checks `/api/v1/desktop/latest`, downloads with
+progress, verifies the server's SHA-256, and offers **Install and restart**.
+The app also checks once at startup when the API is configured.
+
+Downloaded packages and the staged copy live under
+`%LOCALAPPDATA%\Hathor\updates`. Set `HATHOR_UPDATE_DIR` to use another folder.
+The installer helper waits for Hathor to close, swaps `Hathor.exe`,
+`_internal`, and `version.json`, then restarts the app; `music_player.db`,
+`.env`, logs, and library folders are preserved.
+
 ## Turning sync off
 
 Press **Clear** in Settings → Web API and delete or comment out `HATHOR_API_URL`/`HATHOR_API_KEY` in `.env` (or remove the file entirely). The next launch will run fully local.

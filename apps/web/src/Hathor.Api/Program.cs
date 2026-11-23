@@ -59,6 +59,7 @@ builder.Services.AddSignalR();
 // state). Entries must set Size — see PlayerController.
 builder.Services.AddMemoryCache(options => options.SizeLimit = 1024);
 builder.Services.AddSingleton<AppReleaseStore>();
+builder.Services.AddSingleton<DesktopReleaseStore>();
 
 builder.Services.AddHathorInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<IPlaybackHub, SignalRPlaybackHub>();

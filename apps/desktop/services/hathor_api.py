@@ -224,8 +224,13 @@ class HathorApi:
                 f"Cannot reach Hathor API at {self.base_url}: {exc.reason}", url=url
             ) from exc
 
-    def stream_to_file(self, path, dest, query=None, timeout=120, chunk_size=256 * 1024):
-        """Download to a temp file and atomically replace *dest* on success."""
+    def stream_to_file(self, path, dest, query=None, timeout=120, chunk_size=256 * 1024,
+                       progress_cb=None):
+        """Download to a temp file and atomically replace *dest* on success.
+
+        ``progress_cb`` receives ``(downloaded_bytes, total_bytes)`` where
+        ``total_bytes`` is 0 when the server omits Content-Length.
+        """
         url = self.url(path, query)
         headers = {"Accept": "*/*", "User-Agent": self.user_agent}
         if self.api_key:
@@ -234,11 +239,20 @@ class HathorApi:
         tmp = str(dest) + ".hathor-part"
         try:
             with urllib.request.urlopen(req, timeout=float(timeout)) as resp, open(tmp, "wb") as fh:
+                raw_total = resp.headers.get("Content-Length")
+                total = int(raw_total) if raw_total and str(raw_total).isdigit() else 0
+                downloaded = 0
                 while True:
                     chunk = resp.read(chunk_size)
                     if not chunk:
                         break
                     fh.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb is not None:
+                        try:
+                            progress_cb(downloaded, total)
+                        except Exception:
+                            pass
         except urllib.error.HTTPError as exc:
             try:
                 os.remove(tmp)

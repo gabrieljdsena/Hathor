@@ -64,6 +64,44 @@ installer. No Play Store involved.
 The mobile build/signing/publish side is documented in
 [`apps/mobile/README.md`](../mobile/README.md#in-app-updates-sideload-channel).
 
+## Windows desktop updates (sideload channel)
+
+The desktop app uses the same authenticated server and API key as the rest of
+the client, but packages a PyInstaller folder instead of an APK.
+
+- **Drop folder:** `C:\ProgramData\Hathor\desktop` (pinned by
+  `install-service.ps1` as `DesktopApp__PackageDirectory`). It lives outside
+  `artifacts/publish/`, so `build.ps1` never deletes it.
+- **Publish one file per release:**
+  `hathor-desktop-<versionCode>-<versionName>.zip` (for example
+  `hathor-desktop-1-1.0.0-hathor.zip`). The server picks the highest
+  `versionCode`; older zips may stay for rollback.
+- **Endpoints** (normal `hth_` key/JWT required):
+  - `GET /api/v1/desktop/latest` → metadata
+    `{ versionCode, versionName, fileName, sizeBytes, sha256, publishedAtUtc, downloadPath }`
+    or `404` when no package is published.
+  - `GET /api/v1/desktop/download/{fileName}` → the zip
+    (`application/zip`, range requests enabled).
+- **Share it with the build PC** (elevated PowerShell on the server):
+
+  ```powershell
+  cd C:\Users\gabriel\code\Hathor\apps\web
+  .\scripts\share-desktop.ps1 -Account 'WORKPC\gabriel'
+  # prints \\SERVER\HathorDesktop
+  ```
+
+Build/publish the package from `apps/desktop`:
+
+```powershell
+.\scripts\release.ps1 -Destination \\DELL-SERVER1\HathorDesktop
+```
+
+The client stages the zip under `%LOCALAPPDATA%\Hathor\updates`, verifies its
+SHA-256, and swaps `Hathor.exe`/`_internal` only after the app exits. User data
+(`music_player.db`, `.env`, logs, library folders) is preserved. After code
+changes on the server just run `build.ps1`; after changing the drop folder,
+re-run `install-service.ps1` and restart the service.
+
 ## Notes
 
 - YouTube bot-check protection: when downloads fail with "Sign in to

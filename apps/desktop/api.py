@@ -23,6 +23,7 @@ from services import (
     LyricsService,
     AppleService,
     DownloadManager,
+    AppUpdateService,
     startup_maintenance
 )
 from services.discover import DiscoverService
@@ -185,6 +186,11 @@ class Api:
         self.telemetry = PlaybackTelemetry(self)
         self.history_sync = HistorySync(self.db_path)
         self.player_hub = PlayerHub(self)
+        self.app_update = AppUpdateService(self.db_path)
+        try:
+            self.app_update.cleanup()
+        except Exception as e:
+            print(f" [Python] App update cleanup failed: {e}")
         self._volume_publish_timer = None
         self._suppress_preview_stop = False
 
@@ -1647,6 +1653,38 @@ class Api:
     def test_api_connection(self, url=None, key=""):
         from services.api_config import test_connection
         return test_connection(url, key, self.db_path)
+
+    # ---- Desktop self-updater -----------------------------------------
+    def get_app_update_status(self):
+        return self.app_update.status()
+
+    def check_app_update(self):
+        return self.app_update.check()
+
+    def download_app_update(self):
+        return self.app_update.download(self._push_app_update_progress)
+
+    def install_app_update(self):
+        result = self.app_update.install()
+        if result.get("ok") and self._window:
+            timer = threading.Timer(1.0, self._window.destroy)
+            timer.daemon = True
+            timer.start()
+        return result
+
+    def remove_app_update(self):
+        return self.app_update.remove()
+
+    def _push_app_update_progress(self, event):
+        if not self._window:
+            return
+        try:
+            self._window.evaluate_js(
+                "if (window.appUpdateProgress) "
+                f"window.appUpdateProgress({json.dumps(event)});"
+            )
+        except Exception:
+            pass
 
     def load_current_song(self):
         try:

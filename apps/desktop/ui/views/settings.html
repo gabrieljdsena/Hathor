@@ -345,6 +345,52 @@
                 Save
             </button>
         </div>
+        <!-- Desktop application updates (server sideload channel) -->
+        <div
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex items-start gap-4 min-w-0">
+                <div
+                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                    </svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <h3 class="text-zinc-200 font-medium">Application</h3>
+                    <p id="app-update-version" class="text-xs text-zinc-500 mt-0.5">Hathor version</p>
+                    <div class="flex flex-col gap-1 mt-2 text-xs min-w-0">
+                        <span id="app-update-status" class="text-zinc-500 truncate">Not checked yet.</span>
+                        <span id="app-update-detail" class="hidden text-zinc-500 truncate"></span>
+                    </div>
+                    <div id="app-update-progress-wrap" class="hidden mt-3">
+                        <div class="flex items-center justify-between gap-3 text-[11px] text-zinc-400">
+                            <span id="app-update-progress-label" class="truncate">Working...</span>
+                            <span id="app-update-progress-detail" class="shrink-0 text-zinc-500"></span>
+                        </div>
+                        <div class="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/5">
+                            <div id="app-update-progress-bar" class="h-full rounded-full bg-gradient-to-r from-orange-400 to-orange-600"
+                                style="width: 0%; transition: width 0.2s;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <button id="app-update-check-btn" onclick="HathorAppUpdate.check()"
+                    class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-60 disabled:cursor-wait">
+                    Check for updates
+                </button>
+                <button id="app-update-install-btn" onclick="HathorAppUpdate.primaryAction()"
+                    class="hidden px-5 py-2.5 hover:cursor-pointer text-sm font-semibold text-white bg-orange-500 hover:bg-orange-400 border border-orange-500 rounded-lg transition-all duration-300 shadow-lg shadow-orange-500/20 disabled:opacity-60 disabled:cursor-wait">
+                    Download update
+                </button>
+                <button id="app-update-remove-btn" onclick="HathorAppUpdate.remove()"
+                    class="hidden px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-300 bg-white/5 hover:bg-red-500/15 hover:text-red-200 border border-white/10 hover:border-red-400/40 rounded-lg transition-all duration-300 disabled:opacity-60">
+                    Remove download
+                </button>
+            </div>
+        </div>
+
         <!-- System status: bundled FFmpeg + managed yt-dlp -->
         <div
             class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
@@ -359,6 +405,7 @@
                 <div class="min-w-0">
                     <h3 class="text-zinc-200 font-medium">System status</h3>
                     <p class="text-xs text-zinc-500 mt-0.5">FFmpeg and the YouTube downloader (yt-dlp) used for downloads.</p>
+                    <p class="text-[11px] text-zinc-600 mt-1">Application updates are handled separately above.</p>
                     <div class="flex flex-col gap-1 mt-2 text-xs font-mono text-zinc-400 min-w-0">
                         <span id="sys-ffmpeg-status" class="truncate">FFmpeg: checking...</span>
                         <span id="sys-libs-status" class="truncate">yt-dlp: checking...</span>
@@ -367,7 +414,7 @@
             </div>
             <button id="sysCheckBtn" onclick="checkSystemUpdates()"
                 class="px-5 py-2.5 shrink-0 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-60 disabled:cursor-wait">
-                Check for updates
+                Update tools
             </button>
         </div>
     </div>
@@ -1029,13 +1076,15 @@
             console.error('Update check failed:', e);
         } finally {
             btn.disabled = false;
-            btn.textContent = label || 'Check for updates';
+            btn.textContent = label || 'Update tools';
             loadSystemStatus();
         }
     }
 
     if (window.pywebview && window.pywebview.api) loadSystemStatus();
     else window.addEventListener('pywebviewready', loadSystemStatus, { once: true });
+
+    if (window.HathorAppUpdate) window.HathorAppUpdate.refresh();
 
     // Re-apply the busy state when this view is re-created (the sync keeps
     // running while the user is on another tab).
