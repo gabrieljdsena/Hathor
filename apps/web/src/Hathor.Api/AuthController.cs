@@ -24,7 +24,8 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         try
         {
             return Ok(await mediator.Send(new RegisterCommand(
-                body.Username, body.Password, body.RememberMe, DeviceLabel()), ct));
+                body.Username, body.Password, body.RememberMe,
+                DeviceLabel(body.DeviceLabel)), ct));
         }
         catch (InvalidOperationException ex)
         {
@@ -41,7 +42,8 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         try
         {
             return Ok(await mediator.Send(new LoginCommand(
-                body.Username, body.Password, body.RememberMe, DeviceLabel()), ct));
+                body.Username, body.Password, body.RememberMe,
+                DeviceLabel(body.DeviceLabel)), ct));
         }
         catch (UnauthorizedAccessException)
         {
@@ -118,8 +120,10 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     {
         try
         {
+            var sid = CurrentSessionId();
             await mediator.Send(new ChangePasswordCommand(
-                CurrentUserId(), body.CurrentPassword ?? "", body.NewPassword ?? ""), ct);
+                CurrentUserId(), body.CurrentPassword ?? "", body.NewPassword ?? "",
+                sid == Guid.Empty ? null : sid), ct);
             return NoContent();
         }
         catch (UnauthorizedAccessException ex)
@@ -132,8 +136,10 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         }
     }
 
-    private string? DeviceLabel()
+    private string? DeviceLabel(string? explicitLabel)
     {
+        if (!string.IsNullOrWhiteSpace(explicitLabel))
+            return explicitLabel.Trim();
         var ua = Request.Headers.UserAgent.ToString();
         return string.IsNullOrWhiteSpace(ua) ? null : ua;
     }
@@ -145,8 +151,10 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         Guid.TryParse(User.FindFirst("sid")?.Value, out var sid) ? sid : Guid.Empty;
 }
 
-public sealed record RegisterRequest(string Username, string Password, bool RememberMe = false);
-public sealed record LoginRequest(string Username, string Password, bool RememberMe = false);
+public sealed record RegisterRequest(
+    string Username, string Password, bool RememberMe = false, string? DeviceLabel = null);
+public sealed record LoginRequest(
+    string Username, string Password, bool RememberMe = false, string? DeviceLabel = null);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LogoutRequest(string? RefreshToken);
 public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
