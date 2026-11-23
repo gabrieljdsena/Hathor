@@ -1,0 +1,57 @@
+# Maintainer: Hathor
+# Local package build:
+#   ./build-local.sh
+#   cd packaging/arch && makepkg -si
+#
+# The app runs against Arch's system Python, GTK and WebKitGTK packages so
+# pacman owns updates and WebKit security fixes. No PyInstaller bundle is used.
+pkgname=hathor
+pkgver=1.0.1
+pkgrel=1
+pkgdesc="Hathor desktop music player"
+arch=('x86_64')
+url="https://github.com/gabrieljdsena/Hathor"
+license=('ISC')
+depends=(
+  python
+  python-pywebview
+  python-gobject
+  webkit2gtk-4.1
+  python-pygame
+  python-mutagen
+  python-pillow
+  python-psutil
+  python-pykakasi
+  python-dotenv
+  yt-dlp
+  ffmpeg
+)
+source=("hathor-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  local app="$pkgdir/usr/lib/hathor"
+  install -dm755 "$app" \
+    "$pkgdir/usr/bin" \
+    "$pkgdir/usr/share/applications" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps"
+
+  local src="$srcdir/apps/desktop"
+  if [[ ! -f "$src/version.json" ]]; then
+    error "Expected the source archive to contain apps/desktop/version.json"
+  fi
+
+  # Runtime files only: no tests, node_modules, build output, DB or .env.
+  for item in main.py api.py Download.py settings.py database.sql version.json services ui; do
+    cp -a "$src/$item" "$app/"
+  done
+  find "$app" -type d -name __pycache__ -prune -exec rm -rf {} +
+  find "$app" -type f -name '*.pyc' -delete
+  touch "$app/.package-managed"
+
+  install -Dm755 "$startdir/hathor" "$pkgdir/usr/bin/hathor"
+  install -Dm644 "$startdir/hathor.desktop" \
+    "$pkgdir/usr/share/applications/hathor.desktop"
+  install -Dm644 "$startdir/hathor.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/hathor.png"
+}

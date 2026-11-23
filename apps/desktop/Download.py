@@ -9,6 +9,7 @@ import urllib.request
 import urllib.parse
 from yt_dlp import YoutubeDL
 import settings
+from services import platform_support
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, APIC, TCON
 
@@ -38,6 +39,9 @@ class MusicDownloader:
 
         if getattr(sys, 'frozen', False):
             print(" [Python] yt-dlp auto-update skipped (frozen build).")
+            return
+        if not platform_support.python_self_update_allowed():
+            print(" [Python] yt-dlp auto-update skipped (managed Python environment).")
             return
         if not current:
             return
@@ -176,7 +180,8 @@ class MusicDownloader:
         adopt it and drop the temp file instead of renaming past it.
         """
         dest = os.path.join(directory, target_filename)
-        if os.path.normpath(src_path).lower() == os.path.normpath(dest).lower():
+        if os.path.normcase(os.path.normpath(src_path)) == \
+                os.path.normcase(os.path.normpath(dest)):
             return src_path
         if os.path.exists(dest):
             try:
@@ -200,8 +205,9 @@ class MusicDownloader:
         except Exception:
             base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(__file__)
             candidate = os.path.join(base_path, 'ffmpeg', 'bin')
+            ffmpeg_name = 'ffmpeg.exe' if platform_support.is_windows() else 'ffmpeg'
             ffmpeg_path = candidate if os.path.isfile(
-                os.path.join(candidate, 'ffmpeg.exe')) else None
+                os.path.join(candidate, ffmpeg_name)) else None
         
         print(f" [Python] Searching and Downloading: {search}")
         
@@ -446,7 +452,8 @@ class MusicDownloader:
             new_path = os.path.join(directory, f"{base}.mp3")
 
             # Keep the file as-is if it already matches its final name
-            if os.path.normpath(new_path).lower() == os.path.normpath(file_path).lower():
+            if os.path.normcase(os.path.normpath(new_path)) == \
+                    os.path.normcase(os.path.normpath(file_path)):
                 return file_path
 
             counter = 1

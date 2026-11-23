@@ -91,7 +91,7 @@ pyinstaller music_player.spec
 
 Output: `dist/Hathor/`.
 
-The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, `node_modules/`, and `pykakasi` data files. Important details:
+The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, and `pykakasi` data files. Runtime frontend assets (SweetAlert2, Notyf, Alpine) live under `ui/`; `node_modules/` is only needed for the Tailwind dev build. Important details:
 
 - **`.env` is not bundled** — it must sit next to `Hathor.exe` (runtime reads `os.path.dirname(sys.executable)`).
 - The SQLite DB, `.env`, and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen.
@@ -114,6 +114,24 @@ the server's `/api/v1/desktop/latest` endpoint serves. The app stages updates
 under `%LOCALAPPDATA%\Hathor\updates` and uses `services/app_update.py` plus a
 detached PowerShell helper for the swap. Never edit a published zip or reuse a
 `versionCode`.
+
+## Linux / Arch package
+
+The Linux build is a normal Arch package using system Python, GTK 3 and
+WebKitGTK 4.1; PyInstaller is not used. Build it inside Arch:
+
+```bash
+cd packaging/arch
+./build-local.sh
+```
+
+`build-local.sh` packages the current `apps/desktop` tree and runs
+`makepkg -si`. The installed launcher sets `HATHOR_PACKAGE_MANAGED=1`, which
+disables pip/self-update behavior and selects XDG data/config/cache/state
+paths. Runtime files go to `/usr/lib/hathor`; user data never does.
+
+PyInstaller cannot cross-compile from Windows, and bundling WebKitGTK is not
+the supported Linux path. Use an Arch VM/container for package builds.
 
 ## Code conventions
 

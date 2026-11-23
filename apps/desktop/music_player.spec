@@ -17,15 +17,39 @@ a = Analysis(
     datas=[
         ('ui', 'ui'),
         ('database.sql', '.'),
-        ('version.json', '.'),
-        ('node_modules', 'node_modules')
+        ('version.json', '.')
     ] + _extra_datas + collect_data_files('pykakasi'),
     hiddenimports=[
         'webview',
         'pygame',
         'yt_dlp',
         'mutagen',
-        'dotenv'
+        'dotenv',
+        # services/__init__.py resolves these lazily; PyInstaller cannot see
+        # string-based import_module calls.
+        'services.playback',
+        'services.metadata',
+        'services.database',
+        'services.windows_media',
+        'services.lyrics',
+        'services.apple',
+        'services.downloads',
+        'services.discover',
+        'services.ai_dj',
+        'services.app_update',
+        'services.startup_maintenance',
+        'services.api_sync',
+        'services.api_config',
+        'services.hathor_api',
+        'services.history_sync',
+        'services.player_hub',
+        'services.telemetry',
+        'services.images',
+        'services.library_moves',
+        'services.loudness',
+        'services.player_sync',
+        'services.platform_support',
+        'services.window_chrome',
     ],
     hookspath=[],
     hooksconfig={},

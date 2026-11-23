@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Hathor
+GenericName=Music Player
+Comment=Play your local library, podcasts and YouTube downloads
+Exec=hathor
+Icon=hathor
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true
+StartupWMClass=Hathor

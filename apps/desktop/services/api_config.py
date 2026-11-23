@@ -64,10 +64,14 @@ def _default_db_path():
             return path
     except Exception:
         pass
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "music_player.db",
-    )
+    try:
+        from . import platform_support
+        return str(platform_support.db_path())
+    except Exception:
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "music_player.db",
+        )
 
 
 def normalize_url(value):

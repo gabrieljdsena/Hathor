@@ -2,9 +2,9 @@
 
 > Part of the [Hathor monorepo](../../README.md) (`apps/desktop`). Web app: `../../web/`, mobile: `../../mobile/`.
 
-A Windows desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can sync your library with the Hathor server for multi-device use.
+A Windows and Linux desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can sync your library with the Hathor server for multi-device use.
 
-![Platform](https://img.shields.io/badge/platform-Windows-0078d6)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Arch%20Linux-0078d6)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![License](https://img.shields.io/badge/license-ISC-blue)
 
@@ -60,6 +60,41 @@ python main.py
 
 On startup in dev mode, `main.py` compiles `ui/input.css` into `ui/output.css` with the Tailwind CLI automatically.
 
+## Linux / Arch
+
+The Linux path uses the system Python and GTK/WebKitGTK stack rather than a
+vendored PyInstaller bundle. On Arch:
+
+```bash
+sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
+  python-pygame python-mutagen python-pillow python-psutil \
+  python-pykakasi python-dotenv yt-dlp ffmpeg
+python main.py
+```
+
+The app uses XDG paths on Linux:
+
+```text
+~/.local/share/hathor/music_player.db
+~/.config/hathor/.env
+~/.local/state/hathor/hathor.log
+~/.cache/hathor/
+~/Music/Hathor
+~/Music/Hathor Podcasts
+```
+
+Build and install the native Arch package:
+
+```bash
+cd packaging/arch
+./build-local.sh
+```
+
+See [packaging/arch/README.md](packaging/arch/README.md). The package launcher
+sets `HATHOR_PACKAGE_MANAGED=1`, so yt-dlp/FFmpeg and app updates are managed
+by pacman instead of the Windows self-updater. Linux uses native GTK window
+decorations; the Windows frameless titlebar and Aero Snap code stays Windows-only.
+
 ## Building an executable
 
 ```powershell
@@ -75,8 +110,8 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ```json
 {
-  "versionCode": 1,
-  "versionName": "1.0.0-hathor"
+  "versionCode": 2,
+  "versionName": "1.0.1-hathor"
 }
 ```
 
@@ -127,6 +162,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 - [Architecture & code overview](docs/ARCHITECTURE.md)
 - [Database schema & remote sync](docs/DATABASE.md)
 - [Development & packaging](docs/DEVELOPMENT.md)
+- [Linux / Arch notes](docs/LINUX.md)
 - [Web → desktop parity backlog](WEB_PARITY.md)
 
 ## Project layout
@@ -140,12 +176,15 @@ version.json      Desktop version/build used by the in-app updater
 services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
 services/history_sync.py  Debounced automatic Music_History outbox flush
 services/app_update.py  Desktop check/download/stage/swap pipeline
+services/platform_support.py  XDG paths, package-managed detection, platform capabilities
+services/window_chrome.py     Isolated Windows snap/drag implementation
 settings.py        Loads persisted settings from the SQLite Settings table
 monitor.py         Debug RAM usage monitor (currently disabled)
 services/          Domain logic: playback (+crossfade), metadata, database, lyrics, windows_media, downloads, apple
 ui/                Frontend: views, modals, Tailwind/compiled CSS, vendored libs
-scripts/release.ps1  Build, package and publish a desktop release
-music_player.spec  PyInstaller build script
+packaging/arch/    PKGBUILD, launcher, desktop entry and icon
+scripts/release.ps1  Build, package and publish a Windows desktop release
+music_player.spec  PyInstaller build script (Windows; Linux uses the Arch package)
 ```
 
 ## License

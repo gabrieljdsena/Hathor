@@ -25,6 +25,8 @@ import tempfile
 import urllib.request
 import zipfile
 
+from . import platform_support
+
 # Official Windows essentials build (~80-90 MB). Stable URL, redirects to GitHub.
 FFMPEG_ZIP_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
@@ -39,16 +41,12 @@ _PYPI_TIMEOUT = 10
 # Paths
 # ==========================
 def get_base_path():
-    if hasattr(sys, '_MEIPASS'):
-        return sys._MEIPASS
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return str(platform_support.app_root())
 
 
 def get_data_path():
-    """Writable dir: next to the exe in frozen builds, project root in dev."""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """Writable dir: portable on Windows, XDG data on Linux."""
+    return str(platform_support.data_dir())
 
 
 def _candidate_ffmpeg_dirs():
@@ -300,6 +298,17 @@ def _pip_upgrade(package):
 def ensure_libraries_updated(progress_cb=None):
     """Check PyPI and pip-upgrade outdated YouTube libs (dev mode only)."""
     packages = installed_youtube_libs()
+    if not platform_support.python_self_update_allowed():
+        managed = platform_support.package_managed()
+        detail = ('Use pacman/your package manager to update.' if managed
+                  else 'Use your Python environment/package manager to update.')
+        _emit(progress_cb, 'libs', 'Libraries managed by the environment',
+              percent=100, detail=detail, status='skipped')
+        return [
+            {'package': pkg, 'current': get_current_version(pkg),
+             'latest': None, 'status': 'managed'}
+            for pkg in packages
+        ]
     results = []
     total = max(1, len(packages))
     frozen = getattr(sys, 'frozen', False)
@@ -407,7 +416,7 @@ def run_startup_checks(progress_cb=None):
 
     all_ok = (
         ffmpeg_result.get('status') == 'ok'
-        and all(r.get('status') in ('up-to-date', 'updated', 'installed')
+        and all(r.get('status') in ('up-to-date', 'updated', 'installed', 'managed')
                 for r in libs_result)
     )
     summary = {'ffmpeg': ffmpeg_result, 'libraries': libs_result, 'all_ok': all_ok}

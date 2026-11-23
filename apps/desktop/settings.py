@@ -1,19 +1,18 @@
 import os
 import sqlite3
 
+from services import platform_support
+
 #loads settings from db
 
 def get_data_path():
-    import sys
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return str(platform_support.data_dir())
 
-db_path = os.path.join(get_data_path(), 'music_player.db')
+db_path = str(platform_support.db_path())
 
 # Default values
-path = os.path.expandvars(r'%appdata%\musicPlayer')
-podcasts_path = os.path.expandvars(r'%appdata%\musicPlayerPodcasts')
+path = str(platform_support.default_music_dir())
+podcasts_path = str(platform_support.default_podcasts_dir())
 volume = 0.7
 window_size = {'width': 1280, 'height': 720}
 background = ""

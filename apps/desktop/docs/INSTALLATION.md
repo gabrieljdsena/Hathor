@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers setting up Hathor from source on Windows. The app targets Windows (WebView2/Edge via pywebview, SMTC media controls, Windows-safe filenames), so macOS/Linux support is not guaranteed.
+This guide covers setting up Hathor from source on Windows and Arch Linux. Windows uses pywebview/WebView2 and SMTC media controls; Linux uses GTK 3 + WebKitGTK 4.1 and native window decorations. The Arch package in `packaging/arch/` is the supported Linux distribution path.
 
 ## Prerequisites
 
@@ -9,6 +9,25 @@ This guide covers setting up Hathor from source on Windows. The app targets Wind
 | Python | 3.10+ (tested on 3.11) | Backend runtime |
 | Node.js + npm | 18+ | Tailwind CLI and vendored frontend deps |
 | FFmpeg | latest | Audio extraction/conversion to MP3 |
+
+### Linux (Arch)
+
+```bash
+sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
+  python-pygame python-mutagen python-pillow python-psutil \
+  python-pykakasi python-dotenv yt-dlp ffmpeg
+python main.py
+```
+
+For a packaged install:
+
+```bash
+cd packaging/arch
+./build-local.sh
+```
+
+The package launcher sets `HATHOR_PACKAGE_MANAGED=1`; data goes to XDG
+directories and pacman owns updates.
 
 ## 1. Clone the repository
 

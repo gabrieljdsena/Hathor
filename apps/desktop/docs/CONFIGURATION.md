@@ -71,10 +71,15 @@ Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `W
 
 ### Where the `.env` is read
 
-`main.py`:
+`main.py` loads `.env` candidates in order (first value wins):
 
-1. Loads `.env` from the current working directory.
-2. If the app is frozen (PyInstaller build), loads `.env` from **next to the executable** (`os.path.dirname(sys.executable)`) — it is deliberately never bundled inside the exe.
+1. Current working directory.
+2. Linux user config: `~/.config/hathor/.env`.
+3. Application bundle directory.
+4. If frozen (PyInstaller build), **next to the executable** (`os.path.dirname(sys.executable)`).
+
+The `.env` is deliberately never bundled inside the exe. On Linux package installs,
+use `~/.config/hathor/.env`; `/usr/lib/hathor` is read-only.
 
 ### Behavior when configured
 
@@ -88,6 +93,11 @@ The updater reuses the Web API URL/key above. **Settings → Application** shows
 the installed `version.json`, checks `/api/v1/desktop/latest`, downloads with
 progress, verifies the server's SHA-256, and offers **Install and restart**.
 The app also checks once at startup when the API is configured.
+
+On Arch/Linux package installs (`HATHOR_PACKAGE_MANAGED=1` or a
+`.package-managed` marker in the app directory) the card instead reports that
+updates are managed by the system package manager. Use `pacman -Syu`; the
+Windows zip/PowerShell updater is never used against `/usr/lib/hathor`.
 
 Downloaded packages and the staged copy live under
 `%LOCALAPPDATA%\Hathor\updates`. Set `HATHOR_UPDATE_DIR` to use another folder.

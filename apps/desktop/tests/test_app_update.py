@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from services.app_update import AppUpdateService, PACKAGE_RE
 from tests.support import FakeHathorServer
@@ -72,6 +73,20 @@ class AppUpdateServiceTests(unittest.TestCase):
         self.assertEqual(service.current["versionName"], "1.0.7-hathor")
         self.assertTrue(PACKAGE_RE.match("hathor-desktop-7-1.0.7-hathor.zip"))
         self.assertFalse(PACKAGE_RE.match("hathor-desktop-7-1.0.7-hathor.zip.part"))
+
+    def test_package_managed_install_does_not_use_self_updater(self):
+        with mock.patch("services.platform_support.package_managed", return_value=True):
+            service = self.service()
+            status = service.status()
+            checked = service.check()
+            installed = service.install()
+        self.assertTrue(status["managed"])
+        self.assertEqual(status["updateMode"], "package")
+        self.assertFalse(status["installable"])
+        self.assertIn("package manager", status["message"])
+        self.assertTrue(checked["managed"])
+        self.assertFalse(installed["ok"])
+        self.assertIn("package manager", installed["message"])
 
     def test_check_reports_update_and_sends_auth(self):
         package = make_package()

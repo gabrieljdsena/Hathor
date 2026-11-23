@@ -17,13 +17,13 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 
+from . import platform_support
 from .api_config import get_api_config_info
 from .hathor_api import HathorApi, HathorApiError
 
@@ -43,19 +43,14 @@ USER_AGENT = "hathor-desktop/1"
 
 
 def _default_install_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
+    return platform_support.install_dir()
 
 
 def _default_updates_dir() -> Path:
     override = (os.getenv("HATHOR_UPDATE_DIR") or "").strip()
     if override:
         return Path(override).expanduser()
-    root = (os.getenv("LOCALAPPDATA") or "").strip()
-    if root:
-        return Path(root) / "Hathor" / "updates"
-    return Path(tempfile.gettempdir()) / "Hathor" / "updates"
+    return platform_support.updates_dir()
 
 
 def _read_version_file(path: Path) -> dict:
@@ -386,7 +381,8 @@ class AppUpdateService:
 
     def status(self) -> dict:
         with self._lock:
-            package = self._find_package()
+            managed = platform_support.package_managed()
+            package = None if managed else self._find_package()
             latest = dict(self._latest) if self._latest else None
             if latest is None and package:
                 latest = {
@@ -403,14 +399,18 @@ class AppUpdateService:
             )
             downloaded = bool(package and package["stageReady"])
             config = self._config()
+            mode = platform_support.update_mode()
             installable = (
-                self.frozen
+                mode == "self"
+                and self.frozen
                 and os.name == "nt"
                 and self._install_dir_writable()
             )
             result = self._last_result
             failed_result = bool(result and not result.get("ok", False))
-            if failed_result:
+            if managed:
+                message = "Updates are managed by your system package manager."
+            elif failed_result:
                 message = "Last update attempt failed: " + str(
                     result.get("message") or "unknown error"
                 )
@@ -431,6 +431,8 @@ class AppUpdateService:
             return {
                 "ok": not bool(self._last_error) and not failed_result,
                 "configured": bool(config.configured),
+                "managed": bool(managed),
+                "updateMode": mode,
                 "current": dict(self.current),
                 "latest": latest,
                 "updateAvailable": update_available,
@@ -438,12 +440,14 @@ class AppUpdateService:
                 "package": package,
                 "cachedBytes": package["sizeBytes"] if package else 0,
                 "installable": bool(installable),
-                "installHint": self._install_hint(installable),
+                "installHint": self._install_hint(installable, managed),
                 "message": message,
                 "updatesDir": str(self.updates_dir),
             }
 
-    def _install_hint(self, installable):
+    def _install_hint(self, installable, managed=False):
+        if managed:
+            return "Use your system package manager to update Hathor."
         if not self.frozen:
             return "Update installs are available in the packaged Hathor build."
         if os.name != "nt":
@@ -454,6 +458,11 @@ class AppUpdateService:
 
     # -- check ----------------------------------------------------------
     def check(self, url=None, key=None) -> dict:
+        if platform_support.package_managed():
+            with self._lock:
+                self._last_error = None
+                self._message = "Updates are managed by your system package manager."
+            return self.status()
         if url is None or key is None:
             config = self._config()
             url = config.url if url is None else url
@@ -529,6 +538,12 @@ class AppUpdateService:
 
     # -- download/stage -------------------------------------------------
     def download(self, progress_cb=None) -> dict:
+        if platform_support.package_managed():
+            with self._lock:
+                self._last_error = (
+                    "Updates are managed by your system package manager."
+                )
+            return self.status()
         if not self._download_lock.acquire(blocking=False):
             with self._lock:
                 self._last_error = "An update download is already running."
@@ -713,6 +728,12 @@ class AppUpdateService:
 
     # -- install/remove -------------------------------------------------
     def install(self) -> dict:
+        if platform_support.package_managed():
+            with self._lock:
+                self._last_error = (
+                    "Updates are managed by your system package manager."
+                )
+            return self.status()
         with self._lock:
             package = self._find_package()
             latest = dict(self._latest) if self._latest else None
@@ -824,6 +845,8 @@ class AppUpdateService:
         )
 
     def remove(self) -> dict:
+        if platform_support.package_managed():
+            return self.status()
         with self._download_lock:
             self._remove_packages()
             with self._lock:
@@ -862,6 +885,8 @@ class AppUpdateService:
 
     # -- startup cleanup ------------------------------------------------
     def cleanup(self):
+        if platform_support.package_managed():
+            return
         try:
             self.updates_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

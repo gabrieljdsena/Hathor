@@ -20,6 +20,7 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn("./js/ai-dj-recorder.js", index)
         self.assertIn("./js/ai-dj-state.js", index)
         self.assertIn("./js/app-update.js", index)
+        self.assertIn("./js/platform.js", index)
         self.assertIn('id="dj-vibe-popover"', index)
         self.assertIn('id="nav-ai-dj-label"', index)
         self.assertIn('id="bento-move-podcast-btn"', index)
@@ -28,7 +29,7 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn('id="np-lyrics-search-panel"', index)
         self.assertIn('id="np_resume_spot_banner"', index)
         self.assertIn("data-view-error", index)
-        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js", "app-update.js"):
+        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js", "app-update.js", "platform.js"):
             self.assertTrue((self.root / "ui" / "js" / name).exists(), name)
         for view in ("discover.html", "ai_dj.html"):
             self.assertTrue((self.root / "ui" / "views" / view).exists(), view)

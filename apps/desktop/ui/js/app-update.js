@@ -64,8 +64,11 @@
             statusEl.classList.add(kind);
         }
 
+        var managed = !!lastStatus.managed;
         var detail = '';
-        if (lastStatus.downloaded && latest) {
+        if (managed) {
+            detail = lastStatus.installHint || 'Use your system package manager to update.';
+        } else if (lastStatus.downloaded && latest) {
             detail = latest.versionName + ' is ready (' +
                 fmtBytes(lastStatus.cachedBytes) + ').';
         } else if (lastStatus.updateAvailable && latest) {
@@ -75,7 +78,7 @@
         } else if (!lastStatus.configured) {
             detail = 'The update channel uses the same server as Web API.';
         }
-        if (lastStatus.installHint) {
+        if (lastStatus.installHint && !managed) {
             detail = detail ? detail + ' ' + lastStatus.installHint : lastStatus.installHint;
         }
         setText('app-update-detail', detail);
@@ -84,13 +87,14 @@
 
         var checkBtn = document.getElementById('app-update-check-btn');
         if (checkBtn) {
+            checkBtn.classList.toggle('hidden', managed);
             checkBtn.disabled = checking || downloading;
             checkBtn.textContent = checking ? 'Checking...' : 'Check for updates';
         }
 
         var installBtn = document.getElementById('app-update-install-btn');
         if (installBtn) {
-            var showInstall = !!lastStatus.updateAvailable;
+            var showInstall = !managed && !!lastStatus.updateAvailable;
             var canInstall = !lastStatus.downloaded || lastStatus.installable;
             installBtn.classList.toggle('hidden', !showInstall || !canInstall);
             installBtn.disabled = downloading;
@@ -100,7 +104,7 @@
 
         var removeBtn = document.getElementById('app-update-remove-btn');
         if (removeBtn) {
-            removeBtn.classList.toggle('hidden', !(lastStatus.cachedBytes > 0));
+            removeBtn.classList.toggle('hidden', managed || !(lastStatus.cachedBytes > 0));
             removeBtn.disabled = downloading;
         }
 

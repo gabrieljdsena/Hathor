@@ -1,7 +1,10 @@
 pywebview
 mutagen
 yt-dlp
-pygame
+# pygame-ce is the Windows build used by the frozen app; Arch/Debian ship
+# the upstream pygame distribution under the same `pygame` import.
+pygame-ce; sys_platform == "win32"
+pygame; sys_platform != "win32"
 psutil
 pykakasi
 # Sync speaks the Hathor Web API over stdlib urllib

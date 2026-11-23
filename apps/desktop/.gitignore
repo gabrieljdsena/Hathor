@@ -7,3 +7,6 @@ dist/
 build/
 CA.pem
 hathor.log
+packaging/arch/*.tar.gz
+packaging/arch/pkg/
+packaging/arch/src/

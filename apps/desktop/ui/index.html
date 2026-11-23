@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <link href="./output.css" rel="stylesheet">
-    <link href="../notyf.min.css" rel="stylesheet">
-    <script src="../notyf.min.js"></script>
+    <link href="./notyf.min.css" rel="stylesheet">
+    <script src="./notyf.min.js"></script>
     <link rel="stylesheet" href="./css.css">
     <!-- SweetAlert2 (Local) -->
-    <script src="../sweetalert2/dist/sweetalert2.all.min.js"></script>
+    <script src="./sweetalert2/dist/sweetalert2.all.min.js"></script>
     <style>
         /* Global SweetAlert2 Glass Theme */
         .swal2-popup {
@@ -72,7 +72,7 @@
         }
     </style>
     <!-- Alpine.js -->
-    <script defer src="../cdn.min.js"></script>
+    <script defer src="./cdn.min.js"></script>
     <!-- Notyf for notifications -->
 </head>
 
@@ -133,6 +133,11 @@
         @media (min-width: 1280px) {
             #queue-sidebar { height: calc(100vh - 220px); }
         }
+
+        /* Linux uses native GTK decorations; the header stays as branding. */
+        body.native-decorations #titlebar { cursor: default; }
+        body.native-decorations .win-ctrl-btn { display: none; }
+        body.native-decorations #window-resize-zones { display: none; }
 
         /* ── KDE Plasma / Breeze-style titlebar controls ── */
         .win-ctrl-btn {
@@ -723,6 +728,7 @@
     <script src="./js/ai-dj-recorder.js"></script>
     <script src="./js/ai-dj-state.js"></script>
     <script src="./js/app-update.js"></script>
+    <script src="./js/platform.js"></script>
 
     <script>
 
@@ -1664,6 +1670,7 @@
                 // it is deliberately not awaited here.
                 let lastTitleClick = { t: 0, x: 0, y: 0 };
                 titlebar.addEventListener('mousedown', function (e) {
+                    if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (e.target.closest('.win-ctrl-btn')) return;
                     if (e.button !== 0) return;
                     e.preventDefault();
@@ -1687,6 +1694,7 @@
                 // Double-click is handled above before the native drag starts,
                 // so suppress the browser's default activation here.
                 titlebar.addEventListener('dblclick', function (e) {
+                    if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (e.target.closest('.win-ctrl-btn')) return;
                     e.preventDefault();
                 });
@@ -1721,6 +1729,7 @@
             resizeZones.forEach(function (zone) {
                 zone.addEventListener('pointerdown', async function (e) {
                     if (resize) return;
+                    if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (isOverWinBtn(e.clientX, e.clientY)) return;
                     e.preventDefault();
                     e.stopPropagation();
