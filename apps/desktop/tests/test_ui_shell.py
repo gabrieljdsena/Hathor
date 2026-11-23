@@ -68,6 +68,7 @@ class ShellScaffoldingTests(unittest.TestCase):
             "api-key-input",
             "api-key-save-btn",
             "api-config-status",
+            "api-transport-warning",
             "api-save-btn",
             "api-logout-btn",
             "api-test-btn",

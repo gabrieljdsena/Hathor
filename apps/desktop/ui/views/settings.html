@@ -60,6 +60,9 @@
                             <span id="api-config-status" class="text-xs text-zinc-500">Checking configuration...</span>
                             <span id="api-config-source" class="text-[10px] uppercase tracking-widest text-zinc-600"></span>
                         </div>
+                        <p id="api-transport-warning" class="hidden mt-1 text-[10px] text-amber-300 leading-relaxed">
+                            Plain HTTP: the password is visible to this network. Use HTTPS or a trusted VPN.
+                        </p>
                         <details class="mt-3 max-w-2xl">
                             <summary class="text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer select-none">
                                 Advanced: use an API key instead
@@ -522,6 +525,7 @@
         const keySaveBtn = document.getElementById('api-key-save-btn');
         const statusEl = document.getElementById('api-config-status');
         const sourceEl = document.getElementById('api-config-source');
+        const transportEl = document.getElementById('api-transport-warning');
         const saveBtn = document.getElementById('api-save-btn');
         const testBtn = document.getElementById('api-test-btn');
         const clearBtn = document.getElementById('api-clear-btn');
@@ -565,6 +569,12 @@
                     : cfg.source === 'env' ? '.env fallback' : '';
             }
             if (logoutBtn) logoutBtn.classList.toggle('hidden', !cfg.signedIn);
+            if (transportEl) {
+                transportEl.classList.toggle(
+                    'hidden',
+                    !(/^http:\/\//i.test(cfg.url || '') && cfg.mode !== 'key')
+                );
+            }
             if (cfg.signedIn) {
                 setStatus(
                     'Signed in as ' + cfg.username +
