@@ -54,6 +54,8 @@ create table if not exists Settings(
     normalize_volume integer DEFAULT 1,
     hathor_api_url text,
     hathor_api_key text,
+    hathor_auth_mode text,
+    hathor_auth_username text,
     device_id text,
     device_label text,
     FOREIGN KEY (current_song) REFERENCES Songs(file)

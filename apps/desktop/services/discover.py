@@ -13,6 +13,7 @@ import sqlite3
 import unicodedata
 
 from .api_config import get_api_config
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi, HathorApiError
 
 
@@ -66,11 +67,16 @@ class DiscoverService:
 
     # -- HTTP ----------------------------------------------------------
     def _client(self, timeout=20):
+        try:
+            session = get_auth_session(self.api.db_path)
+            if session.configured():
+                return session.api_client(timeout=timeout)
+        except Exception:
+            pass
         url, key = get_api_config(self.api.db_path)
         if not url or not key:
             raise DiscoverError(
-                "Web API is not configured. Open Settings -> Web API and add "
-                "a server URL and hth_ key with library:read + library:write."
+                "Web API is not configured. Sign in in Settings -> Web API."
             )
         return HathorApi(url, key, timeout=timeout)
 

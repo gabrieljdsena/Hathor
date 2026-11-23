@@ -43,7 +43,7 @@ class HathorApiTests(unittest.TestCase):
                 client.get("/api/v1/nope")
 
             self.assertEqual(ctx.exception.status, 401)
-            self.assertIn("rejected the API key", str(ctx.exception))
+            self.assertIn("rejected the credentials", str(ctx.exception))
             self.assertNotIn("hth_bad", str(ctx.exception))
 
     def test_network_error_mentions_base_url(self):

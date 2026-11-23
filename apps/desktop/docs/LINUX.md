@@ -8,8 +8,11 @@ GTK 3/WebKitGTK 4.1; PyInstaller is only the Windows portable build.
 ```bash
 sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
   python-pygame python-mutagen python-pillow python-psutil \
-  python-pykakasi python-dotenv yt-dlp ffmpeg
+  python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg
 ```
+
+Web account sign-in stores only the refresh token, using Secret Service
+(GNOME Keyring/KWallet). The password is never written to disk.
 
 Run from the source tree:
 

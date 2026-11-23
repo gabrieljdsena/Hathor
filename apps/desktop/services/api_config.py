@@ -33,6 +33,8 @@ REQUIRED_SCOPES = (
 SETTINGS_COLUMNS = (
     ("hathor_api_url", "TEXT"),
     ("hathor_api_key", "TEXT"),
+    ("hathor_auth_mode", "TEXT"),      # login | key
+    ("hathor_auth_username", "TEXT"),
 )
 
 
@@ -123,7 +125,7 @@ def _read_db_config(db_path):
     return (row[0] or "").strip(), (row[1] or "").strip()
 
 
-def _write_db_config(db_path, url, key):
+def _write_auth_settings(db_path, url, key, mode, username):
     if not db_path:
         raise RuntimeError("Database path is unavailable.")
     if not os.path.exists(db_path):
@@ -131,20 +133,66 @@ def _write_db_config(db_path, url, key):
     conn = None
     try:
         conn = sqlite3.connect(db_path)
+        ensure_settings_columns(conn)
         cur = conn.execute(
-            "UPDATE Settings SET hathor_api_url = ?, hathor_api_key = ?",
-            (url, key),
+            "UPDATE Settings SET hathor_api_url = ?, hathor_api_key = ?, "
+            "hathor_auth_mode = ?, hathor_auth_username = ?",
+            (url, key, mode, username),
         )
         if cur.rowcount == 0:
             conn.execute(
-                "INSERT INTO Settings (id, hathor_api_url, hathor_api_key) "
-                "VALUES (1, ?, ?)",
-                (url, key),
+                "INSERT INTO Settings (id, hathor_api_url, hathor_api_key, "
+                "hathor_auth_mode, hathor_auth_username) "
+                "VALUES (1, ?, ?, ?, ?)",
+                (url, key, mode, username),
             )
         conn.commit()
     finally:
         if conn is not None:
             conn.close()
+
+
+def _write_db_config(db_path, url, key):
+    # Legacy API-key writer: clears any login-mode marker.
+    _write_auth_settings(db_path, url, key, "key" if (url or key) else "", "")
+
+
+def read_auth_settings(db_path=None):
+    """Writable auth state: URL/key/mode/username (no refresh token)."""
+    db_path = db_path or _default_db_path()
+    if not db_path or not os.path.exists(db_path):
+        return {"url": "", "key": "", "mode": "", "username": ""}
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT hathor_api_url, hathor_api_key, hathor_auth_mode, "
+                "hathor_auth_username FROM Settings LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = conn.execute(
+                "SELECT hathor_api_url, hathor_api_key FROM Settings LIMIT 1"
+            ).fetchone()
+            if row:
+                row = (row[0], row[1], "", "")
+    except sqlite3.Error:
+        return {"url": "", "key": "", "mode": "", "username": ""}
+    finally:
+        if conn is not None:
+            conn.close()
+    if not row:
+        return {"url": "", "key": "", "mode": "", "username": ""}
+    return {
+        "url": (row[0] or "").strip(),
+        "key": (row[1] or "").strip(),
+        "mode": (row[2] or "").strip(),
+        "username": (row[3] or "").strip(),
+    }
+
+
+def write_auth_settings(url, key="", mode="", username="", db_path=None):
+    _write_auth_settings(db_path or _default_db_path(), url, key, mode, username)
 
 
 def _first_env(names):

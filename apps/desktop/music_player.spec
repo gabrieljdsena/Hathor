@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -50,7 +50,8 @@ a = Analysis(
         'services.player_sync',
         'services.platform_support',
         'services.window_chrome',
-    ],
+        'services.auth_session',
+    ] + collect_submodules('keyring'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -94,6 +94,7 @@ Output: `dist/Hathor/`.
 The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, and `pykakasi` data files. Runtime frontend assets (SweetAlert2, Notyf, Alpine) live under `ui/`; `node_modules/` is only needed for the Tailwind dev build. Important details:
 
 - **`.env` is not bundled** — it must sit next to `Hathor.exe` (runtime reads `os.path.dirname(sys.executable)`).
+- **Refresh tokens** live in OS credential storage through `keyring`; PyInstaller collects its backend modules explicitly. Passwords are never stored.
 - The SQLite DB, `.env`, and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen.
 - Console is disabled (`console=False`), so stdout logs are invisible in the shipped app.
 - `version.json` is copied to the app root for the updater; the PyInstaller copy under `_internal` is only a fallback.

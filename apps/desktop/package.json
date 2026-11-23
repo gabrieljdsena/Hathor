@@ -5,7 +5,7 @@
     "sweetalert2": "^11.26.24"
   },
   "name": "hathor-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "",
   "main": "index.js",
   "devDependencies": {

@@ -22,7 +22,8 @@ A Windows and Linux desktop music player with a native Python backend and a mode
 - **History** — download history and playback (played songs / played playlists) with pagination, full-tab queues, row action menus and re-download.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
-- **In-app updates** — checks the Hathor server for a newer packaged build, verifies the SHA-256, stages it, and lets a detached helper replace the app after Hathor exits. The same server/key used by Web API powers the channel.
+- **Web account login** — sign in with the same username/password as the web app. Short-lived access tokens refresh automatically; the rotating refresh token is stored in the OS credential store, never the password. Scoped `hth_` API keys remain available under Advanced.
+- **In-app updates** — checks the Hathor server for a newer packaged build, verifies the SHA-256, stages it, and lets a detached helper replace the app after Hathor exits. The same Web API session powers the channel.
 - **Discover** — server-backed out-of-library recommendations with source filters, YouTube preview queue, feedback/tuning and local downloads. Playback completion/skip segments are reported to the Web API for Discover quality. Configure the Web API in Settings first.
 - **AI DJ (Vohithe)** — server-planned sets with spoken intro/outro commentary, voice ducking, vibe briefs (typed or spoken), batch handoff, feedback and Home/player-bar entry points.
 - **Cross-device playback** — live player-hub polling keeps desktop and web/other clients aligned for play/pause/next/seek/volume, with local audio left untouched when a track is missing. Paused spots from other devices also expose their Up Next queue and resume at the saved position (explicit tap only).
@@ -110,8 +111,8 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ```json
 {
-  "versionCode": 2,
-  "versionName": "1.0.1-hathor"
+  "versionCode": 3,
+  "versionName": "1.0.2-hathor"
 }
 ```
 
@@ -145,7 +146,9 @@ build, restarts Hathor, and removes the backup and package. The SQLite DB,
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured in **Settings → Web API** (URL + scoped `hth_` key), with a `.env` file next to `main.py` (or the executable) as the fallback:
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: enter the server URL, username and password in **Settings → Web API** and press **Sign in**. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Legacy API keys are still accepted under **Advanced**.
+
+A `.env` file next to `main.py` (or the executable) remains a fallback for the server URL and a scoped API key:
 
 ```env
 HATHOR_API_URL=http://192.168.1.10:5051
@@ -176,6 +179,7 @@ version.json      Desktop version/build used by the in-app updater
 services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
 services/history_sync.py  Debounced automatic Music_History outbox flush
 services/app_update.py  Desktop check/download/stage/swap pipeline
+services/auth_session.py  Web login, token refresh, OS-keyring refresh-token storage
 services/platform_support.py  XDG paths, package-managed detection, platform capabilities
 services/window_chrome.py     Isolated Windows snap/drag implementation
 settings.py        Loads persisted settings from the SQLite Settings table

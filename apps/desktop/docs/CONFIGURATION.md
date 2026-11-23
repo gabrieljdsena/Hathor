@@ -40,10 +40,10 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 Sync is **disabled by default**. Point the app at a server in **Settings → Web API**:
 
 1. Enter the server root (for example `http://192.168.1.10:5051`).
-2. Paste a scoped `hth_` API key.
-3. Press **Test** to verify reachability and read access, then **Save**.
+2. Enter the Hathor web username and password.
+3. Press **Sign in**. Access tokens rotate automatically; the refresh token is kept in the OS credential store and the password is never stored.
 
-The pair is stored in the local `Settings` row (`hathor_api_url`/`hathor_api_key`); no restart is needed. If both fields are empty, `HATHOR_API_URL` and `HATHOR_API_KEY` from `.env` (loaded by `python-dotenv` in `main.py`) remain the fallback. Without either source, `main.py` prints:
+A scoped `hth_` API key remains available under **Advanced** for automation and older installs. The server URL, auth mode and username are stored in the `Settings` row; the refresh token lives in Windows Credential Manager or the Linux Secret Service. If no runtime URL is set, `HATHOR_API_URL` (and a legacy `HATHOR_API_KEY`) from `.env` remain the fallback. Without any source, `main.py` prints:
 
 ```
 [Sync] No sync server configured in Settings -> Web API or .env, sync disabled.
@@ -54,9 +54,11 @@ The pair is stored in the local `Settings` row (`hathor_api_url`/`hathor_api_key
 | Field / variable | Required | Example | Purpose |
 | ---------------- | -------- | ------- | ------- |
 | `hathor_api_url` / `HATHOR_API_URL` | yes | `http://192.168.1.10:5051` | Hathor server on the LAN |
-| `hathor_api_key` / `HATHOR_API_KEY` | yes | `hth_...` | Per-device key (`library:read` + `library:write`; add `player:read` + `player:control` for AI DJ) |
+| `hathor_auth_mode` | no | `login` / `key` | Runtime sign-in mode |
+| `hathor_auth_username` | no | `gabriel` | Web user shown in Settings |
+| `hathor_api_key` / `HATHOR_API_KEY` | no | `hth_...` | Legacy/advanced scoped key |
 
-The full key stays in Python/SQLite; Settings only receives a masked hint.
+The password never leaves the login request and is never persisted. The full API key stays in Python/SQLite; Settings only receives a masked hint.
 
 A minimal `.env`:
 

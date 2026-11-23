@@ -10,6 +10,7 @@ import uuid
 import Download
 import settings
 from services import platform_support
+from services.auth_session import get_auth_session
 from services.window_chrome import WindowsWindowChrome
 from pathlib import Path
 import random
@@ -62,6 +63,7 @@ class Api:
         self._window_chrome = WindowsWindowChrome()
         self.downloader = Download.MusicDownloader()
         self._ensure_schema()
+        self.auth = get_auth_session(self.db_path)
         # Stable identity for cross-device resume (generated once, persisted).
         self._device_id, self._device_label = self._ensure_device_identity()
         self._resume_spot_last = None
@@ -1382,9 +1384,8 @@ class Api:
 
     # ---- Runtime Web API configuration -------------------------------
     def get_api_config_view(self):
-        """Settings payload; the full API key never crosses the bridge."""
-        from services.api_config import get_api_config_view
-        return get_api_config_view(self.db_path)
+        """Settings payload; secrets never cross the bridge."""
+        return self.auth.view()
 
     def _push_api_config(self, config=None):
         if not self._window:
@@ -1398,39 +1399,43 @@ class Api:
         except Exception as exc:
             print(f" [Python] API config UI update failed: {exc}")
 
+    def login(self, url, username, password, remember_me=True):
+        result = self.auth.login(url, username, password, remember_me)
+        self._push_api_config(result.get("config"))
+        if result.get("ok"):
+            try:
+                self.history_sync.notify()
+            except Exception:
+                pass
+        return result
+
+    def logout(self):
+        result = self.auth.logout()
+        self._push_api_config(result.get("config"))
+        return result
+
     def save_api_config(self, url, key=""):
-        """Persist the server URL/key. A blank key keeps the saved one."""
-        from services.api_config import save_api_config
-        try:
-            config = save_api_config(url, key, self.db_path)
-        except Exception as exc:
-            return {"ok": False, "message": str(exc)}
-        self._push_api_config(config)
-        try:
-            self.history_sync.notify()
-        except Exception:
-            pass
-        return {
-            "ok": True,
-            "message": "Web API settings saved.",
-            "config": config,
-        }
+        """Advanced API-key mode (legacy / headless clients)."""
+        result = self.auth.save_api_key(url, key)
+        self._push_api_config(result.get("config"))
+        if result.get("ok"):
+            try:
+                self.history_sync.notify()
+            except Exception:
+                pass
+        return result
 
     def clear_api_config(self):
-        from services.api_config import clear_api_config
-        try:
-            config = clear_api_config(self.db_path)
-        except Exception as exc:
-            return {"ok": False, "message": str(exc)}
-        self._push_api_config(config)
-        return {
-            "ok": True,
-            "message": "Saved Web API settings cleared; .env fallback still applies.",
-            "config": config,
-        }
+        result = self.auth.clear()
+        self._push_api_config(result.get("config"))
+        return result
 
     def test_api_connection(self, url=None, key=""):
         from services.api_config import test_connection
+        if (key or "").strip():
+            return test_connection(url, key, self.db_path)
+        if self.auth.configured():
+            return self.auth.test_connection()
         return test_connection(url, key, self.db_path)
 
     # ---- Desktop self-updater -----------------------------------------

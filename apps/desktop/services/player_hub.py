@@ -15,6 +15,7 @@ import time
 import settings
 
 from .api_config import get_api_config
+from .auth_session import get_auth_session
 from .player_sync import PlayerSync
 
 
@@ -47,6 +48,11 @@ class PlayerHub:
 
     # -- state helpers -------------------------------------------------
     def _configured(self):
+        try:
+            if get_auth_session(self.api.db_path).configured():
+                return True
+        except Exception:
+            pass
         try:
             url, key = get_api_config(self.api.db_path)
             return bool(url and key)

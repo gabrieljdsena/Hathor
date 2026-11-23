@@ -62,9 +62,14 @@ class ShellScaffoldingTests(unittest.TestCase):
         settings = (self.root / "ui" / "views" / "settings.html").read_text(encoding="utf-8")
         for element_id in (
             "api-url-input",
+            "api-username-input",
+            "api-password-input",
+            "api-remember-input",
             "api-key-input",
+            "api-key-save-btn",
             "api-config-status",
             "api-save-btn",
+            "api-logout-btn",
             "api-test-btn",
             "api-clear-btn",
             "app-update-version",

@@ -6,6 +6,7 @@ import sqlite3
 import unicodedata
 
 from .api_config import get_api_config
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi
 
 try:
@@ -183,9 +184,16 @@ class LyricsService:
         if not text:
             return text
         try:
-            url, key = get_api_config(self.api.db_path)
-            if url and key:
-                response = HathorApi(url, key, timeout=8).post(
+            session = get_auth_session(self.api.db_path)
+            client = None
+            if session.configured():
+                client = session.api_client(timeout=8)
+            else:
+                url, key = get_api_config(self.api.db_path)
+                if url and key:
+                    client = HathorApi(url, key, timeout=8)
+            if client is not None:
+                response = client.post(
                     "/api/v1/lyrics/romanize",
                     payload={"Text": text, "IsLrc": bool(is_lrc)},
                 )
@@ -281,16 +289,22 @@ class LyricsService:
     def _server_lyrics_search(self, track, artist, album_name=None, duration_seconds=None):
         """Call the Hathor Web API candidate search when configured."""
         try:
-            url, key = get_api_config(self.api.db_path)
-            if not url or not key:
+            session = get_auth_session(self.api.db_path)
+            client = None
+            if session.configured():
+                client = session.api_client(timeout=6)
+            else:
+                url, key = get_api_config(self.api.db_path)
+                if url and key:
+                    client = HathorApi(url, key, timeout=6)
+            if client is None:
                 return None
             payload = {"Track": track, "Artist": artist or ""}
             if album_name:
                 payload["Album"] = album_name
             if duration_seconds:
                 payload["Duration"] = int(duration_seconds)
-            response = HathorApi(url, key, timeout=6).post(
-                "/api/v1/lyrics/search", payload=payload)
+            response = client.post("/api/v1/lyrics/search", payload=payload)
             return response if isinstance(response, list) else None
         except Exception as exc:
             print(f" [Python] Server lyrics search unavailable: {exc}")

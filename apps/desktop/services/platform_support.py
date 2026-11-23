@@ -279,6 +279,17 @@ def python_self_update_allowed() -> bool:
     return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
 
+def device_label() -> str:
+    """Human label stored on Web API login sessions."""
+    if is_windows():
+        return "Windows desktop"
+    if is_linux():
+        return "Linux desktop"
+    if IS_MACOS:
+        return "macOS desktop"
+    return "Desktop"
+
+
 def update_mode() -> str:
     if package_managed():
         return "package"

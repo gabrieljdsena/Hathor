@@ -155,7 +155,7 @@ class ApiConfigTests(unittest.TestCase):
             )
 
             self.assertFalse(result["ok"])
-            self.assertIn("rejected the api key", result["message"].lower())
+            self.assertIn("rejected the credentials", result["message"].lower())
 
     def test_ensure_settings_columns_upgrades_old_schema(self):
         old_db = os.path.join(self.tmp.name, "old.db")
@@ -169,6 +169,8 @@ class ApiConfigTests(unittest.TestCase):
             conn.close()
         self.assertIn("hathor_api_url", columns)
         self.assertIn("hathor_api_key", columns)
+        self.assertIn("hathor_auth_mode", columns)
+        self.assertIn("hathor_auth_username", columns)
 
 
 if __name__ == "__main__":

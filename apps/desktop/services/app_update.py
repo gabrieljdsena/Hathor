@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 
 from . import platform_support
-from .api_config import get_api_config_info
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi, HathorApiError
 
 RELEASE_PATH = "/api/v1/desktop/latest"
@@ -305,16 +305,8 @@ class AppUpdateService:
         return {"versionCode": 0, "versionName": "dev"}
 
     # -- settings/status ------------------------------------------------
-    def _config(self):
-        try:
-            return get_api_config_info(self.db_path)
-        except Exception:
-            class _Empty:
-                url = ""
-                key = ""
-                configured = False
-
-            return _Empty()
+    def _session(self):
+        return get_auth_session(self.db_path)
 
     def _read_last_result(self):
         path = self.updates_dir / "last-result.json"
@@ -398,7 +390,7 @@ class AppUpdateService:
                 latest and latest["versionCode"] > self.current["versionCode"]
             )
             downloaded = bool(package and package["stageReady"])
-            config = self._config()
+            auth = self._session().view()
             mode = platform_support.update_mode()
             installable = (
                 mode == "self"
@@ -424,13 +416,13 @@ class AppUpdateService:
                 message = f"Update available: {latest['versionName']}"
             elif latest:
                 message = "Up to date."
-            elif not config.configured:
-                message = "Configure the Web API in Settings first."
+            elif not auth.get("configured"):
+                message = "Sign in or configure the Web API in Settings first."
             else:
                 message = "Not checked yet."
             return {
                 "ok": not bool(self._last_error) and not failed_result,
-                "configured": bool(config.configured),
+                "configured": bool(auth.get("configured")),
                 "managed": bool(managed),
                 "updateMode": mode,
                 "current": dict(self.current),
@@ -463,21 +455,33 @@ class AppUpdateService:
                 self._last_error = None
                 self._message = "Updates are managed by your system package manager."
             return self.status()
-        if url is None or key is None:
-            config = self._config()
-            url = config.url if url is None else url
-            key = config.key if key is None else key
-        url = (url or "").strip()
-        key = (key or "").strip()
-        if not url or not key:
-            with self._lock:
-                self._client = None
-                self._latest = None
-                self._last_error = None
-                self._message = "Configure the Web API in Settings first."
-            return self.status()
-
-        client = HathorApi(url, key, timeout=15, user_agent=USER_AGENT)
+        if url is None and key is None:
+            session = self._session()
+            if not session.configured():
+                with self._lock:
+                    self._client = None
+                    self._latest = None
+                    self._last_error = None
+                    self._message = "Sign in or configure the Web API in Settings first."
+                return self.status()
+            try:
+                client = session.api_client(timeout=15, user_agent=USER_AGENT)
+            except Exception as exc:
+                with self._lock:
+                    self._client = None
+                    self._last_error = str(exc)
+                return self.status()
+        else:
+            url = (url or "").strip()
+            key = (key or "").strip()
+            if not url or not key:
+                with self._lock:
+                    self._client = None
+                    self._latest = None
+                    self._last_error = None
+                    self._message = "Configure the Web API in Settings first."
+                return self.status()
+            client = HathorApi(url, key, timeout=15, user_agent=USER_AGENT)
         try:
             data = client.get(RELEASE_PATH)
         except HathorApiError as exc:
@@ -570,14 +574,14 @@ class AppUpdateService:
                     self._last_error = None
                 return self.status()
             if client is None:
-                config = self._config()
-                if not config.configured:
+                try:
+                    client = self._session().api_client(
+                        timeout=30, user_agent=USER_AGENT
+                    )
+                except Exception as exc:
                     with self._lock:
-                        self._last_error = "Configure the Web API in Settings first."
+                        self._last_error = str(exc)
                     return self.status()
-                client = HathorApi(
-                    config.url, config.key, timeout=30, user_agent=USER_AGENT
-                )
 
             self.updates_dir.mkdir(parents=True, exist_ok=True)
             target = self.updates_dir / latest["fileName"]
