@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaPlayer
 import android.util.Log
 import com.musicplayer.android.data.api.HathorApi
+import com.musicplayer.android.data.api.SyncConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -84,32 +85,42 @@ class DjVoicePlayer(private val context: Context) {
             val target = File(cacheDir, "$safe.mp3")
             if (target.length() > 0) return@withContext target
             val part = File(cacheDir, "$safe.part")
-            val conn = URL(HathorApi().clipUrl(id)).openConnection() as HttpURLConnection
-            try {
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 10_000
-                conn.readTimeout = 20_000
-                conn.setRequestProperty("Accept", "audio/*")
-                val code = conn.responseCode
-                if (code !in 200..299) {
-                    Log.w(TAG, "clip $id returned HTTP $code")
-                    return@withContext null
+            var attempt = 0
+            while (true) {
+                val conn = URL(HathorApi().clipUrl(id)).openConnection() as HttpURLConnection
+                try {
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 10_000
+                    conn.readTimeout = 20_000
+                    conn.setRequestProperty("Accept", "audio/*")
+                    val code = conn.responseCode
+                    if (code == 401 && attempt == 0) {
+                        // Media URLs carry ?token=; refresh and rebuild once.
+                        attempt++
+                        SyncConfig.authSession()?.accessToken(force = true)
+                        continue
+                    }
+                    if (code !in 200..299) {
+                        Log.w(TAG, "clip $id returned HTTP $code")
+                        return@withContext null
+                    }
+                    conn.inputStream.use { input ->
+                        part.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    if (part.length() <= 0L) {
+                        part.delete()
+                        return@withContext null
+                    }
+                    if (!part.renameTo(target)) {
+                        part.copyTo(target, overwrite = true)
+                        part.delete()
+                    }
+                    return@withContext target
+                } finally {
+                    conn.disconnect()
                 }
-                conn.inputStream.use { input ->
-                    part.outputStream().use { output -> input.copyTo(output) }
-                }
-                if (part.length() <= 0L) {
-                    part.delete()
-                    return@withContext null
-                }
-                if (!part.renameTo(target)) {
-                    part.copyTo(target, overwrite = true)
-                    part.delete()
-                }
-                target
-            } finally {
-                conn.disconnect()
             }
+            error("clip download loop exited")
         } catch (e: Exception) {
             Log.w(TAG, "clip $id download failed: ${e.message}")
             null

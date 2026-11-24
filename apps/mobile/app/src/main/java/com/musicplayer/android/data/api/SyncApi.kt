@@ -167,11 +167,15 @@ class SyncApi(
         "Sync server does not speak the sync-file endpoints yet " +
             "(need GET/PUT /api/v1/sync/files/{file} + delta). Pull the latest server build."
 
+    private fun authToken(): String =
+        token?.takeIf { it.isNotBlank() } ?: session?.accessToken().orEmpty()
+
     private fun open(
         method: String,
         path: String,
         query: Map<String, String> = emptyMap(),
         contentType: String? = null,
+        bearer: String = authToken(),
     ): HttpURLConnection {
         val url = buildString {
             append(base).append(path)
@@ -184,7 +188,6 @@ class SyncApi(
         }
         return (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
-            val bearer = token ?: session?.accessToken().orEmpty()
             if (bearer.isNotBlank()) {
                 setRequestProperty("Authorization", "Bearer $bearer")
             }
@@ -226,19 +229,26 @@ class SyncApi(
         }
     }
 
-    private inline fun <T> retryOn401(block: () -> T): T {
+    private inline fun <T> retryOn401(block: (bearer: String) -> T): T {
+        val bearer = authToken()
         try {
-            return block()
+            return block(bearer)
         } catch (e: SyncApiException) {
-            if (e.statusCode == 401 && session?.accessToken(force = true).orEmpty().isNotBlank()) {
-                return block()
+            if (e.statusCode == 401) {
+                // A concurrent request may already have rotated the token;
+                // passing the failed token lets AuthSession reuse it instead
+                // of rotating twice and tripping server reuse detection.
+                val refreshed = session?.accessToken(failedToken = bearer, force = true).orEmpty()
+                if (refreshed.isNotBlank() && refreshed != bearer) {
+                    return block(refreshed)
+                }
             }
             throw e
         }
     }
 
-    fun getDelta(cursor: String): JSONObject = retryOn401 {
-        val conn = open("GET", "/delta", if (cursor.isBlank()) emptyMap() else mapOf("cursor" to cursor))
+    fun getDelta(cursor: String): JSONObject = retryOn401 { bearer ->
+        val conn = open("GET", "/delta", if (cursor.isBlank()) emptyMap() else mapOf("cursor" to cursor), bearer = bearer)
         try {
             readJson(conn)
         } finally {
@@ -246,9 +256,9 @@ class SyncApi(
         }
     }
 
-    fun postImport(payload: JSONObject): JSONObject = retryOn401 {
+    fun postImport(payload: JSONObject): JSONObject = retryOn401 { bearer ->
         val body = payload.toString().toByteArray(Charsets.UTF_8)
-        val conn = open("POST", "/import", contentType = "application/json")
+        val conn = open("POST", "/import", contentType = "application/json", bearer = bearer)
         try {
             conn.doOutput = true
             conn.outputStream.use { it.write(body) }
@@ -263,8 +273,12 @@ class SyncApi(
         if (file.isBlank() || '/' in file || '\\' in file) return false
         if (dest.exists()) return false
         dest.parentFile?.mkdirs()
+        return retryOn401 { bearer -> downloadFileOnce(file, library, dest, bearer) }
+    }
+
+    private fun downloadFileOnce(file: String, library: String, dest: File, bearer: String): Boolean {
         val tmp = File(dest.absolutePath + ".hathor-part")
-        val conn = open("GET", "/files/${encodePathSegment(file)}", mapOf("library" to library))
+        val conn = open("GET", "/files/${encodePathSegment(file)}", mapOf("library" to library), bearer = bearer)
         try {
             val code = try {
                 conn.responseCode
@@ -301,24 +315,29 @@ class SyncApi(
 
     fun putFile(file: String, library: String, src: File) {
         if (file.isBlank() || '/' in file || '\\' in file) return
-        val conn = open(
-            "PUT", "/files/${encodePathSegment(file)}",
-            mapOf("library" to library), "audio/mpeg",
-        )
-        try {
-            conn.doOutput = true
-            // Stream from disk: episodes regularly exceed typical Android
-            // heap sizes, so readBytes() would OOM on large podcasts.
-            conn.setFixedLengthStreamingMode(src.length())
-            src.inputStream().use { input ->
-                conn.outputStream.use { output -> input.copyTo(output, 256 * 1024) }
+        retryOn401 { bearer ->
+            val conn = open(
+                "PUT", "/files/${encodePathSegment(file)}",
+                mapOf("library" to library), "audio/mpeg", bearer,
+            )
+            try {
+                conn.doOutput = true
+                // Stream from disk: episodes regularly exceed typical Android
+                // heap sizes, so readBytes() would OOM on large podcasts.
+                conn.setFixedLengthStreamingMode(src.length())
+                src.inputStream().use { input ->
+                    conn.outputStream.use { output -> input.copyTo(output, 256 * 1024) }
+                }
+                val code = conn.responseCode
+                if (code == 401) {
+                    throw SyncApiException("Sync server rejected the credentials (401).", statusCode = 401)
+                }
+                if (code == 404) throw SyncApiException(serverMissing)
+                if (code !in 200..299) throw SyncApiException("File upload failed ($code): $file")
+                try { conn.inputStream.close() } catch (_: Exception) { }
+            } finally {
+                conn.disconnect()
             }
-            val code = conn.responseCode
-            if (code == 404) throw SyncApiException(serverMissing)
-            if (code !in 200..299) throw SyncApiException("File upload failed ($code): $file")
-            try { conn.inputStream.close() } catch (_: Exception) { }
-        } finally {
-            conn.disconnect()
         }
     }
 

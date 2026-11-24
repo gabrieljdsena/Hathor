@@ -14,8 +14,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
@@ -199,6 +201,90 @@ class AuthSessionTest {
         } else {
             assertEquals("", store.load())
         }
+    }
+
+    @Test
+    fun `SyncApi refreshes once for delta after a 401`() = runBlocking {
+        responder = { request ->
+            when (request.path) {
+                "/api/v1/auth/login" -> Reply(200, tokens("access-1", "refresh-1"))
+                "/api/v1/auth/refresh" -> Reply(200, tokens("access-2", "refresh-2"))
+                "/api/v1/sync/delta" ->
+                    if (request.authorization == "Bearer access-2") {
+                        Reply(200, """{"songs":[]}""")
+                    } else {
+                        Reply(401, """{"message":"expired"}""")
+                    }
+                else -> Reply(404)
+            }
+        }
+        val session = AuthSession(context, MemoryRefreshTokenStore())
+        assertTrue(session.login(baseUrl(), "alice", "pw").ok)
+        val api = SyncApi(baseUrl(), token = null, auth = session)
+
+        val delta = api.getDelta("")
+
+        assertEquals(0, delta.getJSONArray("songs").length())
+        val auths = requests.toList()
+            .filter { it.path == "/api/v1/sync/delta" }
+            .map { it.authorization }
+        assertEquals(listOf("Bearer access-1", "Bearer access-2"), auths)
+        assertEquals(
+            1,
+            requests.toList().count { it.path == "/api/v1/auth/refresh" },
+        )
+    }
+
+    @Test
+    fun `SyncApi refreshes once for file downloads after a 401`() = runBlocking {
+        responder = { request ->
+            when (request.path) {
+                "/api/v1/auth/login" -> Reply(200, tokens("access-1", "refresh-1"))
+                "/api/v1/auth/refresh" -> Reply(200, tokens("access-2", "refresh-2"))
+                "/api/v1/sync/files/a.mp3" ->
+                    if (request.authorization == "Bearer access-2") {
+                        Reply(200, "abc")
+                    } else {
+                        Reply(401, """{"message":"expired"}""")
+                    }
+                else -> Reply(404)
+            }
+        }
+        val session = AuthSession(context, MemoryRefreshTokenStore())
+        assertTrue(session.login(baseUrl(), "alice", "pw").ok)
+        val api = SyncApi(baseUrl(), token = null, auth = session)
+        val dest = File(System.getProperty("java.io.tmpdir"), "hathor-sync-${UUID.randomUUID()}.mp3")
+
+        try {
+            assertTrue(api.downloadFile("a.mp3", "music", dest))
+            assertEquals("abc", dest.readText())
+        } finally {
+            dest.delete()
+        }
+        assertEquals(
+            1,
+            requests.toList().count { it.path == "/api/v1/auth/refresh" },
+        )
+    }
+
+    @Test
+    fun `server error during refresh keeps the session`() = runBlocking {
+        responder = { request ->
+            when (request.path) {
+                "/api/v1/auth/login" -> Reply(200, tokens("access-1", "refresh-1"))
+                "/api/v1/auth/refresh" -> Reply(500, """{"message":"server error"}""")
+                else -> Reply(404)
+            }
+        }
+        val store = MemoryRefreshTokenStore()
+        val session = AuthSession(context, store)
+        assertTrue(session.login(baseUrl(), "alice", "pw").ok)
+
+        assertEquals("", session.accessToken(force = true))
+
+        assertEquals("refresh-1", store.load())
+        assertTrue(session.signedIn())
+        assertTrue(session.view().message.contains("Could not refresh", ignoreCase = true))
     }
 
     @Test

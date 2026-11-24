@@ -13,9 +13,10 @@ import java.net.UnknownHostException
 /**
  * Contract mirror of apps/web/src/Hathor.Api/MobileAppController.cs.
  *
- * The client uses the same LAN base URL + Bearer key as sync. The metadata
- * endpoint is separate from the bytes, so a newer versionCode is known before
- * downloading a ~130 MB APK.
+ * The client uses the same base URL and credentials as sync: a Web login
+ * session (access token in memory, single-flight refresh) or a legacy API key.
+ * The metadata endpoint is separate from the bytes, so a newer versionCode is
+ * known before downloading a ~130 MB APK.
  */
 data class UpdateInfo(
     val versionCode: Int,
@@ -52,44 +53,64 @@ class HttpUpdateApi(
     auth: AuthSession? = null,
 ) : UpdateApiClient {
     private val base = baseUrl.trim().trimEnd('/')
-    private val session = auth ?: if (token == null) SyncConfig.authSession() else null
+    private val session = auth ?: if (token.isNullOrBlank()) SyncConfig.authSession() else null
 
-    private fun currentToken(): String = token ?: session?.accessToken().orEmpty()
+    private fun currentToken(): String =
+        token?.takeIf { it.isNotBlank() } ?: session?.accessToken().orEmpty()
+
+    /** Refresh once after a 401; returns blank when the session cannot renew. */
+    private fun refreshForRetry(failedToken: String): String {
+        val next = session?.accessToken(failedToken = failedToken, force = true).orEmpty()
+        return next.takeIf { it.isNotBlank() && it != failedToken }.orEmpty()
+    }
 
     override fun latest(): LatestResult {
-        val conn = try {
-            open("$base/api/v1/app/latest", "application/json").apply { requestMethod = "GET" }
-        } catch (e: Exception) {
-            return LatestResult.Failure(networkMessage(e))
-        }
-        return try {
-            val code = try {
-                conn.responseCode
+        var bearer = currentToken()
+        var refreshed = false
+        while (true) {
+            val conn = try {
+                open("$base/api/v1/app/latest", "application/json", bearer)
+                    .apply { requestMethod = "GET" }
             } catch (e: Exception) {
                 return LatestResult.Failure(networkMessage(e))
             }
-            when {
-                code == 401 || code == 403 -> LatestResult.Failure(
-                    "Update server rejected the credentials ($code). Sign in or check the API key in Settings.",
-                )
-                code == 404 -> LatestResult.NotFound
-                code !in 200..299 -> LatestResult.Failure(errorMessage(conn, code))
-                else -> {
-                    val body = try {
-                        conn.inputStream.bufferedReader().use { it.readText() }
-                    } catch (e: Exception) {
-                        return LatestResult.Failure("Update server response could not be read.")
-                    }
-                    val info = parseLatest(body)
-                    if (info == null) {
-                        LatestResult.Failure("Update server returned an invalid release response.")
-                    } else {
-                        LatestResult.Success(info)
+            try {
+                val code = try {
+                    conn.responseCode
+                } catch (e: Exception) {
+                    return LatestResult.Failure(networkMessage(e))
+                }
+                if (code == 401 && !refreshed) {
+                    val next = refreshForRetry(bearer)
+                    if (next.isNotBlank()) {
+                        bearer = next
+                        refreshed = true
+                        continue
                     }
                 }
+                return when {
+                    code == 401 || code == 403 -> LatestResult.Failure(
+                        "Update server rejected the credentials ($code). Sign in or check the API key in Settings.",
+                    )
+                    code == 404 -> LatestResult.NotFound
+                    code !in 200..299 -> LatestResult.Failure(errorMessage(conn, code))
+                    else -> {
+                        val body = try {
+                            conn.inputStream.bufferedReader().use { it.readText() }
+                        } catch (e: Exception) {
+                            return LatestResult.Failure("Update server response could not be read.")
+                        }
+                        val info = parseLatest(body)
+                        if (info == null) {
+                            LatestResult.Failure("Update server returned an invalid release response.")
+                        } else {
+                            LatestResult.Success(info)
+                        }
+                    }
+                }
+            } finally {
+                conn.disconnect()
             }
-        } finally {
-            conn.disconnect()
         }
     }
 
@@ -106,62 +127,75 @@ class HttpUpdateApi(
             path.startsWith("/") -> base + path
             else -> "$base/$path"
         }
-        val conn = try {
-            open(url, "application/vnd.android.package-archive").apply { requestMethod = "GET" }
-        } catch (e: Exception) {
-            throw UpdateException(networkMessage(e), e)
-        }
-        try {
-            val code = try {
-                conn.responseCode
+        var bearer = currentToken()
+        var refreshed = false
+        while (true) {
+            val conn = try {
+                open(url, "application/vnd.android.package-archive", bearer)
+                    .apply { requestMethod = "GET" }
             } catch (e: Exception) {
                 throw UpdateException(networkMessage(e), e)
             }
-            if (code == 401 || code == 403) {
-                throw UpdateException("Update server rejected the credentials ($code). Sign in again.")
-            }
-            if (code == 404) {
-                throw UpdateException("The update APK is no longer available on the server.")
-            }
-            if (code !in 200..299) {
-                throw UpdateException(errorMessage(conn, code))
-            }
-            val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.sizeBytes
-            destination.parentFile?.mkdirs()
-            var copied = 0L
-            var lastReport = 0L
             try {
-                conn.inputStream.use { input ->
-                    destination.outputStream().use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            output.write(buffer, 0, read)
-                            copied += read
-                            val now = System.currentTimeMillis()
-                            if (now - lastReport >= 100 || (total > 0 && copied >= total)) {
-                                onProgress(copied, total)
-                                lastReport = now
+                val code = try {
+                    conn.responseCode
+                } catch (e: Exception) {
+                    throw UpdateException(networkMessage(e), e)
+                }
+                if (code == 401 && !refreshed) {
+                    val next = refreshForRetry(bearer)
+                    if (next.isNotBlank()) {
+                        bearer = next
+                        refreshed = true
+                        continue
+                    }
+                }
+                if (code == 401 || code == 403) {
+                    throw UpdateException("Update server rejected the credentials ($code). Sign in again.")
+                }
+                if (code == 404) {
+                    throw UpdateException("The update APK is no longer available on the server.")
+                }
+                if (code !in 200..299) {
+                    throw UpdateException(errorMessage(conn, code))
+                }
+                val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.sizeBytes
+                destination.parentFile?.mkdirs()
+                var copied = 0L
+                var lastReport = 0L
+                try {
+                    conn.inputStream.use { input ->
+                        destination.outputStream().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                copied += read
+                                val now = System.currentTimeMillis()
+                                if (now - lastReport >= 100 || (total > 0 && copied >= total)) {
+                                    onProgress(copied, total)
+                                    lastReport = now
+                                }
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    throw UpdateException("Update download failed: ${e.message ?: "network error"}", e)
                 }
-            } catch (e: Exception) {
-                throw UpdateException("Update download failed: ${e.message ?: "network error"}", e)
+                if (total > 0 && copied != total) {
+                    throw UpdateException("Update download was incomplete ($copied of $total bytes).")
+                }
+                onProgress(copied, total)
+                return
+            } finally {
+                conn.disconnect()
             }
-            if (total > 0 && copied != total) {
-                throw UpdateException("Update download was incomplete ($copied of $total bytes).")
-            }
-            onProgress(copied, total)
-        } finally {
-            conn.disconnect()
         }
     }
 
-    private fun open(url: String, accept: String): HttpURLConnection =
+    private fun open(url: String, accept: String, bearer: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
-            val bearer = currentToken()
             if (bearer.isNotBlank()) {
                 setRequestProperty("Authorization", "Bearer $bearer")
             }
