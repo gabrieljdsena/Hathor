@@ -79,6 +79,8 @@ fun LoginScreen(
     initialUrl: String,
     initialUsername: String,
     onSignedIn: () -> Unit,
+    allowContinueWithKey: Boolean = false,
+    onContinueWithKey: () -> Unit = {},
 ) {
     var url by remember { mutableStateOf(initialUrl) }
     var username by remember { mutableStateOf(initialUsername) }
@@ -353,6 +355,20 @@ fun LoginScreen(
                     ),
                 ) {
                     Text(if (busy) "Signing in…" else "Sign in", fontWeight = FontWeight.SemiBold)
+                }
+                if (allowContinueWithKey) {
+                    HathorTonalButton(
+                        onClick = onContinueWithKey,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Continue with saved API key") }
+                    Text(
+                        "A legacy API key is already configured on this device. Continue with it, or sign in above to use your Web account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HathorColors.TextHint,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
                 Text(
                     "The password is sent only to your server and is never stored. " +

@@ -262,7 +262,14 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var showSplash by rememberSaveable { mutableStateOf(coldStart) }
                     var authView by remember { mutableStateOf(SyncConfig.view()) }
+                    val authPrefs = remember { getSharedPreferences("hathor", MODE_PRIVATE) }
+                    var legacyKeyAck by remember {
+                        mutableStateOf(authPrefs.getBoolean("legacy_key_login_ack", false))
+                    }
                     val authConfigured = authView?.configured == true
+                    val legacyKeyGate = authView?.mode == "key" &&
+                        authView?.keySet == true && !legacyKeyAck
+                    val showLoginGate = !showSplash && (!authConfigured || legacyKeyGate)
                     // Session can be cleared by a rejected refresh at any
                     // time; surface the dedicated gate without a restart.
                     LaunchedEffect(Unit) {
@@ -271,8 +278,8 @@ class MainActivity : ComponentActivity() {
                             delay(1500)
                         }
                     }
-                    LaunchedEffect(showSplash, authConfigured) {
-                        if (!showSplash && !authConfigured) {
+                    LaunchedEffect(showLoginGate) {
+                        if (showLoginGate) {
                             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                         } else {
                             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -826,11 +833,18 @@ class MainActivity : ComponentActivity() {
                             onRetry = updateRepo::retry,
                         )
                     }
-                    if (!showSplash && !authConfigured) {
+                    if (showLoginGate) {
                         LoginScreen(
                             initialUrl = authView?.url.orEmpty(),
                             initialUsername = authView?.username.orEmpty(),
-                            onSignedIn = { recreate() }
+                            onSignedIn = { recreate() },
+                            allowContinueWithKey = legacyKeyGate,
+                            onContinueWithKey = {
+                                authPrefs.edit()
+                                    .putBoolean("legacy_key_login_ack", true)
+                                    .apply()
+                                legacyKeyAck = true
+                            }
                         )
                     }
                     AnimatedVisibility(

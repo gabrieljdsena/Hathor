@@ -21,6 +21,7 @@
     var keyEl = null;
     var keyRevealBtn = null;
     var keySaveBtn = null;
+    var continueKeyBtn = null;
     var busy = false;
     var passwordShown = false;
     var keyShown = false;
@@ -54,7 +55,7 @@
 
     function setBusy(value) {
         busy = !!value;
-        [urlEl, userEl, passwordEl, rememberEl, ackEl, keyEl, keySaveBtn, submitBtn]
+        [urlEl, userEl, passwordEl, rememberEl, ackEl, keyEl, keySaveBtn, submitBtn, continueKeyBtn]
             .forEach(function (el) {
                 if (el) el.disabled = busy;
             });
@@ -106,15 +107,24 @@
         }
     }
 
-    function showGate(cfg) {
+    function keyAck() {
+        try { return localStorage.getItem('hathor_login_key_ack') === '1'; } catch (_) { return false; }
+    }
+
+    function showGate(cfg, keyMode) {
         if (!gate) return;
         gate.classList.remove('is-hidden');
+        if (continueKeyBtn) continueKeyBtn.classList.toggle('is-hidden', !keyMode);
         window._authGateOpen = true;
         document.body.classList.add('auth-locked');
         if (cfg) {
             if (urlEl && !urlEl.value.trim()) urlEl.value = cfg.url || '';
             if (userEl && !userEl.value.trim()) userEl.value = cfg.username || '';
-            if (cfg.message && !statusEl.textContent) setStatus(cfg.message, '');
+            if (keyMode) {
+                setStatus('A saved API key is configured. Sign in with your Web account, or continue with the key.', '');
+            } else if (cfg.message && !statusEl.textContent) {
+                setStatus(cfg.message, '');
+            }
         }
         updateTransport();
         setTimeout(function () {
@@ -139,14 +149,25 @@
         try {
             var cfg = await api.get_api_config_view();
             if (cfg && cfg.configured) {
+                if (cfg.mode === 'key' && cfg.keySet && !keyAck()) {
+                    showGate(cfg, true);
+                    return;
+                }
                 hideGate();
                 return;
             }
-            showGate(cfg);
+            showGate(cfg, false);
         } catch (e) {
             showGate(null);
             setStatus('Could not read the saved session. You can still sign in.', 'error');
         }
+    }
+
+    function continueWithKey() {
+        if (busy) return;
+        try { localStorage.setItem('hathor_login_key_ack', '1'); } catch (_) {}
+        hideGate();
+        window.location.reload();
     }
 
     async function submitLogin(event) {
@@ -243,6 +264,7 @@
         keyEl = document.getElementById('login-api-key');
         keyRevealBtn = document.getElementById('login-key-reveal');
         keySaveBtn = document.getElementById('login-key-save');
+        continueKeyBtn = document.getElementById('login-continue-key');
         if (!gate || !form) return;
 
         form.addEventListener('submit', submitLogin);
@@ -254,6 +276,7 @@
         if (keyRevealBtn) keyRevealBtn.addEventListener('click', toggleKey);
         if (keyEl) keyEl.addEventListener('input', updateSubmitState);
         if (keySaveBtn) keySaveBtn.addEventListener('click', saveApiKey);
+        if (continueKeyBtn) continueKeyBtn.addEventListener('click', continueWithKey);
 
         updateTransport();
         refresh();

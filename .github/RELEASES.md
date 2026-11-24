@@ -24,12 +24,12 @@ The desktop release workflow builds both artifacts and publishes them to one
 GitHub Release.
 
 ```bash
-git tag desktop-v1.0.4
-git push origin desktop-v1.0.4
+git tag desktop-v1.0.5
+git push origin desktop-v1.0.5
 ```
 
 Or run **Actions → Release desktop → Run workflow** and provide a tag such as
-`desktop-v1.0.4`.
+`desktop-v1.0.5`.
 
 Artifacts:
 
@@ -47,8 +47,8 @@ already have the dependencies.
 ## Android release
 
 ```bash
-git tag android-v0.4.27
-git push origin android-v0.4.27
+git tag android-v0.4.28
+git push origin android-v0.4.28
 ```
 
 Or run **Actions → Release Android → Run workflow**.

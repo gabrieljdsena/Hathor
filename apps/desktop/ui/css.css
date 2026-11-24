@@ -392,3 +392,17 @@ body.auth-locked { overflow: hidden; }
 /* Keep the custom Windows titlebar/controls reachable while the gate is open. */
 .login-gate { top: 40px; }
 body.native-decorations .login-gate { top: 0; }
+
+.login-secondary {
+    width: 100%;
+    margin-top: 10px;
+    padding: 10px 14px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 11px;
+    background: rgba(255,255,255,.05);
+    color: #d4d4d8;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.login-secondary:hover { background: rgba(249,115,22,.12); color: #fdba74; }

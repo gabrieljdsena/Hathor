@@ -643,6 +643,7 @@
                 setStatus(res && res.message || 'Signed out.', 'warn');
                 if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
                 if (typeof notyf !== 'undefined') notyf.success('Signed out.');
+                try { localStorage.removeItem('hathor_login_key_ack'); } catch (_) {}
                 setTimeout(function () { window.location.reload(); }, 350);
             } catch (e) {
                 setStatus('Sign-out failed: ' + (e && e.message ? e.message : e), 'error');
@@ -699,6 +700,7 @@
                     setStatus(res.message || 'Cleared.', 'warn');
                     if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
                     if (typeof notyf !== 'undefined') notyf.success('Saved Web API settings cleared.');
+                    try { localStorage.removeItem('hathor_login_key_ack'); } catch (_) {}
                     setTimeout(function () { window.location.reload(); }, 350);
                 } else {
                     setStatus((res && res.message) || 'Could not clear Web API settings.', 'error');

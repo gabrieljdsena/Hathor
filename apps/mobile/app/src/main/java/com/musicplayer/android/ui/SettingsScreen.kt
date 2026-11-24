@@ -198,6 +198,8 @@ fun SettingsScreen(
                     onClick = {
                         scope.launch {
                             SyncConfig.logout()
+                            context.getSharedPreferences("hathor", android.content.Context.MODE_PRIVATE)
+                                .edit().putBoolean("legacy_key_login_ack", false).apply()
                             onAuthChanged()
                         }
                     }
