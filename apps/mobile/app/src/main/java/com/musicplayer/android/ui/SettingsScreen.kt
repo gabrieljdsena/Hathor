@@ -62,7 +62,7 @@ import com.musicplayer.android.BuildConfig
 import com.musicplayer.android.PlayerApp
 import com.musicplayer.android.data.SettingsRepository
 import com.musicplayer.android.data.SyncRepository
-import com.musicplayer.android.data.api.HathorApi
+import com.musicplayer.android.data.api.AuthView
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.RemoteSync
 import com.musicplayer.android.data.update.UpdateRepository
@@ -108,7 +108,11 @@ fun SettingsScreen(
     var podFolderPath by remember { mutableStateOf(settings.podcastsFolder()) }
     var busy by remember { mutableStateOf(false) }
     var apiUrl by remember { mutableStateOf(SyncConfig.baseUrl()) }
-    var apiToken by remember { mutableStateOf(SyncConfig.token()) }
+    var apiUsername by remember { mutableStateOf(SyncConfig.view()?.username.orEmpty()) }
+    var apiPassword by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
+    var rememberMe by remember { mutableStateOf(true) }
+    var authView by remember { mutableStateOf<AuthView?>(SyncConfig.view()) }
     var apiMessage by remember { mutableStateOf<String?>(null) }
     var testingApi by remember { mutableStateOf(false) }
     // Background pull status (first-run dialog and this button share one worker).
@@ -183,33 +187,67 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             HathorTextField(
-                value = apiToken,
-                onValueChange = { apiToken = it },
-                label = "API key (hth_…)",
+                value = apiUsername,
+                onValueChange = { apiUsername = it },
+                label = "Web username",
+                modifier = Modifier.fillMaxWidth()
+            )
+            HathorTextField(
+                value = apiPassword,
+                onValueChange = { apiPassword = it },
+                label = "Password",
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth()
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Keep me signed in", style = MaterialTheme.typography.bodySmall)
+                HathorSwitch(checked = rememberMe, onCheckedChange = { rememberMe = it })
+            }
+            authView?.let {
+                Text(
+                    it.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (it.signedIn) HathorColors.AccentBright else HathorColors.TextHint
+                )
+            }
+            if (apiUrl.startsWith("http://")) {
+                Text(
+                    "Plain HTTP: the password is visible to this network. Use HTTPS or a trusted VPN.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HathorColors.Accent
+                )
+            }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
-                        SyncConfig.save(apiUrl, apiToken)
-                        apiUrl = SyncConfig.baseUrl()
-                        apiToken = SyncConfig.token()
-                        sync.scheduleHistoryPush()
-                        apiMessage = "Saved."
+                        scope.launch {
+                            apiMessage = null
+                            val res = SyncConfig.login(apiUrl, apiUsername, apiPassword, rememberMe)
+                            apiMessage = res.message
+                            if (res.ok) {
+                                apiPassword = ""
+                                apiUrl = SyncConfig.baseUrl()
+                                authView = SyncConfig.view()
+                                sync.scheduleHistoryPush()
+                            }
+                        }
                     },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = HathorColors.Accent,
                         contentColor = Color.White
                     )
-                ) { Text("Save") }
+                ) { Text("Sign in") }
                 HathorTonalButton(
                     onClick = {
                         testingApi = true
                         apiMessage = null
                         scope.launch {
-                            apiMessage = HathorApi.testConnection(apiUrl, apiToken)
+                            apiMessage = SyncConfig.testConnection()
                             testingApi = false
                         }
                     },
@@ -217,8 +255,56 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f)
                 ) { Text(if (testingApi) "Testing…" else "Test") }
             }
+            if (authView?.signedIn == true) {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val res = SyncConfig.logout()
+                            apiMessage = res.message
+                            apiPassword = ""
+                            authView = SyncConfig.view()
+                        }
+                    }
+                ) { Text("Sign out") }
+            }
             apiMessage?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+            }
+
+            GroupDivider()
+            SectionLabel(Icons.Filled.Sync, "Advanced API key")
+            HathorTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = "API key (hth_…, optional)",
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HathorTonalButton(
+                    onClick = {
+                        val res = SyncConfig.saveApiKey(apiUrl, apiKey)
+                        apiMessage = res.message
+                        if (res.ok) {
+                            apiKey = ""
+                            authView = SyncConfig.view()
+                            sync.scheduleHistoryPush()
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save key") }
+                HathorTonalButton(
+                    onClick = {
+                        SyncConfig.clearRuntime()
+                        apiUrl = ""
+                        apiUsername = ""
+                        apiPassword = ""
+                        apiKey = ""
+                        authView = SyncConfig.view()
+                        apiMessage = "Cleared."
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Clear") }
             }
 
             GroupDivider()

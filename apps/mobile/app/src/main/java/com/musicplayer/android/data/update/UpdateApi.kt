@@ -1,5 +1,7 @@
 package com.musicplayer.android.data.update
 
+import com.musicplayer.android.data.api.AuthSession
+import com.musicplayer.android.data.api.SyncConfig
 import org.json.JSONObject
 import java.io.File
 import java.net.ConnectException
@@ -44,8 +46,15 @@ interface UpdateApiClient {
     )
 }
 
-class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClient {
+class HttpUpdateApi(
+    baseUrl: String,
+    private val token: String? = null,
+    auth: AuthSession? = null,
+) : UpdateApiClient {
     private val base = baseUrl.trim().trimEnd('/')
+    private val session = auth ?: if (token == null) SyncConfig.authSession() else null
+
+    private fun currentToken(): String = token ?: session?.accessToken().orEmpty()
 
     override fun latest(): LatestResult {
         val conn = try {
@@ -61,7 +70,7 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
             }
             when {
                 code == 401 || code == 403 -> LatestResult.Failure(
-                    "Update server rejected the API key ($code). Check the Web API key in Settings.",
+                    "Update server rejected the credentials ($code). Sign in or check the API key in Settings.",
                 )
                 code == 404 -> LatestResult.NotFound
                 code !in 200..299 -> LatestResult.Failure(errorMessage(conn, code))
@@ -109,7 +118,7 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
                 throw UpdateException(networkMessage(e), e)
             }
             if (code == 401 || code == 403) {
-                throw UpdateException("Update server rejected the API key ($code).")
+                throw UpdateException("Update server rejected the credentials ($code). Sign in again.")
             }
             if (code == 404) {
                 throw UpdateException("The update APK is no longer available on the server.")
@@ -152,7 +161,10 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
 
     private fun open(url: String, accept: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
-            setRequestProperty("Authorization", "Bearer $token")
+            val bearer = currentToken()
+            if (bearer.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer $bearer")
+            }
             setRequestProperty("User-Agent", "hathor-android/1")
             setRequestProperty("Accept", accept)
             connectTimeout = 30_000

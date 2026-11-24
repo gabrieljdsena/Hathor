@@ -72,7 +72,7 @@ class UpdateRepositoryTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         SyncConfig.init(context)
-        SyncConfig.save("http://127.0.0.1:1", "test-token")
+        SyncConfig.save("http://127.0.0.1:1", "hth_testtoken")
         prefsName = "update-test-${UUID.randomUUID()}"
         downloads = File(context.cacheDir, "update-test-${UUID.randomUUID()}")
         api = FakeApi(LatestResult.NotFound)

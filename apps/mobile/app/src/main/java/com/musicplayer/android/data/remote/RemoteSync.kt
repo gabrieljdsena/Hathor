@@ -1,4 +1,4 @@
-package com.musicplayer.android.data.remote
+﻿package com.musicplayer.android.data.remote
 
 import android.content.Context
 import android.util.Log
@@ -34,8 +34,8 @@ import org.json.JSONArray
 // Server tombstones (deletions-since) ARE applied. The sync cursor persists
 // in the "hathor" prefs and advances only on full success.
 //
-// This writes into data.local (music_player.db) — the same Room database the
-// screens read — so a pull is visible immediately. It used to write into a
+// This writes into data.local (music_player.db) â€” the same Room database the
+// screens read â€” so a pull is visible immediately. It used to write into a
 // separate data.db/hathor.db instance that no UI code ever queried.
 object RemoteSync {
     private const val TAG = "RemoteSync"
@@ -58,8 +58,8 @@ object RemoteSync {
         if (!SyncConfig.isConfigured()) {
             throw IllegalStateException(SyncConfig.NOT_CONFIGURED)
         }
-        onProgress("Reading library from server…", 0, 0)
-        val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
+        onProgress("Reading library from serverâ€¦", 0, 0)
+        val api = SyncApi()
         val prefs = context.getSharedPreferences("hathor", Context.MODE_PRIVATE)
         val cursor = prefs.getString(CURSOR_KEY, "") ?: ""
         val delta = try {
@@ -125,7 +125,7 @@ object RemoteSync {
             onProgress("Downloading podcasts", done, total)
         }
 
-        onProgress("Updating playlists, lyrics and history…", total, total)
+        onProgress("Updating playlists, lyrics and historyâ€¦", total, total)
 
         for (row in snapshot.playlists) {
             val existing = db.playlistDao().getPlaylist(row.id)
@@ -332,7 +332,7 @@ object RemoteSync {
     }
 
     // Byte-identical server download under the exact filename (replaces the
-    // old YouTube re-download — no codec drift, no wrong search hits).
+    // old YouTube re-download â€” no codec drift, no wrong search hits).
     // Null = already on disk (not counted); false = failed (counted).
     private suspend fun downloadMissing(
         api: SyncApi,

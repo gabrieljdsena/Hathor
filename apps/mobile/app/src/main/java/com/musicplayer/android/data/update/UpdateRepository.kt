@@ -60,7 +60,7 @@ class UpdateRepository(
     private val downloadsDir: File = File(context.filesDir, "updates"),
     private val now: () -> Long = { System.currentTimeMillis() },
     private val apiFactory: (baseUrl: String, token: String) -> UpdateApiClient =
-        { baseUrl, token -> HttpUpdateApi(baseUrl, token) },
+        { baseUrl, token -> HttpUpdateApi(baseUrl, token, SyncConfig.authSession()) },
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
