@@ -4,6 +4,10 @@ Built binaries are published as **GitHub Releases**, not committed to git.
 The workflows attach checksum files and keep the repository history free of
 large APK/ZIP blobs.
 
+Tag pushes trigger from the tagged commit, so the `develop` line can publish
+without merging. The **Run workflow** button only appears after the workflow
+files reach the repository's default branch (`main`).
+
 ## Desktop release (Windows + Linux)
 
 The desktop release workflow builds both artifacts and publishes them to one
