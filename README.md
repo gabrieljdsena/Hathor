@@ -88,6 +88,13 @@ original build plans, kept for reference.
 
 Status/plan: `apps/mobile/README.md`, `apps/mobile/PLAN.md`, `apps/mobile/FEATURE_PLAN.md`.
 
+## Authentication
+
+Desktop and Android can sign in with the same Web account as the browser, or
+keep using a scoped `hth_` API key as an advanced fallback. Passwords are never
+stored; refresh tokens live in the OS credential store / Android Keystore.
+See `docs/AUTH.md` for the flow, security notes and phase status.
+
 ## Shared sync — `packages/contracts/`
 
 All three apps stay compatible through one contract: SQLite/Room/EF schemas

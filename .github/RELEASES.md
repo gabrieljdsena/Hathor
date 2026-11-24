@@ -37,8 +37,8 @@ already have the dependencies.
 ## Android release
 
 ```bash
-git tag android-v0.4.24
-git push origin android-v0.4.24
+git tag android-v0.4.25
+git push origin android-v0.4.25
 ```
 
 Or run **Actions → Release Android → Run workflow**.

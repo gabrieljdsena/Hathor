@@ -27,8 +27,13 @@ and web.
 - **Web API-backed features** — Discover recommendations and the AI DJ
   (Vohithe) run on the Hathor Web API; the phone renders the feed/sets and
   plays returned files. Vohithe's commentary clips are played over ducked
-  music, and the vibe can be typed or spoken (server transcription). No login
-  is required — configure a scoped `hth_` key in Settings.
+  music, and the vibe can be typed or spoken (server transcription). Sign in
+  with the same Web account as the browser (recommended), or keep a scoped
+  `hth_` key under Advanced.
+- **Web account login** — username/password sign-in against
+  `/api/v1/auth/login`, with automatic token refresh and a Keystore-encrypted
+  refresh token. Passwords are never stored. Plain-HTTP sign-in shows a
+  warning; prefer HTTPS or a trusted VPN.
 - **Playback telemetry** — every non-podcast track play posts one
   completion/skip segment to `/player/playback-events` in the background, so
   Discover/AI DJ recommendations reflect phone listening. Delivery is
@@ -63,9 +68,13 @@ and web.
    API_TOKEN=hth_<per-device key with library:read + library:write>
    ```
 
-   These are **build-time defaults**. You can also set the server URL and API
-   key at runtime under **Settings → Web API** (no rebuild, no login). Keys for
-   Discover/sync need `library:read` + `library:write`; add `player:read` +
+   These are **build-time defaults**. You can also set the server URL and sign
+   in at runtime under **Settings → Web API** (no rebuild). The password is
+   sent only to `/auth/login` and never stored; the rotating refresh token is
+   encrypted with an Android Keystore AES/GCM key. `API_TOKEN` is optional —
+   a build with only `API_BASE_URL` can sign in in-app. A legacy scoped `hth_`
+   key remains available under **Advanced**; keys for Discover/sync need
+   `library:read` + `library:write`, and add `player:read` +
    `player:control` for AI DJ, cross-device playback and playback telemetry.
    Leaving both empty disables server features — the app still runs offline
    with local downloads and playback.
@@ -328,7 +337,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.24-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.25-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
