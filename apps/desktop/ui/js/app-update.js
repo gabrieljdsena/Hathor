@@ -1,5 +1,5 @@
-/* Desktop self-updater UI: checks the Hathor server, downloads the signed
- * package, and asks the Python side to swap it in after the app exits.
+/* Desktop self-updater UI: checks GitHub Releases (dev channel), downloads the
+ * signed package, and asks the Python side to swap it in after the app exits.
  */
 (function () {
     'use strict';
@@ -75,8 +75,8 @@
             detail = 'New version: ' + latest.versionName + '.';
         } else if (lastStatus.cachedBytes > 0) {
             detail = 'Downloaded package: ' + fmtBytes(lastStatus.cachedBytes) + '.';
-        } else if (!lastStatus.configured) {
-            detail = 'The update channel uses the same server as Web API.';
+        } else if (!latest) {
+            detail = 'Updates come from GitHub Releases (dev channel).';
         }
         if (lastStatus.installHint && !managed) {
             detail = detail ? detail + ' ' + lastStatus.installHint : lastStatus.installHint;

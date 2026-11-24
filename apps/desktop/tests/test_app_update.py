@@ -39,6 +39,30 @@ def release_payload(package, code=2, name="1.0.1-hathor", sha=None):
     }
 
 
+def github_release(
+    package,
+    code=2,
+    name="1.0.1-hathor",
+    download_url="https://example.invalid/package.zip",
+    digest=True,
+):
+    file_name = f"hathor-desktop-{code}-{name}.zip"
+    asset = {
+        "name": file_name,
+        "size": len(package),
+        "browser_download_url": download_url,
+    }
+    if digest:
+        asset["digest"] = "sha256:" + hashlib.sha256(package).hexdigest()
+    return {
+        "tag_name": f"desktop-v{name.split('-')[0]}",
+        "draft": False,
+        "prerelease": True,
+        "published_at": "2026-11-23T12:00:00Z",
+        "assets": [asset],
+    }
+
+
 class AppUpdateServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -52,13 +76,14 @@ class AppUpdateServiceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def service(self, code=1, frozen=False):
+    def service(self, code=1, frozen=False, github_api=None):
         return AppUpdateService(
             str(self.db),
             install_dir=self.install,
             updates_dir=self.updates,
             current={"versionCode": code, "versionName": f"{code}.0.0-hathor"},
             frozen=frozen,
+            github_api=github_api,
         )
 
     def test_version_json_and_package_name_contract(self):
@@ -272,6 +297,88 @@ class AppUpdateServiceTests(unittest.TestCase):
 
         self.assertFalse(status["ok"])
         self.assertIn("packaged Hathor build", status["message"])
+
+    def test_github_check_and_download_without_web_api(self):
+        package = make_package()
+        with FakeHathorServer() as server:
+            item = github_release(
+                package,
+                code=2,
+                name="1.0.1-hathor",
+                download_url=server.base_url + "/download/pkg.zip",
+            )
+            server.add("GET", "/releases", json_body=[item])
+            server.add("GET", "/download/pkg.zip", body=package,
+                       content_type="application/zip")
+            service = self.service(github_api=server.base_url + "/releases")
+            status = service.check()
+            downloaded = service.download()
+
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["updateAvailable"])
+        self.assertEqual(status["latest"]["versionCode"], 2)
+        self.assertEqual(status["source"], "github")
+        self.assertIsNone(server.requests[0]["headers"].get("Authorization"))
+        self.assertTrue(downloaded["downloaded"])
+        self.assertTrue((self.updates / "stage-2" / "Hathor.exe").is_file())
+
+    def test_github_selects_highest_desktop_and_ignores_android(self):
+        package = make_package()
+        with FakeHathorServer() as server:
+            feed = [
+                github_release(package, code=2, name="1.0.1-hathor"),
+                github_release(package, code=3, name="1.0.2-hathor"),
+                {
+                    "tag_name": "android-v9.9.9",
+                    "draft": False,
+                    "prerelease": False,
+                    "assets": [{
+                        "name": "hathor-android-99-9.9.9-hathor.apk",
+                        "size": len(package),
+                        "browser_download_url": "https://example.invalid/app.apk",
+                        "digest": "sha256:" + hashlib.sha256(package).hexdigest(),
+                    }],
+                },
+            ]
+            server.add("GET", "/releases", json_body=feed)
+            status = self.service(github_api=server.base_url + "/releases").check()
+
+        self.assertTrue(status["updateAvailable"])
+        self.assertEqual(status["latest"]["versionCode"], 3)
+        self.assertEqual(status["latest"]["versionName"], "1.0.2-hathor")
+
+    def test_github_sha256sums_fallback(self):
+        package = make_package()
+        digest = hashlib.sha256(package).hexdigest()
+        with FakeHathorServer() as server:
+            item = github_release(
+                package,
+                code=2,
+                name="1.0.1-hathor",
+                download_url=server.base_url + "/download/pkg.zip",
+                digest=False,
+            )
+            sums = f"{digest}  hathor-desktop-2-1.0.1-hathor.zip\n"
+            item["assets"].append({
+                "name": "SHA256SUMS.txt",
+                "size": len(sums),
+                "browser_download_url": server.base_url + "/sums",
+            })
+            server.add("GET", "/releases", json_body=[item])
+            server.add("GET", "/sums", body=sums, content_type="text/plain")
+            status = self.service(github_api=server.base_url + "/releases").check()
+
+        self.assertTrue(status["updateAvailable"])
+        self.assertEqual(status["latest"]["sha256"], digest)
+
+    def test_github_empty_feed_reports_no_release(self):
+        with FakeHathorServer() as server:
+            server.add("GET", "/releases", json_body=[])
+            status = self.service(github_api=server.base_url + "/releases").check()
+
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["updateAvailable"])
+        self.assertIn("No desktop release", status["message"])
 
     def test_release_path_cannot_escape_the_server(self):
         package = make_package()

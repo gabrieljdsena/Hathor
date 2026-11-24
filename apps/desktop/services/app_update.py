@@ -18,17 +18,24 @@ import shutil
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.request
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 
 from . import platform_support
-from .auth_session import get_auth_session
 from .hathor_api import HathorApi, HathorApiError
 
 RELEASE_PATH = "/api/v1/desktop/latest"
 DOWNLOAD_PREFIX = "/api/v1/desktop/download/"
+GITHUB_REPO = "gabrieljdsena/Hathor"
+GITHUB_RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
+GITHUB_TAG_PREFIX = "desktop-v"
+# Dev channel until releases are cut from main. Prereleases are included, so
+# the newest develop build is offered. Set to "stable" and filter below later.
+UPDATE_CHANNEL = "dev"
 PACKAGE_RE = re.compile(
     r"^hathor-desktop-(?P<code>\d{1,9})-(?P<name>.+)\.zip$",
     re.IGNORECASE,
@@ -40,6 +47,7 @@ STAGE_PREFIX = "stage-"
 MAX_PACKAGE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_STAGE_BYTES = 4 * 1024 * 1024 * 1024
 USER_AGENT = "hathor-desktop/1"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _default_install_dir() -> Path:
@@ -144,6 +152,206 @@ def _normalize_release(data) -> dict:
         "downloadPath": parsed.path,
         "publishedAtUtc": str(data.get("publishedAtUtc") or ""),
     }
+
+
+class GitHubReleaseError(Exception):
+    """The public GitHub release feed or asset download failed."""
+
+
+def _trusted_asset_url(url: str, api_url: str) -> bool:
+    if url.startswith("https://"):
+        return True
+    # Local fake feeds in tests may use HTTP; production is always HTTPS.
+    return api_url.startswith("http://") and url.startswith("http://")
+
+
+def _sha_from_sums_text(text: str, file_name: str):
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        sha, listed = parts[0].lower(), parts[1].strip().lstrip("*").lstrip("./")
+        if listed == file_name and SHA256_RE.fullmatch(sha):
+            return sha
+    return None
+
+
+def _normalize_github_releases(items, api_url, sums_loader=None):
+    """Pick the highest desktop package across GitHub release assets."""
+    if not isinstance(items, list):
+        raise GitHubReleaseError("GitHub returned an invalid release feed.")
+    best = None
+    for release in items:
+        if not isinstance(release, dict) or release.get("draft"):
+            continue
+        if UPDATE_CHANNEL != "dev" and release.get("prerelease"):
+            continue
+        tag = str(release.get("tag_name") or "")
+        if not tag.startswith(GITHUB_TAG_PREFIX):
+            continue
+        assets = release.get("assets")
+        if not isinstance(assets, list):
+            continue
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            file_name = str(asset.get("name") or "")
+            match = PACKAGE_RE.match(file_name)
+            if not match:
+                continue
+            try:
+                code = int(match.group("code"))
+                size = int(asset.get("size") or 0)
+            except (TypeError, ValueError):
+                continue
+            url = str(asset.get("browser_download_url") or "")
+            if code <= 0 or size <= 0 or size > MAX_PACKAGE_BYTES:
+                continue
+            if not _trusted_asset_url(url, api_url):
+                continue
+            digest = str(asset.get("digest") or "").strip().lower()
+            if digest.startswith("sha256:"):
+                digest = digest[len("sha256:"):]
+            sha = digest if SHA256_RE.fullmatch(digest) else None
+            if sha is None and sums_loader is not None:
+                sha = sums_loader(assets, file_name)
+            if sha is None:
+                continue
+            candidate = {
+                "versionCode": code,
+                "versionName": match.group("name"),
+                "fileName": file_name,
+                "sizeBytes": size,
+                "sha256": sha,
+                "downloadPath": url,
+                "publishedAtUtc": str(release.get("published_at") or ""),
+            }
+            if best is None or code > best["versionCode"]:
+                best = candidate
+    return best
+
+
+class GitHubReleaseClient:
+    """Stdlib-only GitHub Releases client used by the desktop updater."""
+
+    def __init__(self, api_url=GITHUB_RELEASES_URL, timeout=15.0):
+        self.api_url = (api_url or GITHUB_RELEASES_URL).strip()
+        self.timeout = float(timeout or 15.0)
+
+    def _get(self, url, timeout=None):
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": USER_AGENT,
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(
+            request, timeout=float(timeout or self.timeout)
+        ) as response:
+            return response.read()
+
+    def latest(self):
+        try:
+            raw = self._get(self.api_url)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise GitHubReleaseError(
+                f"GitHub release feed returned HTTP {exc.code}."
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise GitHubReleaseError(
+                f"Cannot reach GitHub Releases: {exc.reason}"
+            ) from exc
+        except Exception as exc:
+            raise GitHubReleaseError(f"GitHub release check failed: {exc}") from exc
+        try:
+            items = json.loads(raw.decode("utf-8"))
+        except Exception as exc:
+            raise GitHubReleaseError(
+                "GitHub returned an invalid release feed."
+            ) from exc
+        return _normalize_github_releases(items, self.api_url, self._sums_sha)
+
+    def _sums_sha(self, assets, file_name):
+        sums = next(
+            (
+                item for item in assets
+                if isinstance(item, dict)
+                and str(item.get("name") or "") == "SHA256SUMS.txt"
+            ),
+            None,
+        )
+        if not sums:
+            return None
+        url = str(sums.get("browser_download_url") or "")
+        if not _trusted_asset_url(url, self.api_url):
+            return None
+        try:
+            raw = self._get(url)
+        except Exception:
+            return None
+        return _sha_from_sums_text(raw.decode("utf-8", errors="replace"), file_name)
+
+    def stream_to_file(self, url, dest, timeout=600, chunk_size=256 * 1024,
+                       progress_cb=None):
+        if not _trusted_asset_url(str(url), self.api_url):
+            raise GitHubReleaseError("The GitHub release asset URL is invalid.")
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/octet-stream", "User-Agent": USER_AGENT},
+            method="GET",
+        )
+        tmp = str(dest) + ".hathor-part"
+        try:
+            with urllib.request.urlopen(
+                request, timeout=float(timeout)
+            ) as response, open(tmp, "wb") as handle:
+                raw_total = response.headers.get("Content-Length")
+                total = (
+                    int(raw_total)
+                    if raw_total and str(raw_total).isdigit()
+                    else 0
+                )
+                downloaded = 0
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb is not None:
+                        try:
+                            progress_cb(downloaded, total)
+                        except Exception:
+                            pass
+            os.replace(tmp, dest)
+            return dest
+        except urllib.error.HTTPError as exc:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise GitHubReleaseError(
+                f"GitHub download failed (HTTP {exc.code})."
+            ) from exc
+        except urllib.error.URLError as exc:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise GitHubReleaseError(
+                f"Cannot reach GitHub Releases: {exc.reason}"
+            ) from exc
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
 
 def _sha256_file(path: Path) -> str:
@@ -270,10 +478,12 @@ class AppUpdateService:
         updates_dir=None,
         current=None,
         frozen=None,
+        github_api=None,
     ):
         self.db_path = db_path
         self.install_dir = Path(install_dir) if install_dir else _default_install_dir()
         self.updates_dir = Path(updates_dir) if updates_dir else _default_updates_dir()
+        self.github_api = (github_api or GITHUB_RELEASES_URL).strip()
         self.frozen = (
             bool(getattr(sys, "frozen", False)) if frozen is None else bool(frozen)
         )
@@ -305,9 +515,6 @@ class AppUpdateService:
         return {"versionCode": 0, "versionName": "dev"}
 
     # -- settings/status ------------------------------------------------
-    def _session(self):
-        return get_auth_session(self.db_path)
-
     def _read_last_result(self):
         path = self.updates_dir / "last-result.json"
         try:
@@ -383,14 +590,13 @@ class AppUpdateService:
                     "fileName": package["fileName"],
                     "sizeBytes": package["sizeBytes"],
                     "sha256": "",
-                    "downloadPath": DOWNLOAD_PREFIX + quote(package["fileName"], safe=""),
+                    "downloadPath": "",
                     "publishedAtUtc": "",
                 }
             update_available = bool(
                 latest and latest["versionCode"] > self.current["versionCode"]
             )
             downloaded = bool(package and package["stageReady"])
-            auth = self._session().view()
             mode = platform_support.update_mode()
             installable = (
                 mode == "self"
@@ -416,13 +622,13 @@ class AppUpdateService:
                 message = f"Update available: {latest['versionName']}"
             elif latest:
                 message = "Up to date."
-            elif not auth.get("configured"):
-                message = "Sign in or configure the Web API in Settings first."
             else:
                 message = "Not checked yet."
             return {
                 "ok": not bool(self._last_error) and not failed_result,
-                "configured": bool(auth.get("configured")),
+                "configured": True,
+                "source": "github",
+                "channel": UPDATE_CHANNEL,
                 "managed": bool(managed),
                 "updateMode": mode,
                 "current": dict(self.current),
@@ -456,32 +662,45 @@ class AppUpdateService:
                 self._message = "Updates are managed by your system package manager."
             return self.status()
         if url is None and key is None:
-            session = self._session()
-            if not session.configured():
-                with self._lock:
-                    self._client = None
-                    self._latest = None
-                    self._last_error = None
-                    self._message = "Sign in or configure the Web API in Settings first."
-                return self.status()
             try:
-                client = session.api_client(timeout=15, user_agent=USER_AGENT)
-            except Exception as exc:
+                client = GitHubReleaseClient(self.github_api, timeout=15)
+                latest = client.latest()
+            except GitHubReleaseError as exc:
                 with self._lock:
                     self._client = None
                     self._last_error = str(exc)
                 return self.status()
-        else:
-            url = (url or "").strip()
-            key = (key or "").strip()
-            if not url or not key:
+            except Exception as exc:
+                with self._lock:
+                    self._client = None
+                    self._last_error = f"Update check failed: {exc}"
+                return self.status()
+            if latest is None:
                 with self._lock:
                     self._client = None
                     self._latest = None
                     self._last_error = None
-                    self._message = "Configure the Web API in Settings first."
+                    self._message = "No desktop release has been published yet."
                 return self.status()
-            client = HathorApi(url, key, timeout=15, user_agent=USER_AGENT)
+            with self._lock:
+                self._client = client
+                self._latest = latest
+                self._last_error = None
+                self._message = ""
+                self._prune_for_latest(latest)
+            return self.status()
+
+        # Legacy/manual server source, kept for diagnostics and older tests.
+        url = (url or "").strip()
+        key = (key or "").strip()
+        if not url or not key:
+            with self._lock:
+                self._client = None
+                self._latest = None
+                self._last_error = None
+                self._message = "Configure the Web API in Settings first."
+            return self.status()
+        client = HathorApi(url, key, timeout=15, user_agent=USER_AGENT)
         try:
             data = client.get(RELEASE_PATH)
         except HathorApiError as exc:
@@ -574,14 +793,7 @@ class AppUpdateService:
                     self._last_error = None
                 return self.status()
             if client is None:
-                try:
-                    client = self._session().api_client(
-                        timeout=30, user_agent=USER_AGENT
-                    )
-                except Exception as exc:
-                    with self._lock:
-                        self._last_error = str(exc)
-                    return self.status()
+                client = GitHubReleaseClient(self.github_api, timeout=30)
 
             self.updates_dir.mkdir(parents=True, exist_ok=True)
             target = self.updates_dir / latest["fileName"]
