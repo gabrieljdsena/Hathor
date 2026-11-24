@@ -111,8 +111,8 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ```json
 {
-  "versionCode": 4,
-  "versionName": "1.0.3-hathor"
+  "versionCode": 5,
+  "versionName": "1.0.4-hathor"
 }
 ```
 
@@ -144,7 +144,7 @@ downloads with progress, and offers **Install and restart**. The app also
 checks once at startup; the GitHub check is independent of Web API settings.
 
 The old `/api/v1/desktop/latest` and `/api/v1/desktop/download/...` endpoints
-remain for builds older than `1.0.3`; they are no longer used by current
+remain for builds older than `1.0.4`; they are no longer used by current
 clients.
 
 Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with
@@ -155,7 +155,7 @@ build, restarts Hathor, and removes the backup and package. The SQLite DB,
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: enter the server URL, username and password in **Settings → Web API** and press **Sign in**. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Legacy API keys are still accepted under **Advanced**.
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: the dedicated Hathor login screen asks for the server URL, username and password. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Legacy API keys are accepted under **Advanced** on that screen. **Settings → Web API** shows status and offers Test/Sign out.
 
 A `.env` file next to `main.py` (or the executable) remains a fallback for the server URL and a scoped API key:
 

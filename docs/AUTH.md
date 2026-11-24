@@ -23,7 +23,7 @@ POST /api/v1/auth/refresh  -> new access + rotated refresh
 | Access token | memory only | memory only |
 | Refresh token | Windows Credential Manager / Linux Secret Service via `keyring` | AES/GCM key in Android Keystore; ciphertext in prefs |
 | Password | sent once to `/auth/login`, never stored | same |
-| API-key fallback | Settings → Web API → Advanced | Settings → Web API → Advanced API key |
+| API-key fallback | Dedicated login screen → Advanced | Dedicated login screen → Advanced |
 | Plain HTTP | warning shown before sign-in | warning shown before sign-in |
 
 - Refresh is single-flight; a failed token is passed into the refresh call so
@@ -69,10 +69,11 @@ Client tests:
 
 ## Releases
 
-- Desktop `desktop-v1.0.3` — build 4, `1.0.3-hathor`; update checks now read
-  GitHub Releases (dev channel).
-- Android `android-v0.4.26` — code 29, `0.4.26-hathor`; update checks now read
-  GitHub Releases (dev channel). Older clients keep the server/SMB channel.
+- Desktop `desktop-v1.0.4` — build 5, `1.0.4-hathor`; dedicated login screen and
+  GitHub Releases update checks.
+- Android `android-v0.4.27` — code 30, `0.4.27-hathor`; dedicated login screen,
+  show/hide password, HTTP risk acknowledgement, and GitHub Releases updates.
+  Older clients keep the server/SMB channel.
 
 ## Remaining
 

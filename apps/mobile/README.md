@@ -69,7 +69,7 @@ and web.
    ```
 
    These are **build-time defaults**. You can also set the server URL and sign
-   in at runtime under **Settings → Web API** (no rebuild). The password is
+   in at runtime on the dedicated Hathor login screen (no rebuild). The password is
    sent only to `/auth/login` and never stored; the rotating refresh token is
    encrypted with an Android Keystore AES/GCM key. `API_TOKEN` is optional —
    a build with only `API_BASE_URL` can sign in in-app. A legacy scoped `hth_`
@@ -176,7 +176,7 @@ with `reactivecircus/android-emulator-runner` if you need it.
 
 The phone updates itself from **public GitHub Releases** — no Play Store and no
 Web API login/API key. The old server `/api/v1/app/latest` endpoint and SMB APK
-drop remain for builds older than `0.4.26`.
+drop remain for builds older than `0.4.27`.
 
 ### Release feed
 
@@ -281,7 +281,7 @@ The server library can also be re-pulled.
 ### Compile & publish (work PC)
 
 1. Bump `versionCode` (strictly increasing) and `versionName` in
-   `app/build.gradle.kts` — e.g. `29` / `0.4.26-hathor`.
+   `app/build.gradle.kts` — e.g. `30` / `0.4.27-hathor`.
 2. Confirm `local.properties` has `sdk.dir`. `API_BASE_URL` / `API_TOKEN` are
    only optional build-time defaults now; users can sign in or enter an API
    key in Settings. Do not commit `local.properties`.
@@ -319,7 +319,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.26-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.27-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init
@@ -341,9 +341,9 @@ The app talks to the Hathor Web API over the LAN (`data/api/SyncApi.kt`,
 stdlib `HttpURLConnection` + `org.json` — no extra dependencies), using the
 same table semantics as the desktop `database.sql` (see
 `data/db/Entities.kt`), and keeps a local Room copy (`hathor.db`) for
-offline use. Server URL + API token come from **Settings → Web API**, with
-`local.properties` / `BuildConfig` as build-time defaults; they never appear in
-source. Empty values disable server features.
+offline use. Server URL + sign-in/API key come from the dedicated login screen,
+with `local.properties` / `BuildConfig` as build-time defaults; they never
+appear in source. Empty values disable server features.
 
 - **Pull** (`data/remote/PullWorker.kt`, shared by the first-run prompt and
   the Settings Pull button): `GET /api/v1/sync/delta?cursor=` (incremental —

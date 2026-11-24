@@ -35,15 +35,22 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 - `set_crossfade(enabled, seconds)` / `get_playback_settings()`
 - `pick_background()`
 
-## Sync server (Settings → Web API, `.env` fallback)
+## Sync server (dedicated login screen, `.env` fallback)
 
-Sync is **disabled by default**. Point the app at a server in **Settings → Web API**:
+Sync is **disabled by default**. Point the app at a server on the dedicated
+login screen:
 
 1. Enter the server root (for example `http://192.168.1.10:5051`).
 2. Enter the Hathor web username and password.
 3. Press **Sign in**. Access tokens rotate automatically; the refresh token is kept in the OS credential store and the password is never stored.
 
-A scoped `hth_` API key remains available under **Advanced** for automation and older installs. The server URL, auth mode and username are stored in the `Settings` row; the refresh token lives in Windows Credential Manager or the Linux Secret Service. If no runtime URL is set, `HATHOR_API_URL` (and a legacy `HATHOR_API_KEY`) from `.env` remain the fallback. Without any source, `main.py` prints:
+A scoped `hth_` API key remains available under **Advanced** on the same login
+screen for automation and older installs. **Settings → Web API** shows the
+current URL/status and offers Test, Sign out, and Clear. The server URL, auth
+mode and username are stored in the `Settings` row; the refresh token lives in
+Windows Credential Manager or the Linux Secret Service. If no runtime URL is
+set, `HATHOR_API_URL` (and a legacy `HATHOR_API_KEY`) from `.env` remain the
+fallback. Without any source, `main.py` prints:
 
 ```
 [Sync] No sync server configured in Settings -> Web API or .env, sync disabled.
