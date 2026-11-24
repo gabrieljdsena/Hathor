@@ -1,0 +1,129 @@
+name: Release Android
+
+on:
+  push:
+    tags:
+      - "android-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (blank = android-v<versionName>)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+
+      - name: Restore release signing material
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Missing ANDROID_KEYSTORE_BASE64 repository secret." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/hathor-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+          cat > apps/mobile/keystore.properties <<EOF
+          storeFile=$keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          cat > apps/mobile/local.properties <<EOF
+          API_BASE_URL=${{ secrets.HATHOR_API_URL }}
+          API_TOKEN=${{ secrets.HATHOR_API_TOKEN }}
+          EOF
+
+      - name: Build release APK
+        working-directory: apps/mobile
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --console=plain
+
+      - name: Verify and stage APK
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -f "$apk"
+          version_code="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -1)"
+          version_name="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          test -n "$version_code" && test -n "$version_name"
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$apk"
+          mkdir -p dist
+          cp "$apk" "dist/hathor-android-${version_code}-${version_name}.apk"
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            apps/mobile/dist/*.apk
+            apps/mobile/dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            version_name="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' apps/mobile/app/build.gradle.kts | head -1)"
+            tag="android-v$version_name"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Hathor Android ${{ steps.tag.outputs.tag }}
+          body: |
+            Signed Hathor Android APK for sideload/update.
+            `SHA256SUMS.txt` contains the SHA-256.
+          files: |
+            release-assets/*.apk
+            release-assets/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
