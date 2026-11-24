@@ -174,50 +174,33 @@ with `reactivecircus/android-emulator-runner` if you need it.
 
 ## In-app updates (sideload channel)
 
-The phone updates itself from the Hathor server over the LAN — no Play Store.
-The server side is implemented (`apps/web/src/Hathor.Api/MobileAppController.cs`,
-deploy notes in [`../web/DEPLOY.md`](../web/DEPLOY.md)); the Android client and
-release scripts are described here.
+The phone updates itself from **public GitHub Releases** — no Play Store and no
+Web API login/API key. The old server `/api/v1/app/latest` endpoint and SMB APK
+drop remain for builds older than `0.4.26`.
 
-### Server contract
-
-Reuse the server URL/token from **Settings → Web API**
-(`SyncConfig.baseUrl()` / `SyncConfig.token()`); both calls need
-`Authorization: Bearer <hth_ key or JWT>`.
+### Release feed
 
 ```http
-GET /api/v1/app/latest
+GET https://api.github.com/repos/gabrieljdsena/Hathor/releases?per_page=30
 ```
 
-```json
-{
-  "versionCode": 6,
-  "versionName": "0.4.3-hathor",
-  "fileName": "hathor-6-0.4.3-hathor.apk",
-  "sizeBytes": 132456789,
-  "sha256": "lowercase-hex",
-  "publishedAtUtc": "2026-11-20T18:00:00+00:00",
-  "downloadPath": "/api/v1/app/download/hathor-6-0.4.3-hathor.apk"
-}
-```
-
-`404 { "message": "…" }` when no APK has been published. Compare
-`versionCode` with `BuildConfig.VERSION_CODE`; equal/lower means up to date.
-Then:
-
-```http
-GET /api/v1/app/download/{fileName}
-```
-
-Returns the APK as `application/vnd.android.package-archive` with range
-support. `downloadPath` is relative to the same server base URL. Verify the
-`sha256` (lowercase hex) before installing and delete the file on mismatch.
+- Ignore drafts; the current **dev** channel includes prereleases.
+- Only `tag_name` values starting with `android-v` are considered.
+- Each release contains:
+  - `hathor-android-<versionCode>-<versionName>.apk`
+  - `SHA256SUMS.txt`
+  - GitHub asset `digest` (lowercase `sha256:…`); fall back to
+    `SHA256SUMS.txt` when an older asset has no digest.
+- Pick the highest `versionCode` across assets, compare with
+  `BuildConfig.VERSION_CODE`, and download the asset's
+  `browser_download_url`.
+- Verify the SHA-256 before installing and delete the file on mismatch.
 
 ### Expected app behaviour
 
 - Check on launch (throttled to once per 24 h in SharedPreferences) **and** a
-  manual "Check for updates" row in **Settings → About**; skip silently when
-  the Web API is not configured.
+  manual "Check for updates" row in **Settings → About**. The check is
+  independent of the Web API configuration; startup failures stay silent.
 - Show a dialog with current/latest version. Download to `filesDir/updates/`
   with progress, verify SHA-256, then install through a `FileProvider`
   (`content://`) and `Intent.ACTION_VIEW` with the APK MIME type.
@@ -298,33 +281,32 @@ The server library can also be re-pulled.
 ### Compile & publish (work PC)
 
 1. Bump `versionCode` (strictly increasing) and `versionName` in
-   `app/build.gradle.kts` — e.g. `6` / `0.4.3-hathor`.
-2. Confirm `local.properties` has `sdk.dir`, `API_BASE_URL` (server LAN URL)
-   and `API_TOKEN` (scope `library:read` + `library:write`). These values are
-   baked into the APK; do not commit them.
+   `app/build.gradle.kts` — e.g. `29` / `0.4.26-hathor`.
+2. Confirm `local.properties` has `sdk.dir`. `API_BASE_URL` / `API_TOKEN` are
+   only optional build-time defaults now; users can sign in or enter an API
+   key in Settings. Do not commit `local.properties`.
 3. Build the signed release:
 
    ```powershell
    .\gradlew.bat :app:assembleRelease
    ```
 
-   Target convenience wrapper: `.\scripts\release.ps1` (create it if missing)
-   should build, rename/copy the output to
-   `dist\hathor-<versionCode>-<versionName>.apk`, print the SHA-256 and accept
-   `-Destination \\SERVER\HathorAPK` to publish directly (the SMB share is
-   created by the server's `apps/web/scripts/share-apk.ps1`).
+   `.\scripts\release.ps1` builds, copies the output to
+   `dist\hathor-<versionCode>-<versionName>.apk`, prints the SHA-256 and can
+   accept `-Destination \\SERVER\HathorAPK` for the legacy SMB fallback.
 4. Expected Gradle output:
-   `app\build\outputs\apk\release\app-release.apk`. Publish exactly one file
-   named `hathor-<versionCode>-<versionName>.apk`; the server ignores
-   everything else and selects the highest `versionCode`.
-5. Verify end-to-end (with a valid `hth_` key):
+   `app\build\outputs\apk\release\app-release.apk`. Push an
+   `android-v<versionName>` tag; the GitHub workflow publishes
+   `hathor-android-<code>-<versionName>.apk` and `SHA256SUMS.txt`. Current
+   clients read that GitHub release feed directly.
+5. For the legacy server channel, publish exactly one file named
+   `hathor-<versionCode>-<versionName>.apk` to `\\SERVER\HathorAPK`; the server
+   ignores everything else and selects the highest `versionCode`. Verify with:
 
    ```powershell
    Invoke-RestMethod -Uri http://<server>:5051/api/v1/app/latest `
      -Headers @{ Authorization = 'Bearer hth_...' }
    ```
-
-   The returned `versionCode`/`sha256` must match the file just copied.
 6. Run `.\gradlew.bat testDebugUnitTest` before publishing, and optionally
    `adb install -r .\hathor-<code>-<name>.apk` to smoke-test the installer.
 
@@ -337,7 +319,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.25-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.26-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init

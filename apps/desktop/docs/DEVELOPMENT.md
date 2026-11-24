@@ -106,14 +106,16 @@ The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, and `pykakasi
 Bump `versionCode` in `version.json`, then run:
 
 ```powershell
-.\scripts\release.ps1 -Destination \\DELL-SERVER1\HathorDesktop
+.\scripts\release.ps1
 ```
 
 `-SkipTests` and `-SkipTailwind` speed up local builds. The script emits
-`dist/hathor-desktop-<versionCode>-<versionName>.zip`, which is the artifact
-the server's `/api/v1/desktop/latest` endpoint serves. The app stages updates
-under `%LOCALAPPDATA%\Hathor\updates` and uses `services/app_update.py` plus a
-detached PowerShell helper for the swap. Never edit a published zip or reuse a
+`dist/hathor-desktop-<versionCode>-<versionName>.zip`; push a
+`desktop-v<versionName>` tag so the GitHub workflow publishes it. Current
+clients read the public GitHub release feed, verify the asset digest, and stage
+updates under `%LOCALAPPDATA%\Hathor\updates` using `services/app_update.py`
+plus a detached PowerShell helper for the swap. The old server endpoint remains
+for builds older than `1.0.3`. Never edit a published zip or reuse a
 `versionCode`.
 
 ## Linux / Arch package

@@ -8,18 +8,28 @@ Tag pushes trigger from the tagged commit, so the `develop` line can publish
 without merging. The **Run workflow** button only appears after the workflow
 files reach the repository's default branch (`main`).
 
+Current clients read these releases directly:
+
+- Android `0.4.26+` polls `android-v*` releases.
+- Desktop `1.0.3+` polls `desktop-v*` releases.
+- Both use the GitHub asset `digest` (or `SHA256SUMS.txt`) and pick the
+  highest `versionCode`, independent of Web API login.
+- The channel is currently **dev** (prereleases included). Move to stable by
+  filtering prereleases in the two updater clients once releases come from
+  `main`.
+
 ## Desktop release (Windows + Linux)
 
 The desktop release workflow builds both artifacts and publishes them to one
 GitHub Release.
 
 ```bash
-git tag desktop-v1.0.2
-git push origin desktop-v1.0.2
+git tag desktop-v1.0.3
+git push origin desktop-v1.0.3
 ```
 
 Or run **Actions → Release desktop → Run workflow** and provide a tag such as
-`desktop-v1.0.2`.
+`desktop-v1.0.3`.
 
 Artifacts:
 
@@ -37,8 +47,8 @@ already have the dependencies.
 ## Android release
 
 ```bash
-git tag android-v0.4.25
-git push origin android-v0.4.25
+git tag android-v0.4.26
+git push origin android-v0.4.26
 ```
 
 Or run **Actions → Release Android → Run workflow**.

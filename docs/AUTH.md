@@ -69,9 +69,10 @@ Client tests:
 
 ## Releases
 
-- Desktop `desktop-v1.0.2` — build 3, `1.0.2-hathor`.
-- Android `android-v0.4.24` — code 27, `0.4.24-hathor`; auth edge-case fixes in
-  `0.4.25-hathor`.
+- Desktop `desktop-v1.0.3` — build 4, `1.0.3-hathor`; update checks now read
+  GitHub Releases (dev channel).
+- Android `android-v0.4.26` — code 29, `0.4.26-hathor`; update checks now read
+  GitHub Releases (dev channel). Older clients keep the server/SMB channel.
 
 ## Remaining
 

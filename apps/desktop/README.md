@@ -111,16 +111,16 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ```json
 {
-  "versionCode": 3,
-  "versionName": "1.0.2-hathor"
+  "versionCode": 4,
+  "versionName": "1.0.3-hathor"
 }
 ```
 
-Bump `versionCode` for every published build (the server selects the
-highest), then run:
+Bump `versionCode` for every published build, then run the release script
+without an SMB destination:
 
 ```powershell
-.\scripts\release.ps1 -Destination \\DELL-SERVER1\HathorDesktop
+.\scripts\release.ps1
 ```
 
 The script runs the Python/JS tests, rebuilds Tailwind, builds the PyInstaller
@@ -128,15 +128,24 @@ folder, copies `version.json` next to `Hathor.exe`, and creates
 `dist/hathor-desktop-<versionCode>-<versionName>.zip`. It refuses to package
 `music_player.db`, `.env`, or `hathor.log`.
 
-The server exposes the channel at:
+Push a `desktop-v<versionName>` tag; the GitHub workflow publishes the zip.
+The app reads the public release feed:
 
-- `GET /api/v1/desktop/latest` → metadata
-- `GET /api/v1/desktop/download/{fileName}` → the zip
+```http
+GET https://api.github.com/repos/gabrieljdsena/Hathor/releases?per_page=30
+```
 
-Both require the normal `hth_` key/JWT. **Settings → Application** shows the
-installed version, checks manually, downloads with progress, and offers
-**Install and restart**. The app also checks once at startup when the Web API
-is configured.
+It considers `desktop-v*` releases on the current **dev** channel (including
+prereleases), verifies the asset `digest`/`SHA256SUMS.txt`, and picks the
+highest `versionCode`. No Web API login or `hth_` key is required.
+
+**Settings → Application** shows the installed version, checks manually,
+downloads with progress, and offers **Install and restart**. The app also
+checks once at startup; the GitHub check is independent of Web API settings.
+
+The old `/api/v1/desktop/latest` and `/api/v1/desktop/download/...` endpoints
+remain for builds older than `1.0.3`; they are no longer used by current
+clients.
 
 Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with
 `HATHOR_UPDATE_DIR`). A detached PowerShell helper waits for Hathor to exit,

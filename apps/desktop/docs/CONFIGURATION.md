@@ -91,10 +91,12 @@ use `~/.config/hathor/.env`; `/usr/lib/hathor` is read-only.
 
 ## Desktop updates
 
-The updater reuses the Web API URL/key above. **Settings → Application** shows
-the installed `version.json`, checks `/api/v1/desktop/latest`, downloads with
-progress, verifies the server's SHA-256, and offers **Install and restart**.
-The app also checks once at startup when the API is configured.
+**Settings → Application** shows the installed `version.json`, checks the
+public GitHub release feed (`desktop-v*`, dev channel), downloads with progress,
+verifies the asset digest/`SHA256SUMS.txt`, and offers **Install and restart**.
+The app also checks once at startup. This is independent of the Web API URL/key
+and needs no `hth_` login. The old `/api/v1/desktop/latest` endpoint remains for
+builds older than `1.0.3`.
 
 On Arch/Linux package installs (`HATHOR_PACKAGE_MANAGED=1` or a
 `.package-managed` marker in the app directory) the card instead reports that

@@ -26,7 +26,10 @@ Restart-Service Hathor
 
 Open `http://localhost:5051` (API + UI same origin).
 
-## Android APK updates (sideload channel)
+## Android APK updates (legacy server channel)
+
+New clients (`0.4.26+`) read GitHub Releases directly. This LAN endpoint and
+the SMB drop remain for older installs and as a manual fallback.
 
 The API also serves the Android app's self-updater. The phone asks for the
 latest release, downloads it, verifies its SHA-256 and hands it to Android's
@@ -64,7 +67,10 @@ installer. No Play Store involved.
 The mobile build/signing/publish side is documented in
 [`apps/mobile/README.md`](../mobile/README.md#in-app-updates-sideload-channel).
 
-## Windows desktop updates (sideload channel)
+## Windows desktop updates (legacy server channel)
+
+New desktop clients (`1.0.3+`) read GitHub Releases directly. This LAN endpoint
+and the SMB drop remain for older installs and as a manual fallback.
 
 The desktop app uses the same authenticated server and API key as the rest of
 the client, but packages a PyInstaller folder instead of an APK.
