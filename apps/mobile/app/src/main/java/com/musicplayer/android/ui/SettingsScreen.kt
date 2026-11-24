@@ -214,7 +214,7 @@ fun SettingsScreen(
                 Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
             }
             Text(
-                "Sign in from the dedicated Hathor login screen. Passwords are never stored; the refresh token is kept in the Android Keystore. Legacy hth_ API keys live under Advanced on that screen.",
+                "Sign in from the dedicated Hathor login screen. Passwords are never stored; the refresh token is kept in the Android Keystore. Existing saved API keys continue to work.",
                 style = MaterialTheme.typography.bodySmall,
                 color = HathorColors.TextHint
             )

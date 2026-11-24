@@ -16,13 +16,9 @@
     var rememberEl = null;
     var statusEl = null;
     var submitBtn = null;
-    var keyEl = null;
-    var keyRevealBtn = null;
-    var keySaveBtn = null;
     var continueKeyBtn = null;
     var busy = false;
     var passwordShown = false;
-    var keyShown = false;
     var checkTimer = null;
     var initialized = false;
 
@@ -49,12 +45,11 @@
 
     function setBusy(value) {
         busy = !!value;
-        [urlEl, userEl, passwordEl, rememberEl, keyEl, keySaveBtn, submitBtn, continueKeyBtn]
+        [urlEl, userEl, passwordEl, rememberEl, submitBtn, continueKeyBtn]
             .forEach(function (el) {
                 if (el) el.disabled = busy;
             });
         if (revealBtn) revealBtn.disabled = busy;
-        if (keyRevealBtn) keyRevealBtn.disabled = busy;
         updateSubmitState();
     }
 
@@ -65,10 +60,6 @@
             (passwordEl && passwordEl.value)
         );
         if (submitBtn) submitBtn.disabled = busy || !hasFields;
-        var key = keyEl ? keyEl.value.trim() : '';
-        if (keySaveBtn) {
-            keySaveBtn.disabled = busy || !key || !(urlEl && urlEl.value.trim());
-        }
     }
 
     function togglePassword() {
@@ -80,21 +71,6 @@
             revealBtn.setAttribute('aria-label', passwordShown ? 'Hide password' : 'Show password');
             revealBtn.setAttribute('aria-pressed', passwordShown ? 'true' : 'false');
         }
-    }
-
-    function toggleKey() {
-        if (!keyEl) return;
-        keyShown = !keyShown;
-        keyEl.type = keyShown ? 'text' : 'password';
-        if (keyRevealBtn) {
-            keyRevealBtn.textContent = keyShown ? 'Hide' : 'Show';
-            keyRevealBtn.setAttribute('aria-label', keyShown ? 'Hide API key' : 'Show API key');
-            keyRevealBtn.setAttribute('aria-pressed', keyShown ? 'true' : 'false');
-        }
-    }
-
-    function keyAck() {
-        try { return localStorage.getItem('hathor_login_key_ack') === '1'; } catch (_) { return false; }
     }
 
     function showGate(cfg, keyMode) {
@@ -126,7 +102,6 @@
         window._authGateOpen = false;
         document.body.classList.remove('auth-locked');
         if (passwordEl) passwordEl.value = '';
-        if (keyEl) keyEl.value = '';
     }
 
     async function refresh() {
@@ -196,35 +171,6 @@
         }
     }
 
-    async function saveApiKey() {
-        if (busy) return;
-        var api = bridge();
-        if (!api || typeof api.save_api_config !== 'function') {
-            setStatus('The desktop bridge is not ready yet.', 'error');
-            return;
-        }
-        if (!(urlEl && urlEl.value.trim()) || !(keyEl && keyEl.value.trim())) {
-            setStatus('Enter the server and API key.', 'error');
-            return;
-        }
-        setBusy(true);
-        setStatus('Saving API key…', '');
-        try {
-            var res = await api.save_api_config(normalizeUrl(urlEl.value), keyEl.value.trim());
-            if (res && res.ok) {
-                if (keyEl) keyEl.value = '';
-                setStatus(res.message || 'API key saved. Loading…', 'ok');
-                setTimeout(function () { window.location.reload(); }, 350);
-            } else {
-                setStatus((res && res.message) || 'Could not save the API key.', 'error');
-            }
-        } catch (e) {
-            setStatus('Could not save the API key: ' + (e && e.message ? e.message : e), 'error');
-        } finally {
-            setBusy(false);
-        }
-    }
-
     function init() {
         if (initialized) return;
         initialized = true;
@@ -237,9 +183,6 @@
         rememberEl = document.getElementById('login-remember');
         statusEl = document.getElementById('login-status');
         submitBtn = document.getElementById('login-submit');
-        keyEl = document.getElementById('login-api-key');
-        keyRevealBtn = document.getElementById('login-key-reveal');
-        keySaveBtn = document.getElementById('login-key-save');
         continueKeyBtn = document.getElementById('login-continue-key');
         if (!gate || !form) return;
 
@@ -247,9 +190,6 @@
         if (passwordEl) passwordEl.addEventListener('input', updateSubmitState);
         if (userEl) userEl.addEventListener('input', updateSubmitState);
         if (revealBtn) revealBtn.addEventListener('click', togglePassword);
-        if (keyRevealBtn) keyRevealBtn.addEventListener('click', toggleKey);
-        if (keyEl) keyEl.addEventListener('input', updateSubmitState);
-        if (keySaveBtn) keySaveBtn.addEventListener('click', saveApiKey);
         if (continueKeyBtn) continueKeyBtn.addEventListener('click', continueWithKey);
 
         refresh();

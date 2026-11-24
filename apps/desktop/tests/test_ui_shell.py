@@ -80,8 +80,6 @@ class ShellScaffoldingTests(unittest.TestCase):
             "login-username",
             "login-password",
             "login-reveal",
-            "login-api-key",
-            "login-key-save",
             "login-submit",
         ):
             self.assertIn(f'id="{element_id}"', index)

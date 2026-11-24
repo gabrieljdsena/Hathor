@@ -28,8 +28,8 @@ and web.
   (Vohithe) run on the Hathor Web API; the phone renders the feed/sets and
   plays returned files. Vohithe's commentary clips are played over ducked
   music, and the vibe can be typed or spoken (server transcription). Sign in
-  with the same Web account as the browser (recommended), or keep a scoped
-  `hth_` key under Advanced.
+  with the same Web account as the browser (recommended). Existing saved
+  `hth_` keys continue to work for older installs and automation.
 - **Web account login** — username/password sign-in against
   `/api/v1/auth/login`, with automatic token refresh and a Keystore-encrypted
   refresh token. Passwords are never stored. HTTPS or a trusted VPN is
@@ -72,8 +72,8 @@ and web.
    in at runtime on the dedicated Hathor login screen (no rebuild). The password is
    sent only to `/auth/login` and never stored; the rotating refresh token is
    encrypted with an Android Keystore AES/GCM key. `API_TOKEN` is optional —
-   a build with only `API_BASE_URL` can sign in in-app. A legacy scoped `hth_`
-   key remains available under **Advanced**; keys for Discover/sync need
+   a build with only `API_BASE_URL` can sign in in-app. Existing saved
+   `hth_` keys continue to work; keys for Discover/sync need
    `library:read` + `library:write`, and add `player:read` +
    `player:control` for AI DJ, cross-device playback and playback telemetry.
    Leaving both empty disables server features — the app still runs offline
@@ -176,7 +176,7 @@ with `reactivecircus/android-emulator-runner` if you need it.
 
 The phone updates itself from **public GitHub Releases** — no Play Store and no
 Web API login/API key. The old server `/api/v1/app/latest` endpoint and SMB APK
-drop remain for builds older than `0.4.29`.
+drop remain for builds older than `0.4.30`.
 
 ### Release feed
 
@@ -281,7 +281,7 @@ The server library can also be re-pulled.
 ### Compile & publish (work PC)
 
 1. Bump `versionCode` (strictly increasing) and `versionName` in
-   `app/build.gradle.kts` — e.g. `32` / `0.4.29-hathor`.
+   `app/build.gradle.kts` — e.g. `33` / `0.4.30-hathor`.
 2. Confirm `local.properties` has `sdk.dir`. `API_BASE_URL` / `API_TOKEN` are
    only optional build-time defaults now; users can sign in or enter an API
    key in Settings. Do not commit `local.properties`.
@@ -319,7 +319,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.29-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.30-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init

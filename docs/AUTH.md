@@ -23,7 +23,7 @@ POST /api/v1/auth/refresh  -> new access + rotated refresh
 | Access token | memory only | memory only |
 | Refresh token | Windows Credential Manager / Linux Secret Service via `keyring` | AES/GCM key in Android Keystore; ciphertext in prefs |
 | Password | sent once to `/auth/login`, never stored | same |
-| API-key fallback | Dedicated login screen → Advanced | Dedicated login screen → Advanced |
+| API-key fallback | existing saved keys continue; no new key entry in the login UI | existing saved keys continue; build-time `API_TOKEN` still works |
 | Plain HTTP | allowed; HTTPS/VPN recommended | allowed; HTTPS/VPN recommended |
 
 - Refresh is single-flight; a failed token is passed into the refresh call so
@@ -69,9 +69,9 @@ Client tests:
 
 ## Releases
 
-- Desktop `desktop-v1.0.6` — build 7, `1.0.6-hathor`; dedicated login screen and
+- Desktop `desktop-v1.0.7` — build 8, `1.0.7-hathor`; dedicated login screen and
   GitHub Releases update checks.
-- Android `android-v0.4.29` — code 32, `0.4.29-hathor`; dedicated login screen,
+- Android `android-v0.4.30` — code 33, `0.4.30-hathor`; dedicated login screen,
   show/hide password, and GitHub Releases updates.
   Older clients keep the server/SMB channel.
 

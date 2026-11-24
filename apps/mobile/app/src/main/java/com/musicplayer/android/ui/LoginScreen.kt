@@ -23,7 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Visibility
@@ -34,7 +33,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,9 +80,6 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var rememberMe by remember { mutableStateOf(true) }
-    var apiKey by remember { mutableStateOf("") }
-    var showApiKey by remember { mutableStateOf(false) }
-    var advanced by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf(false) }
@@ -95,13 +90,9 @@ fun LoginScreen(
         url.isNotBlank() &&
         username.isNotBlank() &&
         password.isNotBlank()
-    val canSaveKey = !busy &&
-        url.isNotBlank() &&
-        apiKey.isNotBlank()
 
     fun finishSuccess(text: String) {
         password = ""
-        apiKey = ""
         error = false
         message = text
         focus.clearFocus()
@@ -122,23 +113,6 @@ fun LoginScreen(
                 error = true
                 message = result.message
                 password = ""
-            }
-        }
-    }
-
-    fun saveKey() {
-        if (!canSaveKey) return
-        busy = true
-        error = false
-        message = null
-        scope.launch {
-            val result = SyncConfig.saveApiKey(url, apiKey)
-            busy = false
-            if (result.ok) {
-                finishSuccess(result.message)
-            } else {
-                error = true
-                message = result.message
             }
         }
     }
@@ -325,48 +299,6 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                TextButton(onClick = { advanced = !advanced }) {
-                    Text(
-                        if (advanced) "Hide API key sign-in" else "Use an API key instead",
-                        color = HathorColors.AccentBright,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                if (advanced) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Legacy scoped hth_ keys remain supported and avoid sending a password on plain HTTP.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = HathorColors.TextHint
-                        )
-                        HathorTextField(
-                            value = apiKey,
-                            onValueChange = { apiKey = it },
-                            label = "API key (hth_…)",
-                            leadingIcon = { Icon(Icons.Filled.Key, contentDescription = null) },
-                            trailingIcon = {
-                                IconButton(onClick = { showApiKey = !showApiKey }) {
-                                    Icon(
-                                        if (showApiKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                        contentDescription = if (showApiKey) "Hide API key" else "Show API key"
-                                    )
-                                }
-                            },
-                            visualTransformation = if (showApiKey) {
-                                VisualTransformation.None
-                            } else {
-                                PasswordVisualTransformation()
-                            },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        HathorTonalButton(
-                            onClick = { saveKey() },
-                            enabled = canSaveKey,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (busy) "Saving…" else "Save key") }
-                    }
-                }
             }
             Spacer(Modifier.height(2.dp))
             Text(

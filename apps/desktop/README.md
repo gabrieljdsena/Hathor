@@ -22,7 +22,7 @@ A Windows and Linux desktop music player with a native Python backend and a mode
 - **History** — download history and playback (played songs / played playlists) with pagination, full-tab queues, row action menus and re-download.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
-- **Web account login** — sign in with the same username/password as the web app. Short-lived access tokens refresh automatically; the rotating refresh token is stored in the OS credential store, never the password. Scoped `hth_` API keys remain available under Advanced.
+- **Web account login** — sign in with the same username/password as the web app. Short-lived access tokens refresh automatically; the rotating refresh token is stored in the OS credential store, never the password. Existing saved `hth_` keys continue to work.
 - **In-app updates** — checks the Hathor server for a newer packaged build, verifies the SHA-256, stages it, and lets a detached helper replace the app after Hathor exits. The same Web API session powers the channel.
 - **Discover** — server-backed out-of-library recommendations with source filters, YouTube preview queue, feedback/tuning and local downloads. Playback completion/skip segments are reported to the Web API for Discover quality. Configure the Web API in Settings first.
 - **AI DJ (Vohithe)** — server-planned sets with spoken intro/outro commentary, voice ducking, vibe briefs (typed or spoken), batch handoff, feedback and Home/player-bar entry points.
@@ -111,8 +111,8 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ```json
 {
-  "versionCode": 7,
-  "versionName": "1.0.6-hathor"
+  "versionCode": 8,
+  "versionName": "1.0.7-hathor"
 }
 ```
 
@@ -144,7 +144,7 @@ downloads with progress, and offers **Install and restart**. The app also
 checks once at startup; the GitHub check is independent of Web API settings.
 
 The old `/api/v1/desktop/latest` and `/api/v1/desktop/download/...` endpoints
-remain for builds older than `1.0.6`; they are no longer used by current
+remain for builds older than `1.0.7`; they are no longer used by current
 clients.
 
 Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with
@@ -155,7 +155,7 @@ build, restarts Hathor, and removes the backup and package. The SQLite DB,
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: the dedicated Hathor login screen asks for the server URL, username and password. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Legacy API keys are accepted under **Advanced** on that screen. **Settings → Web API** shows status and offers Test/Sign out.
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: the dedicated Hathor login screen asks for the server URL, username and password. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Existing saved API keys continue to work, and `.env` remains a fallback.
 
 A `.env` file next to `main.py` (or the executable) remains a fallback for the server URL and a scoped API key:
 
