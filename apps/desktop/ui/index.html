@@ -719,6 +719,88 @@
         </div>
     </div>
 
+    <!-- Dedicated login gate: covers the shell until a session or API key exists. -->
+    <div id="login-gate" class="login-gate" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <div class="login-gate__glow login-gate__glow--top"></div>
+        <div class="login-gate__glow login-gate__glow--bottom"></div>
+        <form id="login-form" class="login-card" autocomplete="on">
+            <div class="login-brand">
+                <div class="login-brand__logo" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.5A2.25 2.25 0 0 0 2.25 9.75v4.5a2.25 2.25 0 0 0 2.25 2.25h2.44l4.5 4.5c.944.945 2.56.276 2.56-1.06V4.06ZM18.75 12c0-1.24-.51-2.35-1.34-3.14a.75.75 0 1 0-1.03 1.1c.41.38.67.92.67 1.51s-.26 1.13-.67 1.51a.75.75 0 1 0 1.03 1.1c.83-.79 1.34-1.9 1.34-3.14Zm2.25 0c0-2.32-.94-4.42-2.45-5.94a.75.75 0 1 0-1.06 1.06A6.73 6.73 0 0 1 19.5 12c0 1.91-.79 3.63-2.06 4.88a.75.75 0 1 0 1.06 1.06A8.23 8.23 0 0 0 21 12Z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 id="login-title">Hathor</h1>
+                    <p>Sign in to your library</p>
+                </div>
+            </div>
+
+            <div class="login-field">
+                <label for="login-url">Server</label>
+                <input id="login-url" class="login-input" type="text" inputmode="url"
+                    spellcheck="false" autocapitalize="off" autocomplete="url"
+                    placeholder="https://hathor.example or http://192.168.1.10:5051">
+            </div>
+            <div class="login-field">
+                <label for="login-username">Username</label>
+                <input id="login-username" class="login-input" type="text" spellcheck="false"
+                    autocapitalize="off" autocomplete="username" placeholder="Web username">
+            </div>
+            <div class="login-field">
+                <label for="login-password">Password</label>
+                <div class="login-password-wrap">
+                    <input id="login-password" class="login-input" type="password" spellcheck="false"
+                        autocomplete="current-password" placeholder="Password">
+                    <button id="login-reveal" type="button" class="login-reveal"
+                        aria-label="Show password" aria-pressed="false">Show</button>
+                </div>
+            </div>
+
+            <label class="login-remember">
+                <input id="login-remember" type="checkbox" checked>
+                Keep me signed in for 30 days
+            </label>
+
+            <div id="login-http-warning" class="login-http-warning">
+                Plain HTTP sends your password unencrypted over this network. Use HTTPS or a
+                trusted VPN when possible. API keys are the safer fallback on plain HTTP.
+                <label>
+                    <input id="login-http-ack" type="checkbox">
+                    I understand and want to sign in over this connection.
+                </label>
+            </div>
+
+            <p id="login-status" class="login-status" role="status"></p>
+
+            <button id="login-submit" type="submit" class="login-submit">Sign in</button>
+            <p class="login-note">
+                The password is sent only to your server for this sign-in and is never stored.
+                The rotating refresh token goes to the OS credential store.
+            </p>
+
+            <details class="login-advanced">
+                <summary>Use an API key instead</summary>
+                <div class="login-advanced__body">
+                    <p class="login-note" style="margin:0">
+                        Legacy scoped <code>hth_</code> keys remain supported. They are stored
+                        locally and are safer than a password on plain HTTP.
+                    </p>
+                    <div class="login-key-row">
+                        <div class="login-password-wrap">
+                            <input id="login-api-key" class="login-input" type="password"
+                                spellcheck="false" autocapitalize="off" autocomplete="new-password"
+                                placeholder="hth_...">
+                            <button id="login-key-reveal" type="button" class="login-reveal"
+                                aria-label="Show API key" aria-pressed="false">Show</button>
+                        </div>
+                        <button id="login-key-save" type="button" class="login-key-save">Save key</button>
+                    </div>
+                </div>
+            </details>
+        </form>
+    </div>
+
     <!-- Global audio/preview/AI DJ helpers; survive view changes. -->
     <script src="./js/fuzzy.js"></script>
     <script src="./js/download-batch.js"></script>
@@ -728,6 +810,7 @@
     <script src="./js/ai-dj-recorder.js"></script>
     <script src="./js/ai-dj-state.js"></script>
     <script src="./js/app-update.js"></script>
+    <script src="./js/login-gate.js"></script>
     <script src="./js/platform.js"></script>
 
     <script>

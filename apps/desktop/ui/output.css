@@ -1112,9 +1112,6 @@
     margin-block-start: calc(calc(var(--spacing) * 6) * var(--tw-space-y-reverse));
     margin-block-end: calc(calc(var(--spacing) * 6) * calc(1 - var(--tw-space-y-reverse)));
   }
-  .gap-x-3 {
-    column-gap: calc(var(--spacing) * 3);
-  }
   .gap-x-5 {
     column-gap: calc(var(--spacing) * 5);
   }
@@ -1122,9 +1119,6 @@
     --tw-space-x-reverse: 0;
     margin-inline-start: calc(calc(var(--spacing) * 3) * var(--tw-space-x-reverse));
     margin-inline-end: calc(calc(var(--spacing) * 3) * calc(1 - var(--tw-space-x-reverse)));
-  }
-  .gap-y-1 {
-    row-gap: var(--spacing);
   }
   .gap-y-3 {
     row-gap: calc(var(--spacing) * 3);
@@ -3414,9 +3408,6 @@
     .sm\:right-4 {
       right: calc(var(--spacing) * 4);
     }
-    .sm\:col-span-2 {
-      grid-column: span 2 / span 2;
-    }
     .sm\:mb-4 {
       margin-bottom: calc(var(--spacing) * 4);
     }
@@ -3470,9 +3461,6 @@
     }
     .sm\:max-w-xs {
       max-width: var(--container-xs);
-    }
-    .sm\:grid-cols-2 {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .sm\:grid-cols-3 {
       grid-template-columns: repeat(3, minmax(0, 1fr));

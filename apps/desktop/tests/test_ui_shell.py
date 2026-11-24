@@ -29,7 +29,7 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn('id="np-lyrics-search-panel"', index)
         self.assertIn('id="np_resume_spot_banner"', index)
         self.assertIn("data-view-error", index)
-        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js", "app-update.js", "platform.js"):
+        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js", "app-update.js", "login-gate.js", "platform.js"):
             self.assertTrue((self.root / "ui" / "js" / name).exists(), name)
         for view in ("discover.html", "ai_dj.html"):
             self.assertTrue((self.root / "ui" / "views" / view).exists(), view)
@@ -58,18 +58,12 @@ class ShellScaffoldingTests(unittest.TestCase):
                 (self.root / "ui" / "views" / view).read_text(encoding="utf-8"),
             )
 
-    def test_settings_exposes_web_api_controls(self):
+    def test_settings_exposes_connection_status_and_update_controls(self):
         settings = (self.root / "ui" / "views" / "settings.html").read_text(encoding="utf-8")
         for element_id in (
-            "api-url-input",
-            "api-username-input",
-            "api-password-input",
-            "api-remember-input",
-            "api-key-input",
-            "api-key-save-btn",
+            "api-config-url",
             "api-config-status",
             "api-transport-warning",
-            "api-save-btn",
             "api-logout-btn",
             "api-test-btn",
             "api-clear-btn",
@@ -80,6 +74,20 @@ class ShellScaffoldingTests(unittest.TestCase):
             "app-update-remove-btn",
         ):
             self.assertIn(f'id="{element_id}"', settings)
+        index = (self.root / "ui" / "index.html").read_text(encoding="utf-8")
+        for element_id in (
+            "login-gate",
+            "login-url",
+            "login-username",
+            "login-password",
+            "login-reveal",
+            "login-http-ack",
+            "login-api-key",
+            "login-key-save",
+            "login-submit",
+        ):
+            self.assertIn(f'id="{element_id}"', index)
+        self.assertIn("./js/login-gate.js", index)
 
 
 if __name__ == "__main__":

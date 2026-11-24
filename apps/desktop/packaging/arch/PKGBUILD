@@ -6,7 +6,7 @@
 # The app runs against Arch's system Python, GTK and WebKitGTK packages so
 # pacman owns updates and WebKit security fixes. No PyInstaller bundle is used.
 pkgname=hathor
-pkgver=1.0.3
+pkgver=1.0.4
 pkgrel=1
 pkgdesc="Hathor desktop music player"
 arch=('x86_64')

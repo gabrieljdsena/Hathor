@@ -348,6 +348,7 @@
     function autoCheck() {
         if (autoChecked) return;
         autoChecked = true;
+        if (window._authGateOpen) return;
         setTimeout(function () {
             if (document.hidden) return;
             if (typeof Swal !== 'undefined' && Swal.isVisible && Swal.isVisible()) return;
