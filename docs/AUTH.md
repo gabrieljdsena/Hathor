@@ -24,7 +24,7 @@ POST /api/v1/auth/refresh  -> new access + rotated refresh
 | Refresh token | Windows Credential Manager / Linux Secret Service via `keyring` | AES/GCM key in Android Keystore; ciphertext in prefs |
 | Password | sent once to `/auth/login`, never stored | same |
 | API-key fallback | Dedicated login screen → Advanced | Dedicated login screen → Advanced |
-| Plain HTTP | warning shown before sign-in | warning shown before sign-in |
+| Plain HTTP | allowed; HTTPS/VPN recommended | allowed; HTTPS/VPN recommended |
 
 - Refresh is single-flight; a failed token is passed into the refresh call so
   concurrent requests reuse a token another request just rotated.
@@ -34,8 +34,8 @@ POST /api/v1/auth/refresh  -> new access + rotated refresh
   Offline/5xx failures keep the session and surface an offline message.
 - API keys remain fully functional for automation, old builds and plain-HTTP
   LAN installs.
-- Password login over plain LAN HTTP is allowed with a warning. Prefer HTTPS or
-  a trusted VPN; a scoped API key is the safer fallback on plain HTTP.
+- Password login over plain LAN HTTP is allowed. Prefer HTTPS or a trusted VPN;
+  a scoped API key is the safer fallback on plain HTTP.
 
 ## Phases
 
@@ -69,10 +69,10 @@ Client tests:
 
 ## Releases
 
-- Desktop `desktop-v1.0.5` — build 6, `1.0.5-hathor`; dedicated login screen and
+- Desktop `desktop-v1.0.6` — build 7, `1.0.6-hathor`; dedicated login screen and
   GitHub Releases update checks.
-- Android `android-v0.4.28` — code 31, `0.4.28-hathor`; dedicated login screen,
-  show/hide password, HTTP risk acknowledgement, and GitHub Releases updates.
+- Android `android-v0.4.29` — code 32, `0.4.29-hathor`; dedicated login screen,
+  show/hide password, and GitHub Releases updates.
   Older clients keep the server/SMB channel.
 
 ## Remaining

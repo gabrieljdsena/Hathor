@@ -14,8 +14,6 @@
     var passwordEl = null;
     var revealBtn = null;
     var rememberEl = null;
-    var warningEl = null;
-    var ackEl = null;
     var statusEl = null;
     var submitBtn = null;
     var keyEl = null;
@@ -41,10 +39,6 @@
         return raw;
     }
 
-    function isHttp(value) {
-        return /^http:\/\//i.test(normalizeUrl(value));
-    }
-
     function setStatus(text, kind) {
         if (!statusEl) return;
         statusEl.textContent = text || '';
@@ -55,19 +49,12 @@
 
     function setBusy(value) {
         busy = !!value;
-        [urlEl, userEl, passwordEl, rememberEl, ackEl, keyEl, keySaveBtn, submitBtn, continueKeyBtn]
+        [urlEl, userEl, passwordEl, rememberEl, keyEl, keySaveBtn, submitBtn, continueKeyBtn]
             .forEach(function (el) {
                 if (el) el.disabled = busy;
             });
         if (revealBtn) revealBtn.disabled = busy;
         if (keyRevealBtn) keyRevealBtn.disabled = busy;
-        updateSubmitState();
-    }
-
-    function updateTransport() {
-        var http = isHttp(urlEl ? urlEl.value : '');
-        if (warningEl) warningEl.classList.toggle('is-hidden', !http);
-        if (!http && ackEl) ackEl.checked = false;
         updateSubmitState();
     }
 
@@ -77,11 +64,10 @@
             (userEl && userEl.value.trim()) &&
             (passwordEl && passwordEl.value)
         );
-        var consent = !isHttp(urlEl ? urlEl.value : '') || !!(ackEl && ackEl.checked);
-        if (submitBtn) submitBtn.disabled = busy || !hasFields || !consent;
+        if (submitBtn) submitBtn.disabled = busy || !hasFields;
         var key = keyEl ? keyEl.value.trim() : '';
         if (keySaveBtn) {
-            keySaveBtn.disabled = busy || !key || !consent || !(urlEl && urlEl.value.trim());
+            keySaveBtn.disabled = busy || !key || !(urlEl && urlEl.value.trim());
         }
     }
 
@@ -126,7 +112,7 @@
                 setStatus(cfg.message, '');
             }
         }
-        updateTransport();
+        updateSubmitState();
         setTimeout(function () {
             var target = (urlEl && !urlEl.value.trim()) ? urlEl
                 : (userEl && !userEl.value.trim()) ? userEl : passwordEl;
@@ -183,10 +169,6 @@
             setStatus('Enter the server, username and password.', 'error');
             return;
         }
-        if (isHttp(urlEl.value) && !(ackEl && ackEl.checked)) {
-            setStatus('Confirm the plain-HTTP warning first.', 'error');
-            return;
-        }
         setBusy(true);
         setStatus('Signing in…', '');
         try {
@@ -225,10 +207,6 @@
             setStatus('Enter the server and API key.', 'error');
             return;
         }
-        if (isHttp(urlEl.value) && !(ackEl && ackEl.checked)) {
-            setStatus('Confirm the plain-HTTP warning first.', 'error');
-            return;
-        }
         setBusy(true);
         setStatus('Saving API key…', '');
         try {
@@ -257,8 +235,6 @@
         passwordEl = document.getElementById('login-password');
         revealBtn = document.getElementById('login-reveal');
         rememberEl = document.getElementById('login-remember');
-        warningEl = document.getElementById('login-http-warning');
-        ackEl = document.getElementById('login-http-ack');
         statusEl = document.getElementById('login-status');
         submitBtn = document.getElementById('login-submit');
         keyEl = document.getElementById('login-api-key');
@@ -268,8 +244,6 @@
         if (!gate || !form) return;
 
         form.addEventListener('submit', submitLogin);
-        if (urlEl) urlEl.addEventListener('input', updateTransport);
-        if (ackEl) ackEl.addEventListener('change', updateSubmitState);
         if (passwordEl) passwordEl.addEventListener('input', updateSubmitState);
         if (userEl) userEl.addEventListener('input', updateSubmitState);
         if (revealBtn) revealBtn.addEventListener('click', togglePassword);
@@ -278,7 +252,6 @@
         if (keySaveBtn) keySaveBtn.addEventListener('click', saveApiKey);
         if (continueKeyBtn) continueKeyBtn.addEventListener('click', continueWithKey);
 
-        updateTransport();
         refresh();
         window.addEventListener('pywebviewready', refresh, { once: true });
         if (!checkTimer) checkTimer = setInterval(refresh, 5000);

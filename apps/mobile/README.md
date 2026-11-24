@@ -32,8 +32,8 @@ and web.
   `hth_` key under Advanced.
 - **Web account login** — username/password sign-in against
   `/api/v1/auth/login`, with automatic token refresh and a Keystore-encrypted
-  refresh token. Passwords are never stored. Plain-HTTP sign-in shows a
-  warning; prefer HTTPS or a trusted VPN.
+  refresh token. Passwords are never stored. HTTPS or a trusted VPN is
+  recommended for remote/LAN use.
 - **Playback telemetry** — every non-podcast track play posts one
   completion/skip segment to `/player/playback-events` in the background, so
   Discover/AI DJ recommendations reflect phone listening. Delivery is
@@ -176,7 +176,7 @@ with `reactivecircus/android-emulator-runner` if you need it.
 
 The phone updates itself from **public GitHub Releases** — no Play Store and no
 Web API login/API key. The old server `/api/v1/app/latest` endpoint and SMB APK
-drop remain for builds older than `0.4.28`.
+drop remain for builds older than `0.4.29`.
 
 ### Release feed
 
@@ -281,7 +281,7 @@ The server library can also be re-pulled.
 ### Compile & publish (work PC)
 
 1. Bump `versionCode` (strictly increasing) and `versionName` in
-   `app/build.gradle.kts` — e.g. `31` / `0.4.28-hathor`.
+   `app/build.gradle.kts` — e.g. `32` / `0.4.29-hathor`.
 2. Confirm `local.properties` has `sdk.dir`. `API_BASE_URL` / `API_TOKEN` are
    only optional build-time defaults now; users can sign in or enter an API
    key in Settings. Do not commit `local.properties`.
@@ -319,7 +319,7 @@ apps/mobile/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   gradle/libs.versions.toml          dependency catalog
   app/
-    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.28-hathor
+    build.gradle.kts                 applicationId com.musicplayer.android, version 0.4.29-hathor
     src/main/AndroidManifest.xml     INTERNET + foreground-service permissions, PlayerService
     src/main/java/com/musicplayer/android/
       MainActivity.kt / PlayerApp.kt application entry, yt-dlp + FFmpeg init

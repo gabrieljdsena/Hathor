@@ -145,7 +145,6 @@ independent of each other.
     `clear_api_config()`, `test_connection()`.
   - Settings UI: URL, username/password sign-in, masked legacy key under
     Advanced (never render the full key after save), Save, Test, status line.
-    Password login shows a warning on plain HTTP.
   - Make sync, resume spots and new clients read the runtime config without a
     restart.
   - Acceptance: pointing at a server works immediately; bad URL/key produces a
@@ -759,6 +758,6 @@ Suggested test matrix:
 | 2026-11-16 | **Automatic history sync** | Playback enqueues local `Music_History` ids; a debounced worker pushes only those rows via `/sync/import`. Pull dedupes by natural key/re-keys id collisions; manual Push clears only the snapshot it sent. |
 | 2026-11-16 | **Live pipeline validation** | Deployed server health/readiness OK. A synthetic song+history probe confirmed natural-key dedupe, and a temp-DB run of `push_pending_history` pushed and cleared its outbox; probe rows were removed with tombstones. |
 | 2026-11-16 | **P5.5 — packaging smoke** | Source launch and frozen `dist/Hathor/Hathor.exe` both stayed up; PyInstaller archive includes `services/history_sync`, `database.sql` and the full `ui/` tree. |
-| 2026-11-23 | **Web account login** | `services/auth_session.py` signs in through `/auth/login`, keeps access JWTs in memory, stores the rotating refresh token in the OS credential store, refreshes single-flight, and retries 401s. Settings has sign-in/out, a plain-HTTP warning, and the legacy API-key fallback. |
+| 2026-11-23 | **Web account login** | `services/auth_session.py` signs in through `/auth/login`, keeps access JWTs in memory, stores the rotating refresh token in the OS credential store, refreshes single-flight, and retries 401s. Settings has sign-in/out and the legacy API-key fallback. |
 | 2026-11-23 | **Desktop release** | `desktop-v1.0.2` publishes the Windows updater zip and portable Linux bundle with verified checksums. |
 | 2026-11-23 | **Auth rollout** | Windows build 3 `1.0.2-hathor` and Android `0.4.24-hathor` support both login and API-key modes. GitHub Release runs are tag-driven (`desktop-v*`, `android-v*`). |

@@ -111,8 +111,8 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 
 ```json
 {
-  "versionCode": 6,
-  "versionName": "1.0.5-hathor"
+  "versionCode": 7,
+  "versionName": "1.0.6-hathor"
 }
 ```
 
@@ -144,7 +144,7 @@ downloads with progress, and offers **Install and restart**. The app also
 checks once at startup; the GitHub check is independent of Web API settings.
 
 The old `/api/v1/desktop/latest` and `/api/v1/desktop/download/...` endpoints
-remain for builds older than `1.0.5`; they are no longer used by current
+remain for builds older than `1.0.6`; they are no longer used by current
 clients.
 
 Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with

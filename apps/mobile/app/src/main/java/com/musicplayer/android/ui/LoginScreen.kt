@@ -3,7 +3,6 @@ package com.musicplayer.android.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,10 +28,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,7 +55,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.musicplayer.android.R
-import com.musicplayer.android.data.api.AuthSession
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
@@ -71,8 +67,7 @@ import kotlinx.coroutines.launch
  * Full-screen Web account gate.
  *
  * Credentials are sent only to /auth/login; the password is cleared from the
- * form on success and never persisted. On plain HTTP an explicit risk
- * acknowledgement is required before the sign-in button unlocks.
+ * form on success and never persisted.
  */
 @Composable
 fun LoginScreen(
@@ -87,7 +82,6 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var rememberMe by remember { mutableStateOf(true) }
-    var httpAccepted by remember { mutableStateOf(false) }
     var apiKey by remember { mutableStateOf("") }
     var showApiKey by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
@@ -97,17 +91,13 @@ fun LoginScreen(
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
 
-    val normalized = AuthSession.normalizeUrl(url)
-    val isHttp = normalized.startsWith("http://")
     val canSubmit = !busy &&
         url.isNotBlank() &&
         username.isNotBlank() &&
-        password.isNotBlank() &&
-        (!isHttp || httpAccepted)
+        password.isNotBlank()
     val canSaveKey = !busy &&
         url.isNotBlank() &&
-        apiKey.isNotBlank() &&
-        (!isHttp || httpAccepted)
+        apiKey.isNotBlank()
 
     fun finishSuccess(text: String) {
         password = ""
@@ -234,7 +224,6 @@ fun LoginScreen(
                     value = url,
                     onValueChange = {
                         url = it
-                        httpAccepted = false
                         error = false
                     },
                     label = "Server",
@@ -289,49 +278,6 @@ fun LoginScreen(
                         color = HathorColors.TextBody
                     )
                     HathorSwitch(checked = rememberMe, onCheckedChange = { rememberMe = it })
-                }
-
-                if (isHttp) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(HathorColors.AccentFill)
-                            .border(1.dp, HathorColors.Accent.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            Icon(
-                                Icons.Filled.Warning,
-                                contentDescription = null,
-                                tint = HathorColors.AccentBright,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                "Plain HTTP sends your password unencrypted over this network. " +
-                                    "Use HTTPS or a trusted VPN when possible. API keys are safer on HTTP.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = HathorColors.AccentBright
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { httpAccepted = !httpAccepted },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(checked = httpAccepted, onCheckedChange = { httpAccepted = it })
-                            Text(
-                                "I understand the risk",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = HathorColors.TextBody
-                            )
-                        }
-                    }
                 }
 
                 message?.let {

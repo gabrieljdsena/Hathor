@@ -63,7 +63,6 @@ class ShellScaffoldingTests(unittest.TestCase):
         for element_id in (
             "api-config-url",
             "api-config-status",
-            "api-transport-warning",
             "api-logout-btn",
             "api-test-btn",
             "api-clear-btn",
@@ -81,7 +80,6 @@ class ShellScaffoldingTests(unittest.TestCase):
             "login-username",
             "login-password",
             "login-reveal",
-            "login-http-ack",
             "login-api-key",
             "login-key-save",
             "login-submit",

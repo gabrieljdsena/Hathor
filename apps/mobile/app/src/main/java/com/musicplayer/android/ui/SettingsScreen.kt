@@ -186,13 +186,6 @@ fun SettingsScreen(
                     color = if (it.signedIn || it.keySet) HathorColors.AccentBright else HathorColors.TextHint
                 )
             }
-            if ((authView?.url ?: "").startsWith("http://")) {
-                Text(
-                    "Plain HTTP: sign-in sends the password unencrypted. Use HTTPS or a trusted VPN; API keys are safer on HTTP.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = HathorColors.Accent
-                )
-            }
             if (authView?.signedIn == true || authView?.keySet == true) {
                 TextButton(
                     onClick = {
