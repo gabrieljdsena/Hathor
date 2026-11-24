@@ -56,7 +56,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.musicplayer.android.BuildConfig
 import com.musicplayer.android.PlayerApp
@@ -69,7 +68,6 @@ import com.musicplayer.android.data.update.UpdateRepository
 import com.musicplayer.android.data.update.UpdateState
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorSwitch
-import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.HathorTonalButton
 import com.musicplayer.android.ui.theme.HeaderIconTile
 import com.musicplayer.android.ui.theme.ModernSlider
@@ -90,7 +88,8 @@ fun SettingsScreen(
     onPull: () -> Unit,
     wallpaper: android.graphics.Bitmap? = null,
     downloaderStatus: PlayerApp.DownloaderStatus,
-    onUpdateDownloader: () -> Unit
+    onUpdateDownloader: () -> Unit,
+    onAuthChanged: () -> Unit = {}
 ) {
     val limit by settings.limit.collectAsState()
     val syncState by sync.state.collectAsState()
@@ -107,11 +106,6 @@ fun SettingsScreen(
     var podFolderResult by remember { mutableStateOf<String?>(null) }
     var podFolderPath by remember { mutableStateOf(settings.podcastsFolder()) }
     var busy by remember { mutableStateOf(false) }
-    var apiUrl by remember { mutableStateOf(SyncConfig.baseUrl()) }
-    var apiUsername by remember { mutableStateOf(SyncConfig.view()?.username.orEmpty()) }
-    var apiPassword by remember { mutableStateOf("") }
-    var apiKey by remember { mutableStateOf("") }
-    var rememberMe by remember { mutableStateOf(true) }
     var authView by remember { mutableStateOf<AuthView?>(SyncConfig.view()) }
     var apiMessage by remember { mutableStateOf<String?>(null) }
     var testingApi by remember { mutableStateOf(false) }
@@ -180,132 +174,55 @@ fun SettingsScreen(
             }
         ) {
             SectionLabel(Icons.Filled.Sync, "Web API")
-            HathorTextField(
-                value = apiUrl,
-                onValueChange = { apiUrl = it },
-                label = "Server URL (http://host:5051)",
-                modifier = Modifier.fillMaxWidth()
+            Text(
+                authView?.url?.takeIf { it.isNotBlank() } ?: "No server configured",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextBody
             )
-            HathorTextField(
-                value = apiUsername,
-                onValueChange = { apiUsername = it },
-                label = "Web username",
-                modifier = Modifier.fillMaxWidth()
-            )
-            HathorTextField(
-                value = apiPassword,
-                onValueChange = { apiPassword = it },
-                label = "Password",
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Keep me signed in", style = MaterialTheme.typography.bodySmall)
-                HathorSwitch(checked = rememberMe, onCheckedChange = { rememberMe = it })
-            }
             authView?.let {
                 Text(
                     it.message,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (it.signedIn) HathorColors.AccentBright else HathorColors.TextHint
+                    color = if (it.signedIn || it.keySet) HathorColors.AccentBright else HathorColors.TextHint
                 )
             }
-            if (apiUrl.startsWith("http://")) {
+            if ((authView?.url ?: "").startsWith("http://")) {
                 Text(
-                    "Plain HTTP: the password is visible to this network. Use HTTPS or a trusted VPN.",
+                    "Plain HTTP: sign-in sends the password unencrypted. Use HTTPS or a trusted VPN; API keys are safer on HTTP.",
                     style = MaterialTheme.typography.bodySmall,
                     color = HathorColors.Accent
                 )
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            apiMessage = null
-                            val res = SyncConfig.login(apiUrl, apiUsername, apiPassword, rememberMe)
-                            apiMessage = res.message
-                            if (res.ok) {
-                                apiPassword = ""
-                                apiUrl = SyncConfig.baseUrl()
-                                authView = SyncConfig.view()
-                                sync.scheduleHistoryPush()
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = HathorColors.Accent,
-                        contentColor = Color.White
-                    )
-                ) { Text("Sign in") }
-                HathorTonalButton(
-                    onClick = {
-                        testingApi = true
-                        apiMessage = null
-                        scope.launch {
-                            apiMessage = SyncConfig.testConnection()
-                            testingApi = false
-                        }
-                    },
-                    enabled = !testingApi,
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (testingApi) "Testing…" else "Test") }
-            }
-            if (authView?.signedIn == true) {
+            if (authView?.signedIn == true || authView?.keySet == true) {
                 TextButton(
                     onClick = {
                         scope.launch {
-                            val res = SyncConfig.logout()
-                            apiMessage = res.message
-                            apiPassword = ""
-                            authView = SyncConfig.view()
+                            SyncConfig.logout()
+                            onAuthChanged()
                         }
                     }
-                ) { Text("Sign out") }
+                ) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
             }
+            HathorTonalButton(
+                onClick = {
+                    testingApi = true
+                    apiMessage = null
+                    scope.launch {
+                        apiMessage = SyncConfig.testConnection()
+                        testingApi = false
+                    }
+                },
+                enabled = !testingApi,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (testingApi) "Testing?" else "Test connection") }
             apiMessage?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
             }
-
-            GroupDivider()
-            SectionLabel(Icons.Filled.Sync, "Advanced API key")
-            HathorTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = "API key (hth_…, optional)",
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
+            Text(
+                "Sign in from the dedicated Hathor login screen. Passwords are never stored; the refresh token is kept in the Android Keystore. Legacy hth_ API keys live under Advanced on that screen.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
             )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HathorTonalButton(
-                    onClick = {
-                        val res = SyncConfig.saveApiKey(apiUrl, apiKey)
-                        apiMessage = res.message
-                        if (res.ok) {
-                            apiKey = ""
-                            authView = SyncConfig.view()
-                            sync.scheduleHistoryPush()
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Save key") }
-                HathorTonalButton(
-                    onClick = {
-                        SyncConfig.clearRuntime()
-                        apiUrl = ""
-                        apiUsername = ""
-                        apiPassword = ""
-                        apiKey = ""
-                        authView = SyncConfig.view()
-                        apiMessage = "Cleared."
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Clear") }
-            }
 
             GroupDivider()
             SectionLabel(Icons.Filled.Sync, "Sync server")

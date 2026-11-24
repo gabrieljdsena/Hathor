@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +65,7 @@ import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.DownloadScreen
 import com.musicplayer.android.ui.HistoryScreen
 import com.musicplayer.android.ui.LyricsScreen
+import com.musicplayer.android.ui.LoginScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
@@ -259,6 +261,23 @@ class MainActivity : ComponentActivity() {
             HathorTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var showSplash by rememberSaveable { mutableStateOf(coldStart) }
+                    var authView by remember { mutableStateOf(SyncConfig.view()) }
+                    val authConfigured = authView?.configured == true
+                    // Session can be cleared by a rejected refresh at any
+                    // time; surface the dedicated gate without a restart.
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            authView = SyncConfig.view()
+                            delay(1500)
+                        }
+                    }
+                    LaunchedEffect(showSplash, authConfigured) {
+                        if (!showSplash && !authConfigured) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                    }
                     // Only the library scan blocks the splash. Daily Mix,
                     // history strips, podcasts and queue restore fill in
                     // behind Home's skeletons after the first frame.
@@ -703,7 +722,8 @@ class MainActivity : ComponentActivity() {
                                 onPull = { enqueuePull() },
                                 wallpaper = wallpaper,
                                 downloaderStatus = downloaderStatus,
-                                onUpdateDownloader = { PlayerApp.instance.updateDownloaderNow() }
+                                onUpdateDownloader = { PlayerApp.instance.updateDownloaderNow() },
+                                onAuthChanged = { recreate() }
                             )
                             Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
                                 controller = aiDjController,
@@ -804,6 +824,13 @@ class MainActivity : ComponentActivity() {
                             onUpdate = updateRepo::download,
                             onInstall = updateRepo::install,
                             onRetry = updateRepo::retry,
+                        )
+                    }
+                    if (!showSplash && !authConfigured) {
+                        LoginScreen(
+                            initialUrl = authView?.url.orEmpty(),
+                            initialUsername = authView?.username.orEmpty(),
+                            onSignedIn = { recreate() }
                         )
                     }
                     AnimatedVisibility(
