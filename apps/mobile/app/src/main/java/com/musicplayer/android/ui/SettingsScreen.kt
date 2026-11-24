@@ -603,6 +603,11 @@ fun SettingsScreen(
                 "Hathor ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
                 style = MaterialTheme.typography.titleSmall
             )
+            Text(
+                "Updates: GitHub Releases (dev channel)",
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
             val statusText = updateStatusText(updateState)
             if (statusText.isNotBlank()) {
                 Text(
@@ -762,7 +767,7 @@ private fun SectionLabel(icon: ImageVector, text: String) {
 
 private fun updateStatusText(state: UpdateState): String = when (state) {
     UpdateState.Idle -> ""
-    UpdateState.Disabled -> "Configure Web API to check for updates."
+    UpdateState.Disabled -> "Updates unavailable."
     UpdateState.Checking -> "Checking…"
     UpdateState.UpToDate -> "Up to date."
     UpdateState.NoRelease -> "No APK published yet."
