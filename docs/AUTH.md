@@ -69,6 +69,9 @@ Client tests:
 
 ## Releases
 
+- Desktop `desktop-v1.0.8` — build 9, `1.0.8-hathor`; Linux one-command installer,
+  corrected sidebar icons, dedicated login screen and GitHub Releases update
+  checks.
 - Desktop `desktop-v1.0.7` — build 8, `1.0.7-hathor`; dedicated login screen and
   GitHub Releases update checks.
 - Android `android-v0.4.30` — code 33, `0.4.30-hathor`; dedicated login screen,

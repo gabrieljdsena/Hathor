@@ -131,7 +131,7 @@ The build is emitted to `dist/Hathor/`. The `.env` file must live next to the ex
 ```json
 {
   "versionCode": 8,
-  "versionName": "1.0.7-hathor"
+  "versionName": "1.0.8-hathor"
 }
 ```
 
