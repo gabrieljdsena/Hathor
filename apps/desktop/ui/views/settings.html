@@ -38,28 +38,21 @@
                     <div class="min-w-0 flex-1">
                         <h3 class="text-zinc-200 font-medium">Web API</h3>
                         <p class="text-xs text-zinc-500 mt-0.5">
-                            Server used by sync, Discover and AI DJ. Saved locally; <code class="text-zinc-400">.env</code> is the fallback.
+                            Server used by sync, Discover and AI DJ. Sign in from the Hathor login screen.
                         </p>
-                        <div class="mt-3 grid gap-2 sm:grid-cols-2 max-w-2xl">
-                            <input id="api-url-input" type="url" spellcheck="false" autocomplete="off"
-                                placeholder="http://192.168.1.10:5051"
-                                class="w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-lg placeholder:text-zinc-600 transition-all duration-300">
-                            <input id="api-key-input" type="password" spellcheck="false" autocomplete="new-password"
-                                placeholder="hth_... (blank keeps the saved key)"
-                                class="w-full px-3 py-2 text-sm text-zinc-200 bg-white/5 border border-white/10 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-lg placeholder:text-zinc-600 transition-all duration-300">
-                        </div>
-                        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 min-w-0">
+                        <div class="mt-3 flex flex-col gap-1 min-w-0">
+                            <span id="api-config-url" class="text-xs font-mono text-zinc-300 truncate"></span>
                             <span id="api-config-status" class="text-xs text-zinc-500">Checking configuration...</span>
                             <span id="api-config-source" class="text-[10px] uppercase tracking-widest text-zinc-600"></span>
                         </div>
-                        <p class="text-[10px] text-zinc-600 mt-1 leading-relaxed">
-                            Needs <code class="text-zinc-400">library:read</code> + <code class="text-zinc-400">library:write</code>
-                            for Discover, and <code class="text-zinc-400">player:read</code> +
-                            <code class="text-zinc-400">player:control</code> for AI DJ. No login required.
+                        <p class="text-[10px] text-zinc-600 mt-2 leading-relaxed">
+                            Passwords are entered on the login screen and never stored. The rotating
+                            refresh token lives in the OS credential store. Existing saved API keys
+                            continue to work.
                         </p>
                     </div>
                 </div>
-                <div class="flex items-center gap-2 shrink-0 self-end lg:self-start">
+                <div class="flex flex-wrap items-center gap-2 shrink-0 self-end lg:self-start">
                     <button id="api-clear-btn" type="button"
                         class="px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-300 bg-white/5 hover:bg-red-500/20 hover:text-red-300 border border-white/10 hover:border-red-500/40 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
                         Clear
@@ -68,9 +61,9 @@
                         class="px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
                         Test
                     </button>
-                    <button id="api-save-btn" type="button"
-                        class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-orange-300 bg-orange-500/10 hover:bg-orange-500 hover:text-white border border-orange-500/30 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
-                        Save
+                    <button id="api-logout-btn" type="button"
+                        class="px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-300 bg-white/5 hover:bg-red-500/15 hover:text-red-200 border border-white/10 hover:border-red-400/40 rounded-lg transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-wait">
+                        Sign out
                     </button>
                 </div>
             </div>
@@ -345,6 +338,52 @@
                 Save
             </button>
         </div>
+        <!-- Desktop application updates (GitHub Releases, dev channel) -->
+        <div
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
+            <div class="flex items-start gap-4 min-w-0">
+                <div
+                    class="w-11 h-11 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400 group-hover:text-orange-400 transition-colors border border-white/5 shadow-inner shrink-0">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                    </svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <h3 class="text-zinc-200 font-medium">Application</h3>
+                    <p id="app-update-version" class="text-xs text-zinc-500 mt-0.5">Hathor version</p>
+                    <div class="flex flex-col gap-1 mt-2 text-xs min-w-0">
+                        <span id="app-update-status" class="text-zinc-500 truncate">Not checked yet.</span>
+                        <span id="app-update-detail" class="hidden text-zinc-500 truncate"></span>
+                    </div>
+                    <div id="app-update-progress-wrap" class="hidden mt-3">
+                        <div class="flex items-center justify-between gap-3 text-[11px] text-zinc-400">
+                            <span id="app-update-progress-label" class="truncate">Working...</span>
+                            <span id="app-update-progress-detail" class="shrink-0 text-zinc-500"></span>
+                        </div>
+                        <div class="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/5">
+                            <div id="app-update-progress-bar" class="h-full rounded-full bg-gradient-to-r from-orange-400 to-orange-600"
+                                style="width: 0%; transition: width 0.2s;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <button id="app-update-check-btn" onclick="HathorAppUpdate.check()"
+                    class="px-5 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-60 disabled:cursor-wait">
+                    Check for updates
+                </button>
+                <button id="app-update-install-btn" onclick="HathorAppUpdate.primaryAction()"
+                    class="hidden px-5 py-2.5 hover:cursor-pointer text-sm font-semibold text-white bg-orange-500 hover:bg-orange-400 border border-orange-500 rounded-lg transition-all duration-300 shadow-lg shadow-orange-500/20 disabled:opacity-60 disabled:cursor-wait">
+                    Download update
+                </button>
+                <button id="app-update-remove-btn" onclick="HathorAppUpdate.remove()"
+                    class="hidden px-4 py-2.5 hover:cursor-pointer text-sm font-medium text-zinc-300 bg-white/5 hover:bg-red-500/15 hover:text-red-200 border border-white/10 hover:border-red-400/40 rounded-lg transition-all duration-300 disabled:opacity-60">
+                    Remove download
+                </button>
+            </div>
+        </div>
+
         <!-- System status: bundled FFmpeg + managed yt-dlp -->
         <div
             class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all duration-300 group">
@@ -359,6 +398,7 @@
                 <div class="min-w-0">
                     <h3 class="text-zinc-200 font-medium">System status</h3>
                     <p class="text-xs text-zinc-500 mt-0.5">FFmpeg and the YouTube downloader (yt-dlp) used for downloads.</p>
+                    <p class="text-[11px] text-zinc-600 mt-1">Application updates are handled separately above.</p>
                     <div class="flex flex-col gap-1 mt-2 text-xs font-mono text-zinc-400 min-w-0">
                         <span id="sys-ffmpeg-status" class="truncate">FFmpeg: checking...</span>
                         <span id="sys-libs-status" class="truncate">yt-dlp: checking...</span>
@@ -367,7 +407,7 @@
             </div>
             <button id="sysCheckBtn" onclick="checkSystemUpdates()"
                 class="px-5 py-2.5 shrink-0 hover:cursor-pointer text-sm font-medium text-zinc-200 bg-white/5 hover:bg-orange-500 hover:text-white border border-white/10 hover:border-orange-500 rounded-lg transition-all duration-300 shadow-md disabled:opacity-60 disabled:cursor-wait">
-                Check for updates
+                Update tools
             </button>
         </div>
     </div>
@@ -442,18 +482,23 @@
     // ---- Runtime Web API configuration --------------------------------
     (function initApiConfig() {
         const api = () => (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
-        const urlEl = document.getElementById('api-url-input');
+        const urlEl = document.getElementById('api-config-url');
+        const usernameEl = document.getElementById('api-username-input');
+        const passwordEl = document.getElementById('api-password-input');
+        const rememberEl = document.getElementById('api-remember-input');
         const keyEl = document.getElementById('api-key-input');
+        const keySaveBtn = document.getElementById('api-key-save-btn');
         const statusEl = document.getElementById('api-config-status');
         const sourceEl = document.getElementById('api-config-source');
         const saveBtn = document.getElementById('api-save-btn');
         const testBtn = document.getElementById('api-test-btn');
         const clearBtn = document.getElementById('api-clear-btn');
+        const logoutBtn = document.getElementById('api-logout-btn');
         let busy = false;
 
         function setBusy(value) {
             busy = !!value;
-            [saveBtn, testBtn, clearBtn].forEach(function (btn) {
+            [saveBtn, testBtn, clearBtn, logoutBtn, keySaveBtn].forEach(function (btn) {
                 if (btn) btn.disabled = busy;
             });
         }
@@ -474,22 +519,33 @@
 
         function paint(cfg) {
             if (!cfg) return;
-            if (urlEl) urlEl.value = cfg.url || '';
+            if (urlEl) {
+                urlEl.textContent = cfg.url || 'No server configured';
+                urlEl.title = cfg.url || '';
+            }
+            if (usernameEl) usernameEl.value = cfg.username || '';
             if (keyEl) {
                 keyEl.value = '';
                 keyEl.placeholder = cfg.keySet
                     ? 'Saved key ' + cfg.keyHint + ' (blank keeps it)'
-                    : 'hth_... (required)';
+                    : 'hth_... (optional)';
             }
             if (sourceEl) {
-                sourceEl.textContent = cfg.source === 'settings'
-                    ? 'saved locally'
-                    : cfg.source === 'env' ? '.env fallback' : '';
+                sourceEl.textContent = cfg.source === 'settings' ? 'saved locally' : '';
             }
-            if (cfg.configured) {
-                setStatus('Configured' + (cfg.keySet ? ' (' + cfg.keyHint + ')' : ''), 'ok');
+            if (logoutBtn) logoutBtn.classList.toggle('hidden', !cfg.signedIn);
+            if (cfg.signedIn) {
+                setStatus(
+                    'Signed in as ' + cfg.username +
+                    (cfg.secureStorage === false ? ' (session will not survive restart)' : ''),
+                    cfg.secureStorage === false ? 'warn' : 'ok'
+                );
+            } else if (cfg.mode === 'key' && cfg.keySet) {
+                setStatus('API key configured (' + cfg.keyHint + ')', 'ok');
+            } else if (cfg.url) {
+                setStatus(cfg.message || 'Not signed in.', 'warn');
             } else {
-                setStatus('Not configured - sync, Discover and AI DJ need a server and key.', 'warn');
+                setStatus('No server configured.', 'warn');
             }
         }
 
@@ -512,22 +568,73 @@
             const bridge = api();
             if (!bridge || busy) return;
             setBusy(true);
-            setStatus('Saving...', '');
+            setStatus('Signing in...', '');
+            try {
+                const res = await bridge.login(
+                    urlEl ? urlEl.value : '',
+                    usernameEl ? usernameEl.value : '',
+                    passwordEl ? passwordEl.value : '',
+                    rememberEl ? !!rememberEl.checked : true
+                );
+                if (res && res.ok) {
+                    if (passwordEl) passwordEl.value = '';
+                    paint(res.config);
+                    setStatus(res.message || 'Signed in.', 'ok');
+                    if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
+                    if (typeof notyf !== 'undefined') notyf.success(res.message || 'Signed in.');
+                } else {
+                    setStatus((res && res.message) || 'Sign-in failed.', 'error');
+                    if (typeof notyf !== 'undefined') notyf.error((res && res.message) || 'Sign-in failed.');
+                }
+            } catch (e) {
+                setStatus('Sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function saveApiKey() {
+            const bridge = api();
+            if (!bridge || busy) return;
+            setBusy(true);
+            setStatus('Saving API key...', '');
             try {
                 const res = await bridge.save_api_config(
                     urlEl ? urlEl.value : '', keyEl ? keyEl.value : ''
                 );
                 if (res && res.ok) {
+                    if (keyEl) keyEl.value = '';
                     paint(res.config);
-                    setStatus(res.message || 'Saved.', 'ok');
+                    setStatus(res.message || 'API key saved.', 'ok');
                     if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
-                    if (typeof notyf !== 'undefined') notyf.success('Web API settings saved.');
+                    if (typeof notyf !== 'undefined') notyf.success('API key saved.');
                 } else {
-                    setStatus((res && res.message) || 'Could not save Web API settings.', 'error');
-                    if (typeof notyf !== 'undefined') notyf.error((res && res.message) || 'Could not save Web API settings.');
+                    setStatus((res && res.message) || 'Could not save API key.', 'error');
+                    if (typeof notyf !== 'undefined') notyf.error((res && res.message) || 'Could not save API key.');
                 }
             } catch (e) {
-                setStatus('Could not save Web API settings: ' + (e && e.message ? e.message : e), 'error');
+                setStatus('Could not save API key: ' + (e && e.message ? e.message : e), 'error');
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function logout() {
+            const bridge = api();
+            if (!bridge || busy) return;
+            setBusy(true);
+            setStatus('Signing out...', '');
+            try {
+                const res = await bridge.logout();
+                if (passwordEl) passwordEl.value = '';
+                paint(res && res.config);
+                setStatus(res && res.message || 'Signed out.', 'warn');
+                if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
+                if (typeof notyf !== 'undefined') notyf.success('Signed out.');
+                try { localStorage.removeItem('hathor_login_key_ack'); } catch (_) {}
+                setTimeout(function () { window.location.reload(); }, 350);
+            } catch (e) {
+                setStatus('Sign-out failed: ' + (e && e.message ? e.message : e), 'error');
             } finally {
                 setBusy(false);
             }
@@ -539,9 +646,7 @@
             setBusy(true);
             setStatus('Testing connection...', '');
             try {
-                const res = await bridge.test_api_connection(
-                    urlEl ? urlEl.value : '', keyEl ? keyEl.value : ''
-                );
+                const res = await bridge.test_api_connection();
                 if (res && res.ok) {
                     setStatus(res.message || 'Connected.', (res.missing && res.missing.length) ? 'warn' : 'ok');
                     if (typeof notyf !== 'undefined') notyf.success(res.message || 'Connected.');
@@ -563,7 +668,7 @@
             if (typeof Swal !== 'undefined') {
                 const answer = await Swal.fire({
                     title: 'Clear Web API settings?',
-                    text: 'Sync, Discover and AI DJ will fall back to .env, or stay disabled if it is not set.',
+                    text: 'This signs out this device and removes the saved server, API key and refresh token.',
                     icon: 'warning',
                     showCancelButton: true,
                     confirmButtonText: 'Clear',
@@ -578,10 +683,13 @@
             try {
                 const res = await bridge.clear_api_config();
                 if (res && res.ok) {
+                    if (passwordEl) passwordEl.value = '';
                     paint(res.config);
                     setStatus(res.message || 'Cleared.', 'warn');
                     if (window.AiDjUI && window.AiDjUI.reload) window.AiDjUI.reload();
                     if (typeof notyf !== 'undefined') notyf.success('Saved Web API settings cleared.');
+                    try { localStorage.removeItem('hathor_login_key_ack'); } catch (_) {}
+                    setTimeout(function () { window.location.reload(); }, 350);
                 } else {
                     setStatus((res && res.message) || 'Could not clear Web API settings.', 'error');
                 }
@@ -593,6 +701,8 @@
         }
 
         if (saveBtn) saveBtn.addEventListener('click', saveApiConfig);
+        if (keySaveBtn) keySaveBtn.addEventListener('click', saveApiKey);
+        if (logoutBtn) logoutBtn.addEventListener('click', logout);
         if (testBtn) testBtn.addEventListener('click', testApiConfig);
         if (clearBtn) clearBtn.addEventListener('click', clearApiConfig);
         window.load_api_config = paint;
@@ -1029,13 +1139,15 @@
             console.error('Update check failed:', e);
         } finally {
             btn.disabled = false;
-            btn.textContent = label || 'Check for updates';
+            btn.textContent = label || 'Update tools';
             loadSystemStatus();
         }
     }
 
     if (window.pywebview && window.pywebview.api) loadSystemStatus();
     else window.addEventListener('pywebviewready', loadSystemStatus, { once: true });
+
+    if (window.HathorAppUpdate) window.HathorAppUpdate.refresh();
 
     // Re-apply the busy state when this view is re-created (the sync keeps
     // running while the user is on another tab).

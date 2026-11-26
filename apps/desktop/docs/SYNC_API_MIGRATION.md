@@ -33,7 +33,7 @@ in the `podcastChapters` section (closed in the chapters slice).
 ## Desktop changes (this slice)
 
 1. **New `services/api_sync.py`** — stdlib-only (`urllib`) HTTP client:
-   - `api_configured()` → `HATHOR_API_URL` + `HATHOR_API_KEY` both set.
+   - `api_configured()` → a server session exists from the login screen.
    - `ApiSyncClient.pull_once(library)` — `GET delta?cursor=` → reuse the
      existing merge semantics (upserts, link reconcile, `Daily_Mix` adopt)
      → stream missing files via `GET sync/files/{file}` to the exact remote
@@ -45,10 +45,11 @@ in the `podcastChapters` section (closed in the chapters slice).
      tombstones (that library only) on success.
    - Push first runs `sync_local_songs_to_db` / `sync_local_podcasts_to_db`
      for the selected library (folded in from the old "Sync Now" button).
-2. **Config** — `.env`: `HATHOR_API_URL=http://<server>:5051`,
-   `HATHOR_API_KEY=hth_...` (implemented: `sync_backend()` in
-   `services/api_sync.py`). The old `sync.py` (PyMySQL) leg is deleted;
-   `PyMySQL` dropped from `requirements.txt`.
+2. **Config** — server URL/username/password entered on the dedicated login
+   screen and stored in the `Settings` row (implemented: `sync_backend()` in
+   `services/api_sync.py`). Environment/.env configuration is intentionally
+   ignored. The old `sync.py` (PyMySQL) leg is deleted; `PyMySQL` dropped from
+   `requirements.txt`.
 3. **Cursor store** — `sync_cursor_songs.txt` / `sync_cursor_podcasts.txt`
    next to `music_player.db` (plus `sync_cursor.txt` for `"all"`), so the
    two Settings rows never skip each other's changes.

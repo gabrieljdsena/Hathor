@@ -1,5 +1,4 @@
 import base64
-import ctypes
 import os
 import sqlite3
 import json
@@ -10,7 +9,9 @@ import threading
 import uuid
 import Download
 import settings
-from ctypes import wintypes
+from services import platform_support
+from services.auth_session import get_auth_session
+from services.window_chrome import WindowsWindowChrome
 from pathlib import Path
 import random
 import time
@@ -23,6 +24,7 @@ from services import (
     LyricsService,
     AppleService,
     DownloadManager,
+    AppUpdateService,
     startup_maintenance
 )
 from services.discover import DiscoverService
@@ -32,65 +34,6 @@ from services.telemetry import PlaybackTelemetry
 from services.history_sync import HistorySync
 from services.player_hub import PlayerHub
 
-# ==========================================================================
-# Native Windows window chrome
-# ==========================================================================
-# pywebview creates a frameless window with FormBorderStyle.None, which
-# removes WS_THICKFRAME. Windows refuses to Aero-Snap (drag to edge/corner,
-# snap layouts) a window without that style, even when the drag itself is
-# started natively with WM_NCLBUTTONDOWN/HTCAPTION. Adding the style normally
-# also paints a 7px native frame, so WM_NCCALCSIZE is answered with "client
-# area = whole window" and maximized bounds are clamped to the work area.
-_GWL_STYLE = -16
-_GWLP_WNDPROC = -4
-_WS_THICKFRAME = 0x00040000
-_WS_MAXIMIZEBOX = 0x00010000
-_WS_MINIMIZEBOX = 0x00020000
-_WS_SYSMENU = 0x00080000
-_WM_NCCALCSIZE = 0x0083
-_WM_GETMINMAXINFO = 0x0024
-_WM_NCLBUTTONDOWN = 0x00A1
-_HTCAPTION = 2
-_SWP_NOSIZE = 0x0001
-_SWP_NOMOVE = 0x0002
-_SWP_NOZORDER = 0x0004
-_SWP_FRAMECHANGED = 0x0020
-_MONITOR_DEFAULTTONEAREST = 2
-
-
-class _RECT(ctypes.Structure):
-    _fields_ = [
-        ('left', ctypes.c_long), ('top', ctypes.c_long),
-        ('right', ctypes.c_long), ('bottom', ctypes.c_long),
-    ]
-
-
-class _POINT(ctypes.Structure):
-    _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
-
-
-class _MINMAXINFO(ctypes.Structure):
-    _fields_ = [
-        ('ptReserved', _POINT), ('ptMaxSize', _POINT),
-        ('ptMaxPosition', _POINT), ('ptMinTrackSize', _POINT),
-        ('ptMaxTrackSize', _POINT),
-    ]
-
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [
-        ('cbSize', wintypes.DWORD), ('rcMonitor', _RECT),
-        ('rcWork', _RECT), ('dwFlags', wintypes.DWORD),
-    ]
-
-
-_WNDPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
-    wintypes.WPARAM, wintypes.LPARAM)
-
-_USER32 = None
-
-
 def _file_dialog_type(open_dialog=True):
     """Return the current pywebview dialog enum, falling back for old versions."""
     import webview
@@ -99,52 +42,6 @@ def _file_dialog_type(open_dialog=True):
         return file_dialog.OPEN if open_dialog else file_dialog.FOLDER
     return webview.OPEN_DIALOG if open_dialog else webview.FOLDER_DIALOG
 
-
-def _win_user32():
-    """Configure 64-bit-safe prototypes once and return a private user32.
-
-    Uses a dedicated WinDLL instead of the process-wide ``ctypes.windll``
-    singleton: mutating the shared function prototypes also rewrites what
-    pywebview's winforms backend sees, and its ``move()`` intentionally
-    passes ``None`` for the SetWindowPos size arguments (NULL = keep size).
-    With our ``c_int`` prototypes installed on the shared object that call
-    raises ``ctypes.ArgumentError: argument 5: TypeError: wrong type`` and
-    can destabilize the pythonnet bridge.
-    """
-    global _USER32
-    if _USER32 is not None:
-        return _USER32
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.GetWindowLongW.restype = ctypes.c_long
-    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
-    user32.SetWindowLongW.restype = ctypes.c_long
-    user32.SetWindowLongW.argtypes = [
-        wintypes.HWND, ctypes.c_int, ctypes.c_long]
-    user32.GetWindowLongPtrW.restype = ctypes.c_void_p
-    user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
-    user32.SetWindowLongPtrW.restype = ctypes.c_void_p
-    user32.SetWindowLongPtrW.argtypes = [
-        wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
-    user32.CallWindowProcW.restype = ctypes.c_ssize_t
-    user32.CallWindowProcW.argtypes = [
-        ctypes.c_void_p, wintypes.HWND, wintypes.UINT,
-        wintypes.WPARAM, wintypes.LPARAM]
-    user32.SetWindowPos.restype = wintypes.BOOL
-    user32.SetWindowPos.argtypes = [
-        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-        ctypes.c_int, ctypes.c_int, wintypes.UINT]
-    user32.MonitorFromWindow.restype = wintypes.HMONITOR
-    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
-    user32.GetMonitorInfoW.restype = wintypes.BOOL
-    user32.GetMonitorInfoW.argtypes = [
-        wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
-    user32.ReleaseCapture.restype = wintypes.BOOL
-    user32.ReleaseCapture.argtypes = []
-    user32.SendMessageW.restype = ctypes.c_ssize_t
-    user32.SendMessageW.argtypes = [
-        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-    _USER32 = user32
-    return user32
 
 class Api:
     def __init__(self, db_path):
@@ -163,10 +60,10 @@ class Api:
         self._is_maximized = False
         
         self._window = None
-        self._snap_state = None
-        self._last_native_drag = 0.0
+        self._window_chrome = WindowsWindowChrome()
         self.downloader = Download.MusicDownloader()
         self._ensure_schema()
+        self.auth = get_auth_session(self.db_path)
         # Stable identity for cross-device resume (generated once, persisted).
         self._device_id, self._device_label = self._ensure_device_identity()
         self._resume_spot_last = None
@@ -185,6 +82,11 @@ class Api:
         self.telemetry = PlaybackTelemetry(self)
         self.history_sync = HistorySync(self.db_path)
         self.player_hub = PlayerHub(self)
+        self.app_update = AppUpdateService(self.db_path)
+        try:
+            self.app_update.cleanup()
+        except Exception as e:
+            print(f" [Python] App update cleanup failed: {e}")
         self._volume_publish_timer = None
         self._suppress_preview_stop = False
 
@@ -712,141 +614,36 @@ class Api:
             self._window.move(int(x), int(y))
         return True
 
+    def get_platform_info(self):
+        """Window/update capabilities consumed by the web UI."""
+        return platform_support.window_capabilities()
+
     def _window_handle(self):
-        """Return the native HWND for the pywebview form, if available."""
-        if not self._window:
-            return None
-        native = getattr(self._window, "native", None)
-        if native is None:
-            return None
-        handle = native.Handle
-        try:
-            return int(handle.ToInt64())
-        except Exception:
-            return int(handle.ToInt32())
+        return self._window_chrome.window_handle(self._window)
 
     def enable_windows_snap(self):
-        """Enable native resize styles while keeping the UI full-bleed.
+        return self._window_chrome.enable_snap(self._window)
 
-        A frameless WinForms window (FormBorderStyle.None) has no
-        WS_THICKFRAME, so Windows will not snap it. We add the style and
-        answer WM_NCCALCSIZE with 0 so the client area still covers the whole
-        window (no 7px native border), then clamp maximized bounds to the
-        monitor work area.
-        """
-        if os.name != "nt":
-            return False
-        hwnd = self._window_handle()
-        if not hwnd:
-            return False
-        if self._snap_state and self._snap_state.get("hwnd") == hwnd:
-            return True
-        log = logging.getLogger("hathor.window")
-        try:
-            user32 = _win_user32()
-            old_proc = user32.GetWindowLongPtrW(hwnd, _GWLP_WNDPROC)
+    def enable_linux_chrome(self):
+        return self._window_chrome.enable_linux_chrome(self._window)
 
-            def _wndproc(h, msg, wp, lp):
-                if msg == _WM_GETMINMAXINFO:
-                    # Re-assert prototypes in case another module configured
-                    # user32 differently; GetMonitorInfoW fails silently with
-                    # a stale prototype and the taskbar would be covered.
-                    u = _win_user32()
-                    result = u.CallWindowProcW(old_proc, h, msg, wp, lp)
-                    info = ctypes.cast(
-                        lp, ctypes.POINTER(_MINMAXINFO)).contents
-                    monitor = u.MonitorFromWindow(
-                        h, _MONITOR_DEFAULTTONEAREST)
-                    mi = _MONITORINFO()
-                    mi.cbSize = ctypes.sizeof(_MONITORINFO)
-                    if monitor and u.GetMonitorInfoW(
-                            monitor, ctypes.byref(mi)):
-                        info.ptMaxPosition.x = (
-                            mi.rcWork.left - mi.rcMonitor.left)
-                        info.ptMaxPosition.y = (
-                            mi.rcWork.top - mi.rcMonitor.top)
-                        info.ptMaxSize.x = (
-                            mi.rcWork.right - mi.rcWork.left)
-                        info.ptMaxSize.y = (
-                            mi.rcWork.bottom - mi.rcWork.top)
-                    return result
-                if msg == _WM_NCCALCSIZE and wp:
-                    # Client rect = window rect. Without this, adding
-                    # WS_THICKFRAME insets the webview by the frame size.
-                    return 0
-                return user32.CallWindowProcW(old_proc, h, msg, wp, lp)
+    def activate_window(self):
+        return self._window_chrome.activate(self._window)
 
-            proc = _WNDPROC(_wndproc)
-            user32.SetWindowLongPtrW(
-                hwnd, _GWLP_WNDPROC, ctypes.cast(proc, ctypes.c_void_p))
-            style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
-            style |= (_WS_THICKFRAME | _WS_MAXIMIZEBOX
-                      | _WS_MINIMIZEBOX | _WS_SYSMENU)
-            user32.SetWindowLongW(hwnd, _GWL_STYLE, style)
-            user32.SetWindowPos(
-                hwnd, None, 0, 0, 0, 0,
-                _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER
-                | _SWP_FRAMECHANGED)
-            self._snap_state = {
-                "hwnd": hwnd,
-                "old_proc": old_proc,
-                "proc": proc,
-                "user32": user32,
-            }
-            log.info("Windows snap enabled (hwnd=%s)", hwnd)
-            return True
-        except Exception:
-            log.exception("enable_windows_snap failed")
-            return False
-
-    def start_window_drag(self):
-        """Start a native caption drag so Windows handles snap and magnetism.
-
-        ``ReleaseCapture`` is thread-scoped, so the whole sequence must run on
-        the WinForms UI thread that owns the webview's mouse capture. Running
-        it on pywebview's worker thread leaves the webview holding capture and
-        the drag loop exits immediately. ``Invoke`` blocks the worker thread
-        until the drop, which is fine because JS does not await this call.
-        """
-        if os.name != "nt":
-            return False
-        hwnd = self._window_handle()
-        native = getattr(self._window, "native", None) if self._window else None
-        if not hwnd or native is None:
-            return False
-
-        def _drag():
-            user32 = _win_user32()
-            user32.ReleaseCapture()
-            self._last_native_drag = time.monotonic()
-            user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
-            self._last_native_drag = time.monotonic()
+    def start_window_drag(self, x=None, y=None):
+        result = self._window_chrome.start_drag(self._window, x, y)
+        if result:
             self._sync_native_state()
+        return result
 
-        try:
-            from System import Action
-            native.Invoke(Action(_drag))
-            return True
-        except Exception:
-            logging.getLogger("hathor.window").exception(
-                "start_window_drag: native invoke failed; trying direct")
-        try:
-            _drag()
-            return True
-        except Exception:
-            logging.getLogger("hathor.window").exception(
-                "start_window_drag failed")
-            return False
+    def start_window_resize(self, edge, x=None, y=None):
+        return self._window_chrome.start_resize(self._window, edge, x, y)
 
     def _sync_native_state(self):
-        """Refresh _is_maximized from the real WinForms window state."""
-        try:
-            native = self._window.native if self._window else None
-            if native is not None:
-                self._is_maximized = str(native.WindowState) == "Maximized"
-        except Exception:
-            pass
-        return bool(getattr(self, "_is_maximized", False))
+        self._is_maximized = self._window_chrome.sync_native_state(
+            self._window, self._is_maximized
+        )
+        return bool(self._is_maximized)
 
     def is_window_maximized(self):
         return self._sync_native_state()
@@ -855,17 +652,21 @@ class Api:
         """Skip saving while maximized or right after a native snap drag."""
         if self.is_window_maximized():
             return False
-        last_drag = getattr(self, "_last_native_drag", 0.0)
-        return (time.monotonic() - last_drag) >= 2.0
+        return self._window_chrome.can_persist_size()
 
     def toggle_maximize_window(self):
         if not self._window:
             return False
         try:
-            # The native state can change via Aero Snap, so don't trust a
-            # previously cached flag here.
+            # The native state can change via Aero Snap / window manager, so
+            # don't trust a previously cached flag here.
             maximized = self.is_window_maximized()
-            if maximized:
+            if platform_support.is_linux():
+                # pywebview's restore() only deiconifies; GTK knows how to
+                # unmaximize, so let window_chrome drive the toggle.
+                if not self._window_chrome.toggle_maximize(self._window):
+                    return False
+            elif maximized:
                 self._window.restore()
             else:
                 self._window.maximize()
@@ -1597,9 +1398,8 @@ class Api:
 
     # ---- Runtime Web API configuration -------------------------------
     def get_api_config_view(self):
-        """Settings payload; the full API key never crosses the bridge."""
-        from services.api_config import get_api_config_view
-        return get_api_config_view(self.db_path)
+        """Settings payload; secrets never cross the bridge."""
+        return self.auth.view()
 
     def _push_api_config(self, config=None):
         if not self._window:
@@ -1613,40 +1413,76 @@ class Api:
         except Exception as exc:
             print(f" [Python] API config UI update failed: {exc}")
 
+    def login(self, url, username, password, remember_me=True):
+        result = self.auth.login(url, username, password, remember_me)
+        self._push_api_config(result.get("config"))
+        if result.get("ok"):
+            try:
+                self.history_sync.notify()
+            except Exception:
+                pass
+        return result
+
+    def logout(self):
+        result = self.auth.logout()
+        self._push_api_config(result.get("config"))
+        return result
+
     def save_api_config(self, url, key=""):
-        """Persist the server URL/key. A blank key keeps the saved one."""
-        from services.api_config import save_api_config
-        try:
-            config = save_api_config(url, key, self.db_path)
-        except Exception as exc:
-            return {"ok": False, "message": str(exc)}
-        self._push_api_config(config)
-        try:
-            self.history_sync.notify()
-        except Exception:
-            pass
-        return {
-            "ok": True,
-            "message": "Web API settings saved.",
-            "config": config,
-        }
+        """Advanced API-key mode (legacy / headless clients)."""
+        result = self.auth.save_api_key(url, key)
+        self._push_api_config(result.get("config"))
+        if result.get("ok"):
+            try:
+                self.history_sync.notify()
+            except Exception:
+                pass
+        return result
 
     def clear_api_config(self):
-        from services.api_config import clear_api_config
-        try:
-            config = clear_api_config(self.db_path)
-        except Exception as exc:
-            return {"ok": False, "message": str(exc)}
-        self._push_api_config(config)
-        return {
-            "ok": True,
-            "message": "Saved Web API settings cleared; .env fallback still applies.",
-            "config": config,
-        }
+        result = self.auth.clear()
+        self._push_api_config(result.get("config"))
+        return result
 
     def test_api_connection(self, url=None, key=""):
         from services.api_config import test_connection
+        if (key or "").strip():
+            return test_connection(url, key, self.db_path)
+        if self.auth.configured():
+            return self.auth.test_connection()
         return test_connection(url, key, self.db_path)
+
+    # ---- Desktop self-updater -----------------------------------------
+    def get_app_update_status(self):
+        return self.app_update.status()
+
+    def check_app_update(self):
+        return self.app_update.check()
+
+    def download_app_update(self):
+        return self.app_update.download(self._push_app_update_progress)
+
+    def install_app_update(self):
+        result = self.app_update.install()
+        if result.get("ok") and self._window:
+            timer = threading.Timer(1.0, self._window.destroy)
+            timer.daemon = True
+            timer.start()
+        return result
+
+    def remove_app_update(self):
+        return self.app_update.remove()
+
+    def _push_app_update_progress(self, event):
+        if not self._window:
+            return
+        try:
+            self._window.evaluate_js(
+                "if (window.appUpdateProgress) "
+                f"window.appUpdateProgress({json.dumps(event)});"
+            )
+        except Exception:
+            pass
 
     def load_current_song(self):
         try:

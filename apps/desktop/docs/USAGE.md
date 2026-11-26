@@ -152,7 +152,7 @@ Hathor registers **System Media Transport Controls** via `winsdk` (see `services
 
 ## First-run server sync
 
-If a `.env` with `HATHOR_API_URL`/`HATHOR_API_KEY` is present, the first launch asks whether to load the library from the sync server. Choosing **"Yes, load from server"**:
+After you sign in on the dedicated login screen, the first launch asks whether to load the library from the sync server. Choosing **"Yes, load from server"**:
 
 1. Pulls songs, podcasts, playlists, lyrics, daily mix, and history down into the local SQLite DB.
 2. Downloads any songs/podcasts whose files aren't present locally, straight from the server (each into its own folder).

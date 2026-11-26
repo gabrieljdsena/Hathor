@@ -57,6 +57,18 @@ class MainActivityTest {
     }
 
     @Test(timeout = 180_000)
+    fun sidebarCollapsesToOpenArrowAndReopens() {
+        compose.onNodeWithContentDescription("Hide sidebar").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription("Show sidebar").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Show sidebar").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription("Hide sidebar").assertIsDisplayed()
+    }
+
+    @Test(timeout = 180_000)
     fun settingsRailItemOpensSettingsScreen() {
         compose.onNodeWithContentDescription("Settings").performClick()
         compose.waitForIdle()

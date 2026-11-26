@@ -4,7 +4,22 @@ import unittest
 from unittest.mock import patch
 
 from services.api_sync import ApiSyncClient, ApiSyncError, SERVER_MISSING
+from services.hathor_api import HathorApi
 from tests.support import FakeHathorServer
+
+
+class _FakeSession:
+    def __init__(self, base_url):
+        self.base_url = base_url
+
+    def configured(self):
+        return True
+
+    def view(self):
+        return {"url": self.base_url}
+
+    def api_client(self, timeout=30):
+        return HathorApi(self.base_url, "hth_secret", timeout=timeout)
 
 
 class ApiSyncTransportTests(unittest.TestCase):
@@ -12,8 +27,8 @@ class ApiSyncTransportTests(unittest.TestCase):
         with FakeHathorServer() as server, tempfile.TemporaryDirectory() as tmp:
             server.add("GET", "/api/v1/sync/delta",
                        json_body={"cursor": "next", "songs": []})
-            with patch("services.api_sync.get_api_config",
-                       return_value=(server.base_url, "hth_secret")):
+            with patch("services.api_sync.get_auth_session",
+                       return_value=_FakeSession(server.base_url)):
                 client = ApiSyncClient(tmp)
                 result = client.get_delta("")
 
@@ -25,8 +40,8 @@ class ApiSyncTransportTests(unittest.TestCase):
     def test_missing_file_endpoint_maps_to_friendly_error(self):
         with FakeHathorServer() as server, tempfile.TemporaryDirectory() as tmp:
             # No /api/v1/sync/delta route -> 404.
-            with patch("services.api_sync.get_api_config",
-                       return_value=(server.base_url, "hth_secret")):
+            with patch("services.api_sync.get_auth_session",
+                       return_value=_FakeSession(server.base_url)):
                 client = ApiSyncClient(tmp)
                 with self.assertRaises(ApiSyncError) as ctx:
                     client.get_delta("")
@@ -37,8 +52,8 @@ class ApiSyncTransportTests(unittest.TestCase):
     def test_playback_spot_carries_queue_snapshot(self):
         with FakeHathorServer() as server, tempfile.TemporaryDirectory() as tmp:
             server.add("POST", "/api/v1/sync/playback", json_body=True)
-            with patch("services.api_sync.get_api_config",
-                       return_value=(server.base_url, "hth_secret")):
+            with patch("services.api_sync.get_auth_session",
+                       return_value=_FakeSession(server.base_url)):
                 client = ApiSyncClient(tmp)
                 client.push_playback(
                     "device-1", "Windows", "a.mp3", 42.5, False,

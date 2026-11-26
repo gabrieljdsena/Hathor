@@ -1,9 +1,8 @@
 # Configuration
 
-Hathor has two configuration surfaces:
-
-1. **Persisted app settings** — stored in the `Settings` row of the local SQLite database and editable from the UI.
-2. **Environment fallback** — a `.env` file used for the optional **Hathor server sync** when the runtime Web API fields are empty.
+Hathor has one configuration surface: **persisted app settings**, stored in the
+`Settings` row of the local SQLite database and edited from the UI. The sync
+server is entered only on the dedicated login screen.
 
 ## App settings (SQLite `Settings` table)
 
@@ -22,7 +21,7 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 | Current playlist | `current_playlist` | — | Playlist resumed on next launch (legacy; superseded by `queue_source`) |
 | Queue source | `queue_source` | – | Playback-context JSON `{type, id}` rebuilt on launch |
 | Custom queue | `queue_songs`, `custom_queue` | – | Manually built queue restored verbatim |
-| Web API URL | `hathor_api_url` | *(empty)* | Runtime server root; `.env` fallback when empty |
+| Web API URL | `hathor_api_url` | *(empty)* | Server root saved by the login screen |
 | Web API key | `hathor_api_key` | *(empty)* | Scoped `hth_` token; masked in the UI |
 
 `api.py` exposes the corresponding setters to the JS UI:
@@ -35,46 +34,38 @@ Loaded at startup by `settings.py` and kept current by `api.py` whenever you cha
 - `set_crossfade(enabled, seconds)` / `get_playback_settings()`
 - `pick_background()`
 
-## Sync server (Settings → Web API, `.env` fallback)
+## Sync server (dedicated login screen)
 
-Sync is **disabled by default**. Point the app at a server in **Settings → Web API**:
+Sync is **disabled by default**. Point the app at a server on the dedicated
+login screen:
 
 1. Enter the server root (for example `http://192.168.1.10:5051`).
-2. Paste a scoped `hth_` API key.
-3. Press **Test** to verify reachability and read access, then **Save**.
+2. Enter your username and password.
+3. Press **Sign in**. Access tokens rotate automatically; the refresh token is kept in the OS credential store and the password is never stored.
 
-The pair is stored in the local `Settings` row (`hathor_api_url`/`hathor_api_key`); no restart is needed. If both fields are empty, `HATHOR_API_URL` and `HATHOR_API_KEY` from `.env` (loaded by `python-dotenv` in `main.py`) remain the fallback. Without either source, `main.py` prints:
+A scoped `hth_` API key remains available under **Advanced** on the same login
+screen for automation and older installs. **Settings → Web API** shows the
+current URL/status and offers Test, Sign out, and Clear. The server URL, auth
+mode and username are stored in the `Settings` row; the refresh token lives in
+Windows Credential Manager or the Linux Secret Service. Environment variables
+and `.env` files are ignored: a machine only talks to the server the user
+signed in to. Without a saved session, `main.py` prints:
 
 ```
-[Sync] No sync server configured in Settings -> Web API or .env, sync disabled.
+[Sync] No sync server configured; sign in from the login screen.
 ```
 
-### Runtime fields / environment variables
+### Runtime fields
 
-| Field / variable | Required | Example | Purpose |
-| ---------------- | -------- | ------- | ------- |
-| `hathor_api_url` / `HATHOR_API_URL` | yes | `http://192.168.1.10:5051` | Hathor server on the LAN |
-| `hathor_api_key` / `HATHOR_API_KEY` | yes | `hth_...` | Per-device key (`library:read` + `library:write`; add `player:read` + `player:control` for AI DJ) |
+| Field | Required | Example | Purpose |
+| ----- | -------- | ------- | ------- |
+| `hathor_api_url` | yes | `http://192.168.1.10:5051` | Hathor server on the LAN |
+| `hathor_auth_mode` | no | `login` / `key` | Runtime sign-in mode |
+| `hathor_auth_username` | no | `gabriel` | Web user shown in Settings |
+| `hathor_api_key` | no | `hth_...` | Legacy/advanced scoped key |
 
-The full key stays in Python/SQLite; Settings only receives a masked hint.
-
-A minimal `.env`:
-
-```env
-HATHOR_API_URL=http://192.168.1.10:5051
-HATHOR_API_KEY=hth_your-device-key
-```
-
-Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `WEB_API=hth_...` for the key (or `WEB_API=http://...` when the key uses the canonical name).
-
-> **Security**: `.env` is ignored by `.gitignore` — never commit real credentials.
-
-### Where the `.env` is read
-
-`main.py`:
-
-1. Loads `.env` from the current working directory.
-2. If the app is frozen (PyInstaller build), loads `.env` from **next to the executable** (`os.path.dirname(sys.executable)`) — it is deliberately never bundled inside the exe.
+The password never leaves the login request and is never persisted. The full API
+key stays in Python/SQLite; Settings only receives a masked hint.
 
 ### Behavior when configured
 
@@ -82,6 +73,32 @@ Compatibility aliases are also accepted: `WEB_API_URL` for the URL and a bare `W
 - After that, everything is manual: **Push to Server** uploads rows + new file bytes; **Sync from Server** pulls the incremental delta down (see [Database & sync](DATABASE.md) and [Sync API migration](SYNC_API_MIGRATION.md)).
 - Deletions are propagated via the `Sync_Deletions` tombstone table (songs, podcasts, playlists, lyrics, history, podcast tags and podcast tag links).
 
+## Desktop updates
+
+**Settings → Application** shows the installed `version.json`, checks the
+public GitHub release feed (`desktop-v*`, dev channel), downloads with progress,
+verifies the asset digest/`SHA256SUMS.txt`, and offers **Install and restart**.
+The app also checks once at startup. This is independent of the Web API URL/key
+and needs no `hth_` login. The old `/api/v1/desktop/latest` endpoint remains for
+builds older than `1.0.3`.
+
+On Arch/Linux package installs (`HATHOR_PACKAGE_MANAGED=1` or a
+`.package-managed` marker in the app directory) the card instead reports that
+updates are managed by the system package manager. Use `pacman -Syu`; the
+Windows zip/PowerShell updater is never used against `/usr/lib/hathor`.
+
+Installations made by the release installer (`install-linux.sh`, env
+`HATHOR_INSTALLER_MANAGED=1` or a `.installer-managed` marker) take precedence:
+the card reports that the installer owns updates and points at
+`~/.local/opt/hathor/install-linux.sh --update`. Check, download and install
+buttons stay hidden; user data is untouched by updates.
+
+Downloaded packages and the staged copy live under
+`%LOCALAPPDATA%\Hathor\updates`. Set `HATHOR_UPDATE_DIR` to use another folder.
+The installer helper waits for Hathor to close, swaps `Hathor.exe`,
+`_internal`, and `version.json`, then restarts the app; `music_player.db`,
+logs, and library folders are preserved.
+
 ## Turning sync off
 
-Press **Clear** in Settings → Web API and delete or comment out `HATHOR_API_URL`/`HATHOR_API_KEY` in `.env` (or remove the file entirely). The next launch will run fully local.
+Press **Clear** in Settings → Web API (or **Sign out**). The next launch runs fully local until you sign in again.

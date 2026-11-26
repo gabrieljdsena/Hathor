@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 
 from .api_config import get_api_config
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi
 
 
@@ -23,6 +24,12 @@ class PlayerSync:
         self.timeout = timeout
 
     def _client(self):
+        try:
+            session = get_auth_session(self.api.db_path)
+            if session.configured():
+                return session.api_client(timeout=self.timeout)
+        except Exception:
+            pass
         url, key = get_api_config(self.api.db_path)
         if not url or not key:
             raise PlayerSyncError("Web API is not configured.")

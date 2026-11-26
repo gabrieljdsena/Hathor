@@ -4,26 +4,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import android.util.LruCache
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.musicplayer.android.ui.theme.HathorColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -100,12 +90,9 @@ fun UrlThumb(url: String?, size: Dp = 56.dp) {
             ImageLoader.get(url, px)
         }
     }
-    Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
-        val bmp = bitmap
-        if (bmp != null) {
-            Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.size(size))
-        } else {
-            Icon(Icons.Filled.MusicNote, contentDescription = null, tint = HathorColors.AccentBright, modifier = Modifier.size(size.times(0.6f)))
-        }
-    }
+    HathorArtwork(
+        bitmap = bitmap,
+        contentDescription = null,
+        modifier = Modifier.size(size)
+    )
 }

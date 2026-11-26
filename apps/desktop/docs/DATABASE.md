@@ -1,6 +1,6 @@
 # Database Schema & Remote Sync
 
-Hathor stores everything locally in **SQLite** (`music_player.db`). When configured, the library (songs, podcasts, playlists, lyrics, history, daily mix) can be pushed to / pulled from the **Hathor server** — catalog sync is always manual, via the Settings buttons. Playback history additionally flushes automatically through a small durable outbox after each play; there is no background catalog sync thread.
+Hathor stores everything locally in **SQLite** (`music_player.db`). On Windows the file lives next to the executable; on Linux it lives at `~/.local/share/hathor/music_player.db`. When configured, the library (songs, podcasts, playlists, lyrics, history, daily mix) can be pushed to / pulled from the **Hathor server** — catalog sync is always manual, via the Settings buttons. Playback history additionally flushes automatically through a small durable outbox after each play; there is no background catalog sync thread.
 
 ## Local schema (`database.sql`)
 
@@ -148,7 +148,7 @@ pushes retry on the next play or app start. This path never blocks playback.
 
 ### Connections
 
-- Stdlib `urllib` over HTTP to `HATHOR_API_URL` with `Bearer HATHOR_API_KEY`; no DB driver.
+- Stdlib `urllib` over HTTP to the server saved by the login screen, using the authenticated session; no DB driver.
 - 401 → the key is wrong or lacks scope; unreachable → "is the server running?".
 - Sync failures return message strings — they never crash the app.
 

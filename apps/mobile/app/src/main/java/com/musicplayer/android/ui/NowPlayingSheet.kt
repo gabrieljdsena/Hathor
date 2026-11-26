@@ -4,20 +4,20 @@ package com.musicplayer.android.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -41,8 +41,6 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
@@ -70,6 +68,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -84,7 +83,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -99,6 +97,7 @@ import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.HathorTextField
 import com.musicplayer.android.ui.theme.ModernSlider
 import com.musicplayer.android.ui.theme.hathorGlass
+import com.musicplayer.android.ui.theme.hathorPressable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
@@ -166,34 +165,59 @@ fun NowPlayingSheet(
     // Queue-item context menu (long-press opens the same actions as the row).
     var queueMenuIndex by remember { mutableStateOf<Int?>(null) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Ambient accent follows the cover, crossfading between tracks.
+    val coverAccent = rememberArtworkAccent(cover)
+    val animatedAccent by animateColorAsState(
+        targetValue = coverAccent,
+        animationSpec = tween(durationMillis = 450),
+        label = "cover-accent"
+    )
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF131316),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .size(width = 40.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.22f))
+            )
+        }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to animatedAccent.copy(alpha = 0.30f),
+                        0.5f to Color.Transparent
+                    )
+                )
+        ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
-                modifier = Modifier.size(240.dp)
+                modifier = Modifier
+                    .size(240.dp)
                     .shadow(
                         elevation = 24.dp,
                         shape = RoundedCornerShape(24.dp),
-                        spotColor = HathorColors.Accent.copy(alpha = 0.45f)
+                        spotColor = animatedAccent.copy(alpha = 0.55f)
                     )
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(HathorColors.AccentFill),
-                contentAlignment = Alignment.Center
             ) {
-                val bmp = cover
-                if (bmp != null) {
-                    Image(bitmap = bmp.asImageBitmap(), contentDescription = "Cover", modifier = Modifier.size(240.dp))
-                } else {
-                    Icon(
-                        Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = HathorColors.AccentBright,
-                        modifier = Modifier.size(72.dp)
-                    )
-                }
+                HathorArtwork(
+                    bitmap = cover,
+                    contentDescription = "Cover",
+                    modifier = Modifier.fillMaxSize(),
+                    cornerRadius = 24.dp
+                )
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(meta?.title ?: current?.nameWithoutExtension ?: "Nothing playing", style = MaterialTheme.typography.titleLarge)
@@ -211,8 +235,16 @@ fun NowPlayingSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatMs(position), style = MaterialTheme.typography.bodySmall)
-                    Text(formatMs(duration), style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        formatMs(position),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HathorColors.TextBody
+                    )
+                    Text(
+                        formatMs(duration),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HathorColors.TextHint
+                    )
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -228,21 +260,26 @@ fun NowPlayingSheet(
                 }
                 // Accent play button: orange gradient circle, white glyph.
                 Box(
-                    modifier = Modifier.size(68.dp)
+                    modifier = Modifier
+                        .size(72.dp)
+                        .shadow(
+                            elevation = 18.dp,
+                            shape = CircleShape,
+                            spotColor = animatedAccent.copy(alpha = 0.65f)
+                        )
                         .clip(CircleShape)
                         .background(
                             Brush.linearGradient(
                                 listOf(HathorColors.AccentBright, HathorColors.AccentDeep)
                             )
                         )
-                        .clickable { player.toggle() },
+                        .hathorPressable { player.toggle() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (playing) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(36.dp)
+                    AnimatedPlayPauseIcon(
+                        playing = playing,
+                        modifier = Modifier.size(36.dp),
+                        tint = Color.White
                     )
                 }
                 IconButton(onClick = { player.next() }, enabled = current != null) {
@@ -305,21 +342,12 @@ fun NowPlayingSheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val qCover = queueCovers[f.absolutePath]
-                            if (qCover != null) {
-                                Image(
-                                    bitmap = qCover.asImageBitmap(),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp))
-                                )
-                            } else {
-                                Icon(
-                                    Icons.Filled.MusicNote,
-                                    contentDescription = null,
-                                    tint = HathorColors.TextHint,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                            HathorArtwork(
+                                bitmap = queueCovers[f.absolutePath],
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                                cornerRadius = 8.dp
+                            )
                             Text(
                                 queueTitles[f.absolutePath] ?: f.nameWithoutExtension,
                                 style = MaterialTheme.typography.bodyMedium,
@@ -349,6 +377,7 @@ fun NowPlayingSheet(
                     }
                 }
             }
+        }
         }
     }
 

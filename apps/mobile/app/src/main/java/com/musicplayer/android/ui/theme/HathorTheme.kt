@@ -25,6 +25,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 
 /**
  * Hathor visual system, sampled from the desktop CSS (ui/index.html + views):
@@ -33,14 +37,14 @@ import androidx.compose.foundation.background
 object HathorColors {
     val Background = Color(0xFF09090B)      // zinc-950
     val SurfaceGlass = Color(0x66000000)    // black/40
-    val BorderFaint = Color(0x0DFFFFFF)     // white/5
+    val BorderFaint = Color(0x14FFFFFF)     // white/8
     val Accent = Color(0xFFF97316)          // orange-500
     val AccentBright = Color(0xFFFB923C)    // orange-400
     val AccentDeep = Color(0xFFEA580C)      // orange-600
     val AccentFill = Color(0x1AF97316)      // orange-500/10 (active nav, tiles)
     val TextPrimary = Color(0xFFF4F4F5)     // zinc-100
     val TextBody = Color(0xFFD4D4D8)        // zinc-300
-    val TextHint = Color(0xFF71717A)        // zinc-500
+    val TextHint = Color(0xFF9C9CA6)        // zinc-400/500 blend, readable on glass
 
     val BrandGradient = Brush.linearGradient(listOf(AccentBright, AccentDeep))
     // Ambient background glows (10% orange, desktop body::before equivalents).
@@ -79,6 +83,30 @@ fun Modifier.hathorGlass(): Modifier =
     this
         .clip(RoundedCornerShape(16.dp))
         .background(HathorColors.SurfaceGlass)
+        .border(1.dp, HathorColors.BorderFaint, RoundedCornerShape(16.dp))
+
+/** Quiet accent button for secondary actions; primary actions stay solid orange. */
+@Composable
+fun HathorTonalButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = HathorColors.AccentFill,
+            contentColor = HathorColors.AccentBright,
+            disabledContainerColor = HathorColors.AccentFill.copy(alpha = 0.5f),
+            disabledContentColor = HathorColors.TextHint.copy(alpha = 0.6f)
+        ),
+        content = content
+    )
+}
 
 /**
  * Desktop section-header icon tile:
@@ -90,7 +118,8 @@ fun HeaderIconTile(content: @Composable () -> Unit) {
         modifier = Modifier
             .size(48.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(HathorColors.AccentFill),
+            .background(HathorColors.AccentFill)
+            .border(1.dp, HathorColors.Accent.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center
     ) { content() }
 }

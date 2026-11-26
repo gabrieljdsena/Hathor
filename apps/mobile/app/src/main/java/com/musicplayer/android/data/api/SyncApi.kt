@@ -100,52 +100,66 @@ data class RemoteSnapshot(
 )
 
 /** User-facing sync failure (message is shown verbatim in the UI). */
-class SyncApiException(message: String) : Exception(message)
+class SyncApiException(message: String, val statusCode: Int? = null) : Exception(message)
 
 object SyncConfig {
-    private const val PREFS = "hathor_api"
-    private const val KEY_BASE_URL = "base_url"
-    private const val KEY_TOKEN = "token"
-    private var prefs: SharedPreferences? = null
+    @Volatile
+    private var session: AuthSession? = null
 
     /** Called once from PlayerApp.onCreate; runtime values override BuildConfig. */
     fun init(context: Context) {
-        prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        session = AuthSession(context)
     }
 
-    fun baseUrl(): String {
-        val raw = prefs?.getString(KEY_BASE_URL, null)
-            ?: try { BuildConfig.API_BASE_URL } catch (_: Exception) { "" }
-        return raw.trim().trimEnd('/')
-    }
+    fun authSession(): AuthSession? = session
 
-    fun token(): String {
-        val raw = prefs?.getString(KEY_TOKEN, null)
-            ?: try { BuildConfig.API_TOKEN } catch (_: Exception) { "" }
-        return raw.trim()
-    }
+    fun baseUrl(): String =
+        session?.baseUrl() ?: try { BuildConfig.API_BASE_URL.trimEnd('/') } catch (_: Exception) { "" }
 
+    fun token(): String =
+        session?.accessToken() ?: try { BuildConfig.API_TOKEN } catch (_: Exception) { "" }
+
+    /** Legacy API-key save; blank values clear the runtime config. */
     fun save(baseUrl: String, token: String) {
-        prefs?.edit()
-            ?.putString(KEY_BASE_URL, baseUrl.trim().trimEnd('/'))
-            ?.putString(KEY_TOKEN, token.trim())
-            ?.apply()
+        if (baseUrl.isBlank() && token.isBlank()) {
+            session?.clear()
+        } else {
+            session?.saveApiKey(baseUrl, token)
+        }
     }
 
-    fun clearRuntime() {
-        prefs?.edit()?.remove(KEY_BASE_URL)?.remove(KEY_TOKEN)?.apply()
-    }
+    fun saveApiKey(baseUrl: String, token: String): LoginResult =
+        session?.saveApiKey(baseUrl, token)
+            ?: LoginResult(false, "Auth is not initialized.")
 
-    fun isConfigured(): Boolean = baseUrl().isNotBlank() && token().isNotBlank()
+    fun clearRuntime() = session?.clear()
+
+    fun isConfigured(): Boolean = session?.configured() ?: false
 
     fun describe(): String =
         if (baseUrl().isNotBlank()) "Web API: ${baseUrl()}" else "Web API off."
 
-    const val NOT_CONFIGURED =
-        "No Web API configured. Set the server URL and an API key in Settings."
+    fun view(): AuthView? = session?.view()
+
+    suspend fun login(url: String, username: String, password: String, rememberMe: Boolean = true) =
+        session?.login(url, username, password, rememberMe)
+            ?: LoginResult(false, "Auth is not initialized.")
+
+    suspend fun logout(): LoginResult =
+        session?.logout() ?: LoginResult(false, "Auth is not initialized.")
+
+    suspend fun testConnection(): String =
+        session?.testConnection() ?: "Auth is not initialized."
+
+    const val NOT_CONFIGURED = AuthSession.NOT_CONFIGURED
 }
 
-class SyncApi(val baseUrl: String, private val token: String) {
+class SyncApi(
+    val baseUrl: String = SyncConfig.baseUrl(),
+    private val token: String? = null,
+    auth: AuthSession? = null,
+) {
+    private val session: AuthSession? = auth ?: if (token == null) SyncConfig.authSession() else null
     private val base = "$baseUrl/api/v1/sync"
 
     // The server does not speak the file endpoints yet (pre-delta builds).
@@ -153,11 +167,15 @@ class SyncApi(val baseUrl: String, private val token: String) {
         "Sync server does not speak the sync-file endpoints yet " +
             "(need GET/PUT /api/v1/sync/files/{file} + delta). Pull the latest server build."
 
+    private fun authToken(): String =
+        token?.takeIf { it.isNotBlank() } ?: session?.accessToken().orEmpty()
+
     private fun open(
         method: String,
         path: String,
         query: Map<String, String> = emptyMap(),
         contentType: String? = null,
+        bearer: String = authToken(),
     ): HttpURLConnection {
         val url = buildString {
             append(base).append(path)
@@ -170,7 +188,9 @@ class SyncApi(val baseUrl: String, private val token: String) {
         }
         return (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
-            setRequestProperty("Authorization", "Bearer $token")
+            if (bearer.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer $bearer")
+            }
             setRequestProperty("User-Agent", "hathor-android/1")
             setRequestProperty("Accept", "application/json")
             if (contentType != null) setRequestProperty("Content-Type", contentType)
@@ -189,8 +209,9 @@ class SyncApi(val baseUrl: String, private val token: String) {
         }
         if (code == 401) {
             throw SyncApiException(
-                "Sync server rejected the API key (401). Check API_TOKEN — " +
-                    "it needs library:read + library:write scope.",
+                "Sync server rejected the credentials (401). Sign in again " +
+                    "or check the API key in Settings.",
+                statusCode = 401,
             )
         }
         if (code == 404) throw SyncApiException(serverMissing)
@@ -208,22 +229,40 @@ class SyncApi(val baseUrl: String, private val token: String) {
         }
     }
 
-    fun getDelta(cursor: String): JSONObject {
-        val conn = open("GET", "/delta", if (cursor.isBlank()) emptyMap() else mapOf("cursor" to cursor))
+    private inline fun <T> retryOn401(block: (bearer: String) -> T): T {
+        val bearer = authToken()
         try {
-            return readJson(conn)
+            return block(bearer)
+        } catch (e: SyncApiException) {
+            if (e.statusCode == 401) {
+                // A concurrent request may already have rotated the token;
+                // passing the failed token lets AuthSession reuse it instead
+                // of rotating twice and tripping server reuse detection.
+                val refreshed = session?.accessToken(failedToken = bearer, force = true).orEmpty()
+                if (refreshed.isNotBlank() && refreshed != bearer) {
+                    return block(refreshed)
+                }
+            }
+            throw e
+        }
+    }
+
+    fun getDelta(cursor: String): JSONObject = retryOn401 { bearer ->
+        val conn = open("GET", "/delta", if (cursor.isBlank()) emptyMap() else mapOf("cursor" to cursor), bearer = bearer)
+        try {
+            readJson(conn)
         } finally {
             conn.disconnect()
         }
     }
 
-    fun postImport(payload: JSONObject): JSONObject {
+    fun postImport(payload: JSONObject): JSONObject = retryOn401 { bearer ->
         val body = payload.toString().toByteArray(Charsets.UTF_8)
-        val conn = open("POST", "/import", contentType = "application/json")
+        val conn = open("POST", "/import", contentType = "application/json", bearer = bearer)
         try {
             conn.doOutput = true
             conn.outputStream.use { it.write(body) }
-            return readJson(conn)
+            readJson(conn)
         } finally {
             conn.disconnect()
         }
@@ -234,8 +273,12 @@ class SyncApi(val baseUrl: String, private val token: String) {
         if (file.isBlank() || '/' in file || '\\' in file) return false
         if (dest.exists()) return false
         dest.parentFile?.mkdirs()
+        return retryOn401 { bearer -> downloadFileOnce(file, library, dest, bearer) }
+    }
+
+    private fun downloadFileOnce(file: String, library: String, dest: File, bearer: String): Boolean {
         val tmp = File(dest.absolutePath + ".hathor-part")
-        val conn = open("GET", "/files/${encodePathSegment(file)}", mapOf("library" to library))
+        val conn = open("GET", "/files/${encodePathSegment(file)}", mapOf("library" to library), bearer = bearer)
         try {
             val code = try {
                 conn.responseCode
@@ -244,7 +287,9 @@ class SyncApi(val baseUrl: String, private val token: String) {
             } catch (e: ConnectException) {
                 throw SyncApiException("Cannot reach sync server at $baseUrl. Is it running?")
             }
-            if (code == 401) throw SyncApiException("Sync server rejected the API key (401).")
+            if (code == 401) {
+                throw SyncApiException("Sync server rejected the credentials (401).", statusCode = 401)
+            }
             if (code == 404) throw SyncApiException("Server has no file bytes for $file.")
             if (code !in 200..299) throw SyncApiException("File download failed ($code): $file")
             conn.inputStream.use { input ->
@@ -270,24 +315,29 @@ class SyncApi(val baseUrl: String, private val token: String) {
 
     fun putFile(file: String, library: String, src: File) {
         if (file.isBlank() || '/' in file || '\\' in file) return
-        val conn = open(
-            "PUT", "/files/${encodePathSegment(file)}",
-            mapOf("library" to library), "audio/mpeg",
-        )
-        try {
-            conn.doOutput = true
-            // Stream from disk: episodes regularly exceed typical Android
-            // heap sizes, so readBytes() would OOM on large podcasts.
-            conn.setFixedLengthStreamingMode(src.length())
-            src.inputStream().use { input ->
-                conn.outputStream.use { output -> input.copyTo(output, 256 * 1024) }
+        retryOn401 { bearer ->
+            val conn = open(
+                "PUT", "/files/${encodePathSegment(file)}",
+                mapOf("library" to library), "audio/mpeg", bearer,
+            )
+            try {
+                conn.doOutput = true
+                // Stream from disk: episodes regularly exceed typical Android
+                // heap sizes, so readBytes() would OOM on large podcasts.
+                conn.setFixedLengthStreamingMode(src.length())
+                src.inputStream().use { input ->
+                    conn.outputStream.use { output -> input.copyTo(output, 256 * 1024) }
+                }
+                val code = conn.responseCode
+                if (code == 401) {
+                    throw SyncApiException("Sync server rejected the credentials (401).", statusCode = 401)
+                }
+                if (code == 404) throw SyncApiException(serverMissing)
+                if (code !in 200..299) throw SyncApiException("File upload failed ($code): $file")
+                try { conn.inputStream.close() } catch (_: Exception) { }
+            } finally {
+                conn.disconnect()
             }
-            val code = conn.responseCode
-            if (code == 404) throw SyncApiException(serverMissing)
-            if (code !in 200..299) throw SyncApiException("File upload failed ($code): $file")
-            try { conn.inputStream.close() } catch (_: Exception) { }
-        } finally {
-            conn.disconnect()
         }
     }
 

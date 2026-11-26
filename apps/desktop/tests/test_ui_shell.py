@@ -19,6 +19,8 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn("./js/ai-dj-voice.js", index)
         self.assertIn("./js/ai-dj-recorder.js", index)
         self.assertIn("./js/ai-dj-state.js", index)
+        self.assertIn("./js/app-update.js", index)
+        self.assertIn("./js/platform.js", index)
         self.assertIn('id="dj-vibe-popover"', index)
         self.assertIn('id="nav-ai-dj-label"', index)
         self.assertIn('id="bento-move-podcast-btn"', index)
@@ -27,7 +29,7 @@ class ShellScaffoldingTests(unittest.TestCase):
         self.assertIn('id="np-lyrics-search-panel"', index)
         self.assertIn('id="np_resume_spot_banner"', index)
         self.assertIn("data-view-error", index)
-        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js"):
+        for name in ("discover-preview.js", "fuzzy.js", "download-batch.js", "chunked-list.js", "ai-dj-voice.js", "ai-dj-recorder.js", "ai-dj-state.js", "app-update.js", "login-gate.js", "platform.js"):
             self.assertTrue((self.root / "ui" / "js" / name).exists(), name)
         for view in ("discover.html", "ai_dj.html"):
             self.assertTrue((self.root / "ui" / "views" / view).exists(), view)
@@ -56,17 +58,58 @@ class ShellScaffoldingTests(unittest.TestCase):
                 (self.root / "ui" / "views" / view).read_text(encoding="utf-8"),
             )
 
-    def test_settings_exposes_web_api_controls(self):
+    def _nav_block(self, index, target):
+        start = index.index(f'data-target="{target}"')
+        end = index.index("</a>", start)
+        return index[start:end]
+
+    def test_sidebar_songs_and_discover_icons_render_as_strokes(self):
+        index = (self.root / "ui" / "index.html").read_text(encoding="utf-8")
+        songs = self._nav_block(index, "all_songs")
+        self.assertIn('fill="none"', songs)
+        self.assertIn('stroke="currentColor"', songs)
+        self.assertNotIn('fill="currentColor"', songs)
+        self.assertIn(
+            "M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z",
+            songs,
+        )
+
+        discover = self._nav_block(index, "discover")
+        self.assertIn('fill="none"', discover)
+        self.assertIn('stroke="currentColor"', discover)
+        self.assertIn("M12 21a9 9 0 100-18 9 9 0 000 18z", discover)
+        self.assertIn(
+            "M14.83 9.17l-1.66 3.66-3.66 1.66 1.66-3.66 3.66-1.67z",
+            discover,
+        )
+        self.assertNotIn("M12 21a9 9 0 1 0 0-18", discover)
+
+    def test_settings_exposes_connection_status_and_update_controls(self):
         settings = (self.root / "ui" / "views" / "settings.html").read_text(encoding="utf-8")
         for element_id in (
-            "api-url-input",
-            "api-key-input",
+            "api-config-url",
             "api-config-status",
-            "api-save-btn",
+            "api-logout-btn",
             "api-test-btn",
             "api-clear-btn",
+            "app-update-version",
+            "app-update-status",
+            "app-update-check-btn",
+            "app-update-install-btn",
+            "app-update-remove-btn",
         ):
             self.assertIn(f'id="{element_id}"', settings)
+        index = (self.root / "ui" / "index.html").read_text(encoding="utf-8")
+        for element_id in (
+            "login-gate",
+            "login-url",
+            "login-username",
+            "login-password",
+            "login-reveal",
+            "login-submit",
+        ):
+            self.assertIn(f'id="{element_id}"', index)
+        self.assertIn("./js/login-gate.js", index)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 """Runtime Hathor Web API configuration.
 
-The desktop app used to read HATHOR_API_URL/HATHOR_API_KEY from .env only,
-which meant restarting the app to point it at another server. Settings ->
-Web API now stores the same pair in SQLite and this module reads it before
-falling back to the environment.
+The server is entered on the dedicated login screen and persisted in the
+local Settings row (URL, auth mode, username, refresh-token-backed session).
+There is deliberately no environment/.env fallback: a machine only talks to
+the server the user signed in to.
 
 The API key is a scoped hth_ token, never a login password. It stays in the
 local database and is masked before it reaches the webview.
@@ -16,13 +16,6 @@ import sqlite3
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
-API_URL_ENV = "HATHOR_API_URL"
-API_KEY_ENV = "HATHOR_API_KEY"
-# Compatibility aliases used by some local setups.
-WEB_API_ENV = "WEB_API"
-API_URL_ENV_ALIASES = (API_URL_ENV, "WEB_API_URL")
-API_KEY_ENV_ALIASES = (API_KEY_ENV,)
-
 REQUIRED_SCOPES = (
     "library:read",
     "library:write",
@@ -33,6 +26,8 @@ REQUIRED_SCOPES = (
 SETTINGS_COLUMNS = (
     ("hathor_api_url", "TEXT"),
     ("hathor_api_key", "TEXT"),
+    ("hathor_auth_mode", "TEXT"),      # login | key
+    ("hathor_auth_username", "TEXT"),
 )
 
 
@@ -49,7 +44,7 @@ def ensure_settings_columns(conn):
 class ApiConfig:
     url: str = ""
     key: str = ""
-    source: str = "none"  # settings | env | none
+    source: str = "none"  # settings | none
 
     @property
     def configured(self):
@@ -64,10 +59,14 @@ def _default_db_path():
             return path
     except Exception:
         pass
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "music_player.db",
-    )
+    try:
+        from . import platform_support
+        return str(platform_support.db_path())
+    except Exception:
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "music_player.db",
+        )
 
 
 def normalize_url(value):
@@ -119,7 +118,7 @@ def _read_db_config(db_path):
     return (row[0] or "").strip(), (row[1] or "").strip()
 
 
-def _write_db_config(db_path, url, key):
+def _write_auth_settings(db_path, url, key, mode, username):
     if not db_path:
         raise RuntimeError("Database path is unavailable.")
     if not os.path.exists(db_path):
@@ -127,15 +126,18 @@ def _write_db_config(db_path, url, key):
     conn = None
     try:
         conn = sqlite3.connect(db_path)
+        ensure_settings_columns(conn)
         cur = conn.execute(
-            "UPDATE Settings SET hathor_api_url = ?, hathor_api_key = ?",
-            (url, key),
+            "UPDATE Settings SET hathor_api_url = ?, hathor_api_key = ?, "
+            "hathor_auth_mode = ?, hathor_auth_username = ?",
+            (url, key, mode, username),
         )
         if cur.rowcount == 0:
             conn.execute(
-                "INSERT INTO Settings (id, hathor_api_url, hathor_api_key) "
-                "VALUES (1, ?, ?)",
-                (url, key),
+                "INSERT INTO Settings (id, hathor_api_url, hathor_api_key, "
+                "hathor_auth_mode, hathor_auth_username) "
+                "VALUES (1, ?, ?, ?, ?)",
+                (url, key, mode, username),
             )
         conn.commit()
     finally:
@@ -143,44 +145,55 @@ def _write_db_config(db_path, url, key):
             conn.close()
 
 
-def _first_env(names):
-    for name in names:
-        value = (os.getenv(name) or "").strip()
-        if value:
-            return value
-    return ""
+def _write_db_config(db_path, url, key):
+    # Legacy API-key writer: clears any login-mode marker.
+    _write_auth_settings(db_path, url, key, "key" if (url or key) else "", "")
 
 
-def _env_api_config():
-    """Read canonical env vars plus the single-line WEB_API compatibility alias."""
-    raw_url = _first_env(API_URL_ENV_ALIASES)
-    raw_key = _first_env(API_KEY_ENV_ALIASES)
-    web_api = (os.getenv(WEB_API_ENV) or "").strip()
-    if web_api:
-        lowered = web_api.lower()
-        if not raw_key and lowered.startswith("hth_"):
-            raw_key = web_api
-        elif not raw_url and lowered.startswith(("http://", "https://")):
-            raw_url = web_api
+def read_auth_settings(db_path=None):
+    """Writable auth state: URL/key/mode/username (no refresh token)."""
+    db_path = db_path or _default_db_path()
+    if not db_path or not os.path.exists(db_path):
+        return {"url": "", "key": "", "mode": "", "username": ""}
+    conn = None
     try:
-        env_url = normalize_url(raw_url)
-    except ValueError:
-        # A malformed .env value must not prevent the app from starting.
-        env_url = ""
-    env_key = raw_key
-    return env_url, env_key
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT hathor_api_url, hathor_api_key, hathor_auth_mode, "
+                "hathor_auth_username FROM Settings LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = conn.execute(
+                "SELECT hathor_api_url, hathor_api_key FROM Settings LIMIT 1"
+            ).fetchone()
+            if row:
+                row = (row[0], row[1], "", "")
+    except sqlite3.Error:
+        return {"url": "", "key": "", "mode": "", "username": ""}
+    finally:
+        if conn is not None:
+            conn.close()
+    if not row:
+        return {"url": "", "key": "", "mode": "", "username": ""}
+    return {
+        "url": (row[0] or "").strip(),
+        "key": (row[1] or "").strip(),
+        "mode": (row[2] or "").strip(),
+        "username": (row[3] or "").strip(),
+    }
+
+
+def write_auth_settings(url, key="", mode="", username="", db_path=None):
+    _write_auth_settings(db_path or _default_db_path(), url, key, mode, username)
 
 
 def get_api_config_info(db_path=None):
-    """Return the effective config, preferring runtime settings over .env."""
+    """Return the config saved by the login screen. Environment is ignored."""
     db_path = db_path or _default_db_path()
     db_url, db_key = _read_db_config(db_path)
     if db_url or db_key:
         return ApiConfig(db_url, db_key, "settings")
-
-    env_url, env_key = _env_api_config()
-    if env_url or env_key:
-        return ApiConfig(env_url, env_key, "env")
     return ApiConfig()
 
 
@@ -220,7 +233,7 @@ def save_api_config(url, key="", db_path=None):
 
 
 def clear_api_config(db_path=None):
-    """Clear stored values; .env remains the fallback if it is configured."""
+    """Clear stored values so the app runs fully local until the next login."""
     db_path = db_path or _default_db_path()
     _write_db_config(db_path, "", "")
     return get_api_config_view(db_path)

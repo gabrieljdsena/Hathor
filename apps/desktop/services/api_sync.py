@@ -51,18 +51,13 @@ import urllib.parse
 
 from contextlib import closing
 
-from .api_config import (
-    API_KEY_ENV,
-    API_URL_ENV,
-    get_api_config as _runtime_api_config,
-)
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi, HathorApiError
 
 _log = logging.getLogger("hathor.sync")
 
 NOT_CONFIGURED = (
-    "No sync server configured. Open Settings -> Web API "
-    f"(or set {API_URL_ENV}/{API_KEY_ENV} in .env)."
+    "No sync server configured. Sign in on the Hathor login screen."
 )
 SERVER_MISSING = (
     "Sync server does not speak the sync-file endpoints yet "
@@ -76,15 +71,19 @@ class ApiSyncError(Exception):
 
 def sync_backend():
     """Return 'api' | 'unconfigured' (the remote-DB leg is gone)."""
-    url, key = get_api_config()
-    if url and key:
-        return "api"
-    return "unconfigured"
+    try:
+        return "api" if get_auth_session().configured() else "unconfigured"
+    except Exception:
+        return "unconfigured"
 
 
 def get_api_config(db_path=None):
-    """Runtime Settings pair first, .env fallback (kept for callers)."""
-    return _runtime_api_config(db_path)
+    """Legacy pair kept for callers/tests; services use AuthSession."""
+    try:
+        session = get_auth_session(db_path)
+        return session.view().get("url", ""), session.access_token()
+    except Exception:
+        return "", ""
 
 
 # server-field -> local-field per delta section (server sends camelCase;
@@ -349,16 +348,22 @@ def write_cursor(db_path, cursor, library="all"):
 
 
 class ApiSyncClient:
-    def __init__(self, db_path, timeout=30):
+    def __init__(self, db_path, timeout=30, auth_session=None):
         self.db_path = db_path
         self.timeout = timeout
-        base_url, api_key = get_api_config(db_path)
-        if not base_url or not api_key:
-            raise ApiSyncError(NOT_CONFIGURED)
-        self.api_base = base_url
-        self.base = base_url + "/api/v1/sync"
-        self.key = api_key
-        self.client = HathorApi(base_url, api_key, timeout=timeout)
+        session = auth_session or get_auth_session(db_path)
+        self.auth = session
+        if session.configured():
+            self.api_base = session.view().get("url", "")
+            self.client = session.api_client(timeout=timeout)
+        else:
+            # Legacy/API-key path used by older installs and tests.
+            base_url, api_key = get_api_config(db_path)
+            if not base_url or not api_key:
+                raise ApiSyncError(NOT_CONFIGURED)
+            self.api_base = base_url
+            self.client = HathorApi(base_url, api_key, timeout=timeout)
+        self.base = self.api_base + "/api/v1/sync"
 
     def _sync_path(self, path):
         return "/api/v1/sync" + path
@@ -372,9 +377,8 @@ class ApiSyncClient:
         except HathorApiError as exc:
             if exc.status == 401:
                 raise ApiSyncError(
-                    "Sync server rejected the API key (401). Check Settings -> "
-                    "Web API or the HATHOR_API_KEY value; the key needs "
-                    "library:read + library:write."
+                    "Sync server rejected the credentials (401). Sign in again "
+                    "or check the API key in Settings -> Web API."
                 ) from exc
             if exc.status == 404:
                 raise ApiSyncError(SERVER_MISSING) from exc

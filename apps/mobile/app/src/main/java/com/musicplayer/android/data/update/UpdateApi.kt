@@ -1,19 +1,16 @@
 package com.musicplayer.android.data.update
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.net.UnknownHostException
 
 /**
- * Contract mirror of apps/web/src/Hathor.Api/MobileAppController.cs.
- *
- * The client uses the same LAN base URL + Bearer key as sync. The metadata
- * endpoint is separate from the bytes, so a newer versionCode is known before
- * downloading a ~130 MB APK.
+ * One published client release. The download URL is the public GitHub asset
+ * URL; the updater verifies the SHA-256 before offering it to Android.
  */
 data class UpdateInfo(
     val versionCode: Int,
@@ -44,12 +41,21 @@ interface UpdateApiClient {
     )
 }
 
-class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClient {
-    private val base = baseUrl.trim().trimEnd('/')
+/**
+ * Public GitHub Releases update source.
+ *
+ * The repository is public, so no Web API login or API key is needed. The
+ * dev channel includes prereleases until stable releases are cut from main;
+ * switch [includePrereleases] to false for a stable channel later.
+ */
+class GitHubUpdateApi(
+    private val releasesUrl: String = DEFAULT_RELEASES_URL,
+    private val includePrereleases: Boolean = true,
+) : UpdateApiClient {
 
     override fun latest(): LatestResult {
         val conn = try {
-            open("$base/api/v1/app/latest", "application/json").apply { requestMethod = "GET" }
+            open(releasesUrl).apply { requestMethod = "GET" }
         } catch (e: Exception) {
             return LatestResult.Failure(networkMessage(e))
         }
@@ -59,29 +65,58 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
             } catch (e: Exception) {
                 return LatestResult.Failure(networkMessage(e))
             }
-            when {
-                code == 401 || code == 403 -> LatestResult.Failure(
-                    "Update server rejected the API key ($code). Check the Web API key in Settings.",
-                )
-                code == 404 -> LatestResult.NotFound
-                code !in 200..299 -> LatestResult.Failure(errorMessage(conn, code))
-                else -> {
-                    val body = try {
-                        conn.inputStream.bufferedReader().use { it.readText() }
-                    } catch (e: Exception) {
-                        return LatestResult.Failure("Update server response could not be read.")
-                    }
-                    val info = parseLatest(body)
-                    if (info == null) {
-                        LatestResult.Failure("Update server returned an invalid release response.")
-                    } else {
-                        LatestResult.Success(info)
-                    }
-                }
+            if (code == 404) return LatestResult.NotFound
+            if (code !in 200..299) {
+                return LatestResult.Failure("GitHub release feed returned HTTP $code.")
             }
+            val body = try {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                return LatestResult.Failure("GitHub release feed could not be read.")
+            }
+            val releases = try {
+                JSONArray(body)
+            } catch (e: Exception) {
+                return LatestResult.Failure("GitHub returned an invalid release feed.")
+            }
+            parseReleases(releases)
         } finally {
             conn.disconnect()
         }
+    }
+
+    internal fun parseReleases(releases: JSONArray): LatestResult {
+        var best: UpdateInfo? = null
+        for (i in 0 until releases.length()) {
+            val release = releases.optJSONObject(i) ?: continue
+            if (release.optBoolean("draft")) continue
+            if (!includePrereleases && release.optBoolean("prerelease")) continue
+            val tag = release.optString("tag_name").trim()
+            if (!tag.startsWith(ANDROID_TAG_PREFIX)) continue
+            val assets = release.optJSONArray("assets") ?: continue
+            for (j in 0 until assets.length()) {
+                val asset = assets.optJSONObject(j) ?: continue
+                val name = asset.optString("name").trim()
+                val match = APK_RE.matchEntire(name) ?: continue
+                val code = match.groupValues[1].toIntOrNull() ?: continue
+                if (code <= 0) continue
+                val size = asset.optLong("size", 0L)
+                val url = asset.optString("browser_download_url").trim()
+                val sha = assetSha(asset, assets) ?: continue
+                if (size <= 0 || !trustedUrl(url) || !SHA_RE.matches(sha)) continue
+                val candidate = UpdateInfo(
+                    versionCode = code,
+                    versionName = match.groupValues[2],
+                    fileName = name,
+                    sizeBytes = size,
+                    sha256 = sha,
+                    publishedAtUtc = release.optString("published_at").trim().takeIf { it.isNotBlank() },
+                    downloadPath = url,
+                )
+                if (best == null || code > best.versionCode) best = candidate
+            }
+        }
+        return best?.let { LatestResult.Success(it) } ?: LatestResult.NotFound
     }
 
     override fun download(
@@ -89,16 +124,11 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
         destination: File,
         onProgress: (bytes: Long, total: Long) -> Unit,
     ) {
-        val path = info.downloadPath.ifBlank {
-            "/api/v1/app/download/${encodePathSegment(info.fileName)}"
-        }
-        val url = when {
-            path.startsWith("http://") || path.startsWith("https://") -> path
-            path.startsWith("/") -> base + path
-            else -> "$base/$path"
+        if (!trustedUrl(info.downloadPath)) {
+            throw UpdateException("GitHub release asset URL is invalid.")
         }
         val conn = try {
-            open(url, "application/vnd.android.package-archive").apply { requestMethod = "GET" }
+            open(info.downloadPath).apply { requestMethod = "GET" }
         } catch (e: Exception) {
             throw UpdateException(networkMessage(e), e)
         }
@@ -108,14 +138,11 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
             } catch (e: Exception) {
                 throw UpdateException(networkMessage(e), e)
             }
-            if (code == 401 || code == 403) {
-                throw UpdateException("Update server rejected the API key ($code).")
-            }
             if (code == 404) {
-                throw UpdateException("The update APK is no longer available on the server.")
+                throw UpdateException("The GitHub release asset is no longer available.")
             }
             if (code !in 200..299) {
-                throw UpdateException(errorMessage(conn, code))
+                throw UpdateException("GitHub download failed (HTTP $code).")
             }
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.sizeBytes
             destination.parentFile?.mkdirs()
@@ -139,7 +166,10 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
                     }
                 }
             } catch (e: Exception) {
-                throw UpdateException("Update download failed: ${e.message ?: "network error"}", e)
+                throw UpdateException(
+                    "Update download failed: ${e.message ?: "network error"}",
+                    e,
+                )
             }
             if (total > 0 && copied != total) {
                 throw UpdateException("Update download was incomplete ($copied of $total bytes).")
@@ -150,68 +180,89 @@ class HttpUpdateApi(baseUrl: String, private val token: String) : UpdateApiClien
         }
     }
 
-    private fun open(url: String, accept: String): HttpURLConnection =
+    private fun open(url: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
-            setRequestProperty("Authorization", "Bearer $token")
+            connectTimeout = 20_000
+            readTimeout = 120_000
+            setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "hathor-android/1")
-            setRequestProperty("Accept", accept)
-            connectTimeout = 30_000
-            // The release APK is ~130 MB; allow a slow LAN transfer.
-            readTimeout = 10 * 60_000
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
         }
 
-    private fun errorMessage(conn: HttpURLConnection, code: Int): String {
-        val detail = try {
-            JSONObject(conn.errorStream?.bufferedReader()?.readText().orEmpty()).optString("message")
-        } catch (_: Exception) {
-            ""
+    /**
+     * Production feeds are HTTPS and only accept HTTPS assets. Local test
+     * servers are HTTP; allow matching HTTP asset URLs only in that case.
+     */
+    private fun trustedUrl(url: String): Boolean =
+        url.startsWith("https://") ||
+            (!releasesUrl.startsWith("https://") && url.startsWith("http://"))
+
+    private fun assetSha(asset: JSONObject, assets: JSONArray): String? {
+        val digest = asset.optString("digest").trim().lowercase()
+        if (digest.startsWith("sha256:")) {
+            val sha = digest.removePrefix("sha256:")
+            if (SHA_RE.matches(sha)) return sha
         }
-        return "Update server error ($code)${if (detail.isBlank()) "" else ": $detail"}"
+        // Older GitHub assets may not expose a digest yet: fall back to the
+        // SHA256SUMS.txt asset published by the release workflow.
+        val sums = findAsset(assets, "SHA256SUMS.txt") ?: return null
+        val sumsUrl = sums.optString("browser_download_url").trim()
+        if (!trustedUrl(sumsUrl)) return null
+        val text = try {
+            fetchText(sumsUrl)
+        } catch (_: Exception) {
+            return null
+        }
+        return parseSums(text, asset.optString("name"))
+    }
+
+    private fun findAsset(assets: JSONArray, name: String): JSONObject? {
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            if (asset.optString("name") == name) return asset
+        }
+        return null
+    }
+
+    private fun fetchText(url: String): String {
+        val conn = open(url).apply { requestMethod = "GET" }
+        return try {
+            val code = conn.responseCode
+            if (code !in 200..299) throw IllegalStateException("HTTP $code")
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun networkMessage(e: Exception): String = when (e) {
         is UnknownHostException, is ConnectException ->
-            "Cannot reach the update server at $base. Is it on your LAN?"
-        else -> "Cannot reach the update server: ${e.message ?: e.javaClass.simpleName}"
+            "Cannot reach GitHub Releases. Check the internet connection."
+        else -> "Cannot reach GitHub Releases: ${e.message ?: e.javaClass.simpleName}"
     }
 
     companion object {
-        private val SHA256_HEX = Regex("^[0-9a-f]{64}$")
+        const val DEFAULT_RELEASES_URL =
+            "https://api.github.com/repos/gabrieljdsena/Hathor/releases?per_page=30"
+        private const val ANDROID_TAG_PREFIX = "android-v"
+        private val APK_RE = Regex(
+            "^hathor-(?:android-)?(\\d{1,9})-(.+)\\.apk$",
+            RegexOption.IGNORE_CASE,
+        )
+        private val SHA_RE = Regex("^[0-9a-f]{64}$")
+        private val SUM_RE = Regex("^([0-9a-fA-F]{64})\\s+\\*?(.+)$")
 
-        /** Decode and validate the server's release metadata. */
-        internal fun parseLatest(body: String): UpdateInfo? {
-            val obj = try {
-                JSONObject(body)
-            } catch (_: Exception) {
-                return null
+        /** Parse `sha256sum` output (used by the SHA256SUMS.txt asset). */
+        internal fun parseSums(text: String, fileName: String): String? {
+            for (line in text.lineSequence()) {
+                val match = SUM_RE.matchEntire(line.trim()) ?: continue
+                val listed = match.groupValues[2].trim().removePrefix("./")
+                if (listed == fileName) {
+                    val sha = match.groupValues[1].lowercase()
+                    if (SHA_RE.matches(sha)) return sha
+                }
             }
-            val versionCode = obj.optInt("versionCode", 0)
-            val versionName = obj.optString("versionName").trim()
-            val fileName = obj.optString("fileName").trim()
-            val sizeBytes = obj.optLong("sizeBytes", 0L)
-            val sha256 = obj.optString("sha256").trim().lowercase()
-            val downloadPath = obj.optString("downloadPath").trim()
-            if (versionCode <= 0 || versionName.isBlank()) return null
-            if (sizeBytes <= 0) return null
-            if (!SHA256_HEX.matches(sha256)) return null
-            if (fileName.length > 255 || fileName.contains('/') || fileName.contains('\\') ||
-                !fileName.endsWith(".apk", ignoreCase = true)
-            ) {
-                return null
-            }
-            if (downloadPath.isBlank()) return null
-            return UpdateInfo(
-                versionCode = versionCode,
-                versionName = versionName,
-                fileName = fileName,
-                sizeBytes = sizeBytes,
-                sha256 = sha256,
-                publishedAtUtc = obj.optString("publishedAtUtc").trim().takeIf { it.isNotBlank() },
-                downloadPath = downloadPath,
-            )
+            return null
         }
-
-        private fun encodePathSegment(value: String): String =
-            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
     }
 }

@@ -18,12 +18,16 @@ files, acceptance criteria and a suggested phase. Check items off as they land.
 
 **Architecture note:** web playback, downloads, Discover and AI DJ are
 **server-owned**; mobile playback and downloads are **on-device**. Discover and
-AI DJ are consumed through the Hathor Web API with a runtime server URL + API
-key configured in Settings (no mobile login, no server logic on-device).
-Mobile's key needs `library:read` + `library:write` for sync/Discover, and
-`player:read` + `player:control` for AI DJ / cross-device playback / playback
-telemetry. Playback completion/skip segments are posted automatically to
-`/player/playback-events`; they never block local playback.
+AI DJ are consumed through the Hathor Web API with a runtime server URL and
+either a Web account login (recommended) or a scoped `hth_` API key configured
+in Settings. Mobile's login uses the same username/password as the browser:
+access JWTs stay in memory, the rotating refresh token is encrypted with an
+Android Keystore key, and the password is never stored. API keys remain as an
+advanced fallback for automation and plain-HTTP LAN installs. Login needs no
+extra scopes; a key needs `library:read` + `library:write` for sync/Discover,
+and `player:read` + `player:control` for AI DJ / cross-device playback /
+playback telemetry. Playback completion/skip segments are posted automatically
+to `/player/playback-events`; they never block local playback.
 
 ---
 
@@ -36,7 +40,7 @@ telemetry. Playback completion/skip segments are posted automatically to
 | W1 | **Discover** — out-of-library recommendations, source filters, preview queue, dismiss/feedback learning, insights + weight tuning, download suggestions | `views/Discover.tsx`, `components/DiscoverInsightsCard.tsx`, `hooks/useDiscoverPreviewQueue.ts` | Missing | L |
 | W2 | **AI DJ (Vohithe)** — server-run sets, vibe brief + voice recording, start/stop/new set, more/less feedback, voice ducking, live visualizer, Home card and player popover | `views/AiDj.tsx`, `store/aiDj.ts`, `hooks/useStartDjSet.ts`, `hooks/useDjVibeRecorder.ts` | Missing | L |
 | W3 | **Artists & Albums browse** — list all artists/albums, artwork heroes, search, play all/shuffle, per-group paging | `views/Library.tsx` (`Artists`, `ArtistDetail`, `Albums`, `AlbumDetail`) | Partial — only hidden subviews from a song's menu, no artwork/search/sort/play-all | M |
-| W4 | **Login / register / account** — JWT login, registration gate, remember me, change password, active sessions, logout-all | `views/Login.tsx`, `auth/AuthContext.tsx`, `views/Settings.tsx` | Dropped — mobile uses a runtime `hth_` API key, no login | — |
+| W4 | **Login / register / account** — JWT login, registration gate, remember me, change password, active sessions, logout-all | `views/Login.tsx`, `auth/AuthContext.tsx`, `views/Settings.tsx` | Implemented — login/logout, remember me; password/session management stays web-only | — |
 | W5 | **API-key management** — mint/revoke scoped `hth_` tokens | `views/ApiKeys.tsx` | Web-only; mobile only consumes a key | — |
 | W6 | **Cross-device playback & resume** — SignalR player hub, queue/state broadcasts, “resume where you left off” from another device | `playerHub.ts`, `components/ui/ResumeSpot.tsx`, `ResumeBento.tsx`, `store/player.ts` | Missing; mobile queue restore is local-only | L |
 | W7 | **Server/system administration** — FFmpeg/yt-dlp install/update, YouTube bot-check protection, loudness backfill, system status | `views/Settings.tsx` | Web-only by design | — |
@@ -56,7 +60,7 @@ telemetry. Playback completion/skip segments are posted automatically to
 | S9 | Lyrics | Full-screen lyrics-first view, synced auto-follow, tap-to-seek, offset, romaji, search/replace, chapter lyrics | Full-screen view with large centered lines, active-line follow + seek, ±20 s offset, romaji, edit/delete, chapter lyrics; search uses the Web API | `ui/LyricsScreen.kt`, `data/LyricsRepository.kt`, `data/db/*` | Done |
 | S10 | Search | Typo-tolerant/fuzzy matching (server) | Plain `contains` over title/artist/album | `ui/AllSongsScreen.kt`, shared util | S |
 | S11 | Volume | Works and is server-synced | Applied live; slider lives on Now Playing | `ui/NowPlayingSheet.kt`, `playback/PlayerManager.kt` | Done |
-| S12 | Runtime server setup | Login/API keys supply URL + token at runtime | Settings → Web API: runtime URL + API key, Test connection (no login) | `ui/SettingsScreen.kt`, `data/api/SyncApi.kt` | Done |
+| S12 | Runtime server setup | Login/API keys supply URL + token at runtime | Settings → Web API: server URL, username/password sign-in, Test; legacy API key under Advanced | `ui/SettingsScreen.kt`, `data/api/SyncApi.kt`, `data/api/AuthSession.kt` | Done |
 | S13 | Playlist sidebar submenu | Expandable playlist list in the sidebar | Flat Playlists destination (acceptable mobile adaptation) | — | XS |
 | S14 | Volume normalization | Browser-only compressor + measured loudness | Missing | `playback/PlayerManager.kt` | S (optional) |
 | S15 | Queue reorder UX | Drag-and-drop + arrow buttons | Arrow buttons only (acceptable) | `ui/NowPlayingSheet.kt` | XS |
@@ -324,10 +328,12 @@ every feature below requires rebuilding the APK.
   - Tests: settings persistence; connection-test unit test with a fake HTTP
     server.
   - **Done:** `SyncConfig` now stores runtime URL/token in SharedPreferences
-    (BuildConfig remains the fallback). Settings → Web API has URL + masked key
-    fields, Save and Test. No login flow; the screen tells users which scopes
-    sync/Discover/AI DJ need. `ApiContractTest` covers persistence.
-    A fake-HTTP connection test is still not automated.
+    (BuildConfig remains the fallback). Settings → Web API has URL, Web
+    username/password Sign in, Sign out and Test, plus the legacy masked API
+    key under Advanced. Login uses `AuthSession` (Keystore refresh token,
+    single-flight refresh, 401 retry); API-key mode remains fully supported.
+    `ApiContractTest` covers persistence and `AuthSessionTest` covers the fake
+    login/refresh/401 paths.
 
 - [x] **P4.2 — Discover (W1)**
   - Add a mobile API client for `/discover`, `/discover/refresh`,
@@ -394,9 +400,16 @@ every feature below requires rebuilding the APK.
     current file exists locally. Full remote control/SignalR mirroring is not
     implemented. Contract covered by `ApiContractTest`.
 
-- [x] **P4.5 — Accounts and API keys (W4/W5) — dropped**
-  - **Decision:** no mobile login. The app uses a runtime `hth_` API key entered
-    in Settings; account/API-key management stays in the web UI.
+- [x] **P4.5 — Accounts (W4) — implemented**
+  - **Decision changed:** mobile signs in with the same Web account as the
+    browser. `/auth/login` returns a 15-minute access JWT and rotating refresh
+    token; access stays in memory and the refresh token is encrypted with an
+    Android Keystore AES/GCM key. The password is never stored.
+  - Remember me maps to the server's 30-day session; otherwise 24 hours.
+    Sign out revokes the current session server-side and clears Keystore.
+  - Legacy scoped `hth_` keys remain under Advanced for automation/plain-HTTP
+    LAN installs. Password/session management (change password, revoke other
+    devices) stays in the web UI.
 
 - [x] **P4.6 — Playback telemetry (D19)**
   - Report one segment per non-podcast music track to
@@ -427,6 +440,23 @@ every feature below requires rebuilding the APK.
     `RemoteSync` natural-key dedupe/re-key; `HistorySyncOutboxTest` covers the
     queue, natural key and bounded manual-push clearing. Saving Web API
     settings also triggers a pending flush.
+
+- [x] **P4.8 — Auth background and edge cases**
+  - Pass the failed access token into `AuthSession.accessToken(...)` so
+    concurrent 401s share one refresh instead of rotating twice and tripping
+    reuse detection.
+  - Retry sync JSON, file uploads, and file downloads once after a 401 with
+    the refreshed token. Retry the app-update metadata check and APK download
+    the same way.
+  - Rebuild AI DJ clip URLs with the refreshed token when a media request
+    returns 401.
+  - Keep the session on offline/5xx failures; clear it only when the server
+    rejects the refresh token.
+  - **Done:** `SyncApi`, `HttpUpdateApi`, `UpdateRepository` and
+    `DjVoicePlayer` now use the session-aware retry path; the legacy static
+    API-key path still behaves as before. `AuthSessionTest` covers sync delta
+    and file-download retries; `UpdateHttpApiTest` covers update metadata and
+    APK download retries.
 
 ---
 
@@ -472,7 +502,7 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2 | **Runtime config:** P4.1 (server URL + token entry) is a prerequisite for Discover and AI DJ. Existing `BuildConfig` values remain the default/fallback. | Both features are server-backed and currently require an APK rebuild to change servers. |
 | 3 | **AI DJ v1:** text brief only. Voice recording/transcription is deferred to a follow-up (P4.3b). | Delivers the core set flow without microphone permissions and WAV capture complexity. |
 | 4 | **Cross-device:** start with resume-spot push/pull + “Continue on this device” (MVP). Full SignalR remote control is optional later. | Resume is the highest-value cross-device behaviour and avoids mirroring the whole player state machine. |
-| 5 | **Accounts:** account management stays web-only. Mobile uses the runtime API-token entry from P4.1; no login/register UI. | This is a personal self-hosted system; a scoped `hth_` token is sufficient. |
+| 5 | **Accounts:** Web login first, scoped `hth_` API key under Advanced. Login uses the same account as the browser; account/API-key management stays web-only. | Reuses the server auth system and keeps the existing key-based installs working. |
 | 6 | **Video preview:** audio-only preview on mobile (existing `PreviewPlayer`). No embedded YouTube WebView. | Simpler, battery-friendly and matches the current Download screen; mark as a deliberate deviation. |
 | 7 | **Move to Songs:** local file move + Room updates + tombstones; do not depend on the web server endpoint. | Keeps the feature working offline and consistent with mobile's on-device architecture. |
 | 8 | **Metadata while playing:** pending edit applied on the next track change (implemented in P1.1). | Avoids rewriting tags on a file the player currently holds open. |
@@ -512,9 +542,14 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-14 | **Discover preview fix** | Previews now use server YouTube search + resolved audio URL (same as web), try multiple candidates, show Finding/Playing/Failed state and a mini player, support cover-play, and surface errors instead of silently staying highlighted. Downloads search via the server first. |
 | 2026-11-14 | **P4.3 — AI DJ** | Web API state/start/stop/feedback + local batch playback and commentary display (voice/auto-advance deferred). |
 | 2026-11-14 | **P4.4 — cross-device resume** | Pause pushes a spot to `/sync/playback`; Home shows a “Continue on …” card that restores queue + position. |
-| 2026-11-14 | **P4.5 — accounts** | Dropped by product decision: API-key entry only, no mobile login. |
+| 2026-11-14 | **P4.5 — accounts** | Originally dropped; superseded on 2026-11-23 by Web account login with the API key kept as an advanced fallback. |
 | 2026-11-14 | **Test runner** | `scripts/test.ps1` now tolerates Gradle/adb stderr warnings, so it no longer aborts on the SDK XML warning. |
 | 2026-11-16 | **P4.6 — playback telemetry** | Mobile posts one completion/skip segment per non-podcast track; pause/resume stays one segment, repeat/track change/queue end flush. `PlaybackTelemetryTest` + `PlaybackEventsApiTest` added. |
 | 2026-11-16 | **P4.7 — automatic history sync** | Durable history outbox + debounced scoped import; natural-key pull dedupe and id-collision re-key. `HistorySyncOutboxTest` added; Room v10 migration. |
 | 2026-11-16 | **Live pipeline validation** | Deployed server confirmed natural-key dedupe and desktop outbox push/clear; Settings Save now flushes pending history. |
 | 2026-11-16 | **Live mobile playback** | AVD: played a real MP3 from All Songs; server received the history row automatically, and Next sent a skipped playback event (insights 60→61). Instrumentation suite: 6/6 passed. |
+| 2026-11-23 | **Web account login** | `AuthSession` signs in through `/auth/login`, keeps access JWTs in memory, stores the rotating refresh token encrypted by an Android Keystore AES/GCM key, refreshes single-flight and retries 401s. Settings has sign-in/out and the legacy API-key fallback. `AuthSessionTest` added. |
+| 2026-11-23 | **P4.8 — auth edge cases** | Sync JSON/file uploads/downloads, app-update checks/APK downloads, and AI DJ clip URLs refresh once on 401 with the failed token; offline/5xx keeps the session. `SyncApi` and `UpdateHttpApi` retry tests added. |
+| 2026-11-23 | **Release** | Android `0.4.24-hathor` (27) published with both auth modes; auth edge-case fixes in `0.4.25-hathor` (28). |
+| 2026-11-23 | **GitHub update source** | Mobile `0.4.26` and desktop `1.0.3` read public GitHub Releases (`android-v*` / `desktop-v*`, dev channel), pick the highest `versionCode`, and verify the asset digest/SHA256SUMS. The old server/SMB channel remains for older clients. |
+| 2026-11-23 | **Dedicated login screens** | Desktop gets the web-styled full-screen gate; Android gets a matching Compose gate with the app logo. Both add show/hide password, Keystore/keyring token storage, and move sign-in out of Settings. |

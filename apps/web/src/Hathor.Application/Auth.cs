@@ -199,8 +199,12 @@ public sealed class RefreshHandler(
     }
 }
 
-// POST /api/v1/auth/change-password (requires the current password)
-public sealed record ChangePasswordCommand(Guid UserId, string CurrentPassword, string NewPassword)
+// POST /api/v1/auth/change-password (requires the current password).
+// CurrentSessionId lets the caller keep its own login while every other
+// refresh token is revoked.
+public sealed record ChangePasswordCommand(
+    Guid UserId, string CurrentPassword, string NewPassword,
+    Guid? CurrentSessionId = null)
     : IRequest;
 
 public sealed class ChangePasswordValidator : AbstractValidator<ChangePasswordCommand>
@@ -212,7 +216,9 @@ public sealed class ChangePasswordValidator : AbstractValidator<ChangePasswordCo
     }
 }
 
-public sealed class ChangePasswordHandler(IUserRepository users) : IRequestHandler<ChangePasswordCommand>
+public sealed class ChangePasswordHandler(
+    IUserRepository users,
+    ISessionRepository sessions) : IRequestHandler<ChangePasswordCommand>
 {
     public async Task Handle(ChangePasswordCommand cmd, CancellationToken ct)
     {
@@ -221,7 +227,21 @@ public sealed class ChangePasswordHandler(IUserRepository users) : IRequestHandl
         if (!BCrypt.Net.BCrypt.Verify(cmd.CurrentPassword, user.PasswordHash))
             throw new UnauthorizedAccessException("Current password is incorrect.");
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(cmd.NewPassword);
+
+        // A password change invalidates every other device's refresh token.
+        // Keep the session that performed the change so the UI does not log
+        // the user out of the tab/device they are using. API-key callers have
+        // no session id, so they revoke every session.
+        var active = await sessions.ListActiveAsync(cmd.UserId, ct);
+        foreach (var session in active)
+        {
+            if (cmd.CurrentSessionId is { } current && session.Id == current)
+                continue;
+            await sessions.RevokeAsync(session.Id, cmd.UserId, ct);
+        }
+
         await users.SaveChangesAsync(ct);
+        await sessions.SaveChangesAsync(ct);
     }
 }
 

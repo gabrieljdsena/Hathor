@@ -19,18 +19,20 @@ public sealed class AuthSessionTests : IAsyncLifetime
     private static System.Net.Http.Headers.AuthenticationHeaderValue Bearer(string token) =>
         new("Bearer", token);
 
-    private async Task<Tokens> RegisterAsync(string username, bool rememberMe = false)
+    private async Task<Tokens> RegisterAsync(
+        string username, bool rememberMe = false, string? deviceLabel = null)
     {
         var reg = await _client.PostAsJsonAsync("/api/v1/auth/register",
-            new { username, password = "auth-test-123", rememberMe });
+            new { username, password = "auth-test-123", rememberMe, deviceLabel });
         reg.EnsureSuccessStatusCode();
         return (await reg.Content.ReadFromJsonAsync<Tokens>())!;
     }
 
-    private async Task<Tokens> LoginAsync(string username, bool rememberMe = false)
+    private async Task<Tokens> LoginAsync(
+        string username, bool rememberMe = false, string? deviceLabel = null)
     {
         var res = await _client.PostAsJsonAsync("/api/v1/auth/login",
-            new { username, password = "auth-test-123", rememberMe });
+            new { username, password = "auth-test-123", rememberMe, deviceLabel });
         res.EnsureSuccessStatusCode();
         return (await res.Content.ReadFromJsonAsync<Tokens>())!;
     }
@@ -89,6 +91,33 @@ public sealed class AuthSessionTests : IAsyncLifetime
             .Should().Be(HttpStatusCode.NoContent);
         (await TryLoginAsync(name, "auth-test-123")).Should().Be(HttpStatusCode.Unauthorized);
         (await TryLoginAsync(name, "new-password-123")).Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ChangePassword_RevokesOtherSessions_KeepsCurrent()
+    {
+        var name = $"pwr-{Guid.NewGuid():N}";
+        var first = await RegisterAsync(name);
+        var second = await LoginAsync(name, rememberMe: true, deviceLabel: "Pixel 8");
+
+        (await ChangePasswordAsync(second.AccessToken, "auth-test-123", "new-password-123"))
+            .Should().Be(HttpStatusCode.NoContent);
+
+        // The session that changed the password keeps working.
+        (await RefreshStatusAsync(second.RefreshToken)).Should().Be(HttpStatusCode.OK);
+        // Every other device must sign in again.
+        (await RefreshStatusAsync(first.RefreshToken)).Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Login_StoresExplicitDeviceLabel()
+    {
+        var name = $"dl-{Guid.NewGuid():N}";
+        await RegisterAsync(name);
+        var login = await LoginAsync(name, deviceLabel: "Living room PC");
+
+        var sessions = await SessionsAsync(login.AccessToken);
+        sessions.Should().ContainSingle(s => s.DeviceLabel == "Living room PC");
     }
 
     [Fact]

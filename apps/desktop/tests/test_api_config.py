@@ -56,42 +56,26 @@ class ApiConfigTests(unittest.TestCase):
         self.assertEqual(api_config.get_api_config_info(self.db_path).key,
                          "hth_abcdefgh1234")
 
-    def test_env_is_the_fallback(self):
-        with patch.dict(os.environ, {
-            "HATHOR_API_URL": "http://env-host:5051/",
-            "HATHOR_API_KEY": "hth_envkey1234",
-        }, clear=False):
-            info = api_config.get_api_config_info(self.db_path)
-            self.assertEqual(info.source, "env")
-            self.assertEqual(info.url, "http://env-host:5051")
-            self.assertEqual(info.key, "hth_envkey1234")
-
-        api_config.save_api_config("http://runtime:5051", "hth_runtime1234", self.db_path)
-        with patch.dict(os.environ, {
+    def test_environment_cannot_set_the_server(self):
+        env = {
             "HATHOR_API_URL": "http://env-host:5051",
             "HATHOR_API_KEY": "hth_envkey1234",
-        }, clear=False):
+            "WEB_API": "hth_webapikey1234",
+            "WEB_API_URL": "http://web-env:5051",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            info = api_config.get_api_config_info(self.db_path)
+            self.assertEqual(info.source, "none")
+            self.assertEqual(info.url, "")
+            self.assertEqual(info.key, "")
+            view = api_config.get_api_config_view(self.db_path)
+            self.assertFalse(view["configured"])
+
+        api_config.save_api_config("http://runtime:5051", "hth_runtime1234", self.db_path)
+        with patch.dict(os.environ, env, clear=False):
             info = api_config.get_api_config_info(self.db_path)
             self.assertEqual(info.source, "settings")
             self.assertEqual(info.url, "http://runtime:5051")
-
-    def test_web_api_env_alias_and_url_aliases(self):
-        with patch.dict(os.environ, {
-            "WEB_API": "hth_webapikey1234",
-            "WEB_API_URL": "http://web-env:5051/",
-        }, clear=True):
-            info = api_config.get_api_config_info(self.db_path)
-            self.assertEqual(info.source, "env")
-            self.assertEqual(info.key, "hth_webapikey1234")
-            self.assertEqual(info.url, "http://web-env:5051")
-
-        with patch.dict(os.environ, {
-            "HATHOR_API_KEY": "hth_canonical1234",
-            "WEB_API": "http://web-env:5051",
-        }, clear=True):
-            info = api_config.get_api_config_info(self.db_path)
-            self.assertEqual(info.key, "hth_canonical1234")
-            self.assertEqual(info.url, "http://web-env:5051")
 
     def test_validation(self):
         with self.assertRaises(ValueError):
@@ -155,7 +139,7 @@ class ApiConfigTests(unittest.TestCase):
             )
 
             self.assertFalse(result["ok"])
-            self.assertIn("rejected the api key", result["message"].lower())
+            self.assertIn("rejected the credentials", result["message"].lower())
 
     def test_ensure_settings_columns_upgrades_old_schema(self):
         old_db = os.path.join(self.tmp.name, "old.db")
@@ -169,6 +153,8 @@ class ApiConfigTests(unittest.TestCase):
             conn.close()
         self.assertIn("hathor_api_url", columns)
         self.assertIn("hathor_api_key", columns)
+        self.assertIn("hathor_auth_mode", columns)
+        self.assertIn("hathor_auth_username", columns)
 
 
 if __name__ == "__main__":

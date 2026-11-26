@@ -1,25 +1,29 @@
 import os
+import shutil
 import sys
 import subprocess
-from dotenv import load_dotenv
 
-load_dotenv()
-# Also look next to main.py, so launching from the repo root or an IDE with a
-# different working directory still finds the desktop .env.
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+from services import platform_support
 
-# In a frozen build the .env must live next to the exe (never bundled inside it).
-if getattr(sys, 'frozen', False):
-    load_dotenv(os.path.join(os.path.dirname(sys.executable), '.env'))
+_runtime_dirs = platform_support.ensure_runtime_dirs()
+_migration = platform_support.migrate_legacy_data()
 
-if not getattr(sys, 'frozen', False):
+if (not platform_support.is_frozen()
+        and not platform_support.externally_managed()
+        and not os.getenv("HATHOR_SKIP_TAILWIND")
+        and shutil.which("npx")):
     print(" [Dev] Compiling Tailwind CSS...")
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    current_dir = str(platform_support.app_root())
     input_css = os.path.join(current_dir, 'ui', 'input.css')
     output_css = os.path.join(current_dir, 'ui', 'output.css')
     subprocess.run(f"npx @tailwindcss/cli -i \"{input_css}\" -o \"{output_css}\"", shell=True)
 
 import webview
+
+if platform_support.is_linux():
+    from services.window_chrome import install_linux_frameless_workaround
+    install_linux_frameless_workaround()
+
 import threading
 import sqlite3
 import json
@@ -30,15 +34,11 @@ import settings
 from api import Api
 
 
-# Persistent file log (hathor.log next to the DB) so issues can be
-# diagnosed even when no console is visible (e.g. frozen builds).
+# Persistent file log (XDG state on Linux, next to the exe on Windows).
 def _setup_file_logging():
     try:
-        if getattr(sys, 'frozen', False):
-            log_dir = os.path.dirname(sys.executable)
-        else:
-            log_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(log_dir, 'hathor.log')
+        log_file = platform_support.log_path()
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s [%(levelname)s] %(message)s',
@@ -54,6 +54,14 @@ def _setup_file_logging():
 _setup_file_logging()
 _log = logging.getLogger('hathor')
 _log.info("=== Hathor starting ===")
+_log.info("platform=%s package_managed=%s installer_managed=%s update_mode=%s",
+          platform_support.platform_key(), platform_support.package_managed(),
+          platform_support.installer_managed(), platform_support.update_mode())
+for _name, _path in _runtime_dirs.items():
+    if str(_path).startswith("error:"):
+        _log.warning("Could not create %s dir: %s", _name, _path)
+if _migration.get("migrated_db"):
+    _log.info("Migrated legacy database from %s", _migration["migrated_db"])
 
 
 def _log_uncaught(exc_type, exc_value, exc_tb):
@@ -85,18 +93,14 @@ if hasattr(threading, 'excepthook'):
 
 # 1. Setup paths
 def get_base_path():
-    if hasattr(sys, '_MEIPASS'):
-        return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
+    return str(platform_support.app_root())
 
 def get_data_path():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return str(platform_support.data_dir())
 
 current_dir = get_base_path()
 data_dir = get_data_path()
-db_path = os.path.join(data_dir, 'music_player.db')
+db_path = str(platform_support.db_path())
 html_file = os.path.join(current_dir, 'ui', 'index.html')
 
 # Detect first run: DB file doesn't exist yet
@@ -132,6 +136,7 @@ except Exception:
     center_x, center_y = None, None
 
 # 3. Create window and pass the api instance
+window_caps = platform_support.window_capabilities()
 window = webview.create_window(
     title='Hathor',
     url=html_file,
@@ -141,7 +146,9 @@ window = webview.create_window(
     x=center_x,
     y=center_y,
     min_size=(895, 400),
-    frameless=True,
+    # Windows and Linux both use the custom HTML titlebar (frameless).
+    frameless=window_caps['frameless'],
+    background_color='#09090b',
     # The app implements its own titlebar drag (pointer events + move_window).
     # pywebview's native easy_drag would make EVERY mousedown in the app move
     # the window (and fight with sliders/seekbars), so it must stay off.
@@ -181,7 +188,7 @@ def on_resized(width, height):
 from services.api_sync import sync_backend as _sync_backend
 remote_configured = _sync_backend() == "api"
 if not remote_configured:
-    print(" [Sync] No sync server configured in Settings -> Web API or .env, sync disabled.")
+    print(" [Sync] No sync server configured; sign in from the login screen.")
 
 def _run_startup_maintenance(window):
     """Background FFmpeg auto-download + YouTube-lib update checks.
@@ -252,11 +259,13 @@ def _run_startup_maintenance(window):
 
 
 def _enable_windows_snap_when_ready(window):
-    """Apply native resize/snap styles once the form has been created.
+    """Apply native resize/snap styles once the Windows form is created.
 
     pywebview runs ``on_start`` on a worker thread before the native form is
     created, so ``window.native`` is still None at that point.
     """
+    if not platform_support.is_windows():
+        return
     try:
         if not window.events.shown.wait(15):
             print(" [Python] Window did not show; Windows snap not enabled.")
@@ -267,17 +276,39 @@ def _enable_windows_snap_when_ready(window):
         print(f" [Python] Could not enable Windows snap: {e}")
 
 
+def _enable_linux_chrome_when_ready(window):
+    """Attach the GTK button tracker used by compositor move/resize drags."""
+    if not platform_support.is_linux():
+        return
+    try:
+        if not window.events.shown.wait(15):
+            print(" [Python] Window did not show; Linux window chrome not enabled.")
+            return
+        if not api.enable_linux_chrome():
+            print(" [Python] Linux window chrome tracker was not enabled.")
+    except Exception as e:
+        print(f" [Python] Could not enable Linux window chrome: {e}")
+
+
 def on_start(window):
-    pygame.init()
-    pygame.mixer.init()
+    try:
+        pygame.init()
+        pygame.mixer.init()
+    except Exception as e:
+        # WSLg/headless sessions may have no audio device yet; the UI should
+        # still open and report playback failures when a track is played.
+        _log.warning("Audio initialization failed: %s", e)
 
     # pywebview invokes on_start before the native form exists, so wait for
-    # the shown event before touching the HWND. The frameless window lacks
-    # WS_THICKFRAME; restore it (with a full-bleed client area) so Windows
-    # Aero Snap works on titlebar drags.
-    threading.Thread(
-        target=_enable_windows_snap_when_ready, args=(window,), daemon=True
-    ).start()
+    # the shown event before touching the HWND. Linux uses native decorations.
+    if platform_support.is_windows():
+        threading.Thread(
+            target=_enable_windows_snap_when_ready, args=(window,), daemon=True
+        ).start()
+    elif platform_support.is_linux():
+        threading.Thread(
+            target=_enable_linux_chrome_when_ready, args=(window,), daemon=True
+        ).start()
 
     # Startup maintenance (FFmpeg + yt-dlp updates) in the background.
     threading.Thread(target=_run_startup_maintenance, args=(window,), daemon=True).start()
@@ -395,4 +426,4 @@ if __name__ == '__main__':
     window.events.resized += on_resized
     if hasattr(window.events, 'closing'):
         window.events.closing += on_closing
-    webview.start(on_start, window, debug=False)
+    webview.start(on_start, window, debug=False, gui=platform_support.webview_gui())

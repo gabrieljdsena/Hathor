@@ -1,13 +1,17 @@
 pywebview
 mutagen
 yt-dlp
-pygame
+# pygame-ce is the Windows build used by the frozen app; Arch/Debian ship
+# the upstream pygame distribution under the same `pygame` import.
+pygame-ce; sys_platform == "win32"
+pygame; sys_platform != "win32"
 psutil
 pykakasi
 # Sync speaks the Hathor Web API over stdlib urllib
 # (services/api_sync.py) — no DB driver needed.
 Pillow
-python-dotenv
+# Refresh tokens for Web API login live in the OS credential store.
+keyring
 # winsdk only ships wheels up to CPython 3.12. On 3.13+ pip falls back to an
 # sdist that needs VS Build Tools + CMake, which breaks the whole install.
 # Gate it so `pip install -r requirements.txt` completes everywhere; the app

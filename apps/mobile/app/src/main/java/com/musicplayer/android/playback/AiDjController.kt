@@ -1,4 +1,4 @@
-package com.musicplayer.android.playback
+﻿package com.musicplayer.android.playback
 
 import android.content.Context
 import android.util.Log
@@ -342,7 +342,7 @@ class AiDjController(
     private suspend fun resolveBatchWithDownloads(batch: AiDjBatch): List<File> =
         withContext(Dispatchers.IO) {
             val api = if (SyncConfig.isConfigured()) {
-                SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
+                SyncApi()
             } else {
                 null
             }

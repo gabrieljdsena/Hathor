@@ -42,6 +42,13 @@ python main.py
 # build: pyinstaller music_player.spec
 ```
 
+Linux (one command, per-user install from the newest release):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrieljdsena/Hathor/develop/apps/desktop/scripts/install-linux.sh | bash
+~/.local/opt/hathor/install-linux.sh --update
+```
+
 Full docs: `apps/desktop/README.md` + `apps/desktop/docs/`.
 
 ### 2. Web — `apps/web/`
@@ -87,6 +94,13 @@ Full docs: `apps/mobile/README.md`. `PLAN.md` / `FEATURE_PLAN.md` are the
 original build plans, kept for reference.
 
 Status/plan: `apps/mobile/README.md`, `apps/mobile/PLAN.md`, `apps/mobile/FEATURE_PLAN.md`.
+
+## Authentication
+
+Desktop and Android can sign in with the same Web account as the browser, or
+keep using a scoped `hth_` API key as an advanced fallback. Passwords are never
+stored; refresh tokens live in the OS credential store / Android Keystore.
+See `docs/AUTH.md` for the flow, security notes and phase status.
 
 ## Shared sync — `packages/contracts/`
 

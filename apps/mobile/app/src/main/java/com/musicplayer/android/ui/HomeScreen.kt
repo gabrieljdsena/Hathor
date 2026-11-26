@@ -1,21 +1,31 @@
 package com.musicplayer.android.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
@@ -37,7 +47,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.musicplayer.android.ui.theme.hathorPressable
 import com.musicplayer.android.data.ArtworkRepository
 import com.musicplayer.android.data.DailyMixRepository
 import com.musicplayer.android.data.MetadataRepository
@@ -54,6 +71,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
+
+private data class HomeShortcut(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit
+)
 
 /**
  * Home dashboard (desktop home.html): NOT a song list. Exactly: an All
@@ -100,7 +124,7 @@ fun HomeScreen(
     suspend fun reload() {
         loading = true
         try {
-            withContext(Dispatchers.IO) { library.refreshLibrary() }
+            library.refreshLibraryIfStale()
         } catch (_: Exception) {
         }
         try {
@@ -149,105 +173,142 @@ fun HomeScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        // Header
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            HeaderIconTile {
-                Icon(Icons.Filled.Home, contentDescription = null, tint = HathorColors.AccentBright)
-            }
-            Column {
-                Text("Home", style = MaterialTheme.typography.titleLarge)
-                Text(dateSubtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-            }
-        }
-
-        // Cards
-        HomeCard(
+    val configuration = LocalConfiguration.current
+    val wide = configuration.screenWidthDp >= 840
+    val compact = configuration.screenHeightDp < 500
+    val artistCount = songs.map { it.artist }.distinct().size
+    val albumCount = songs.map { it.album }.distinct().size
+    val shortcuts = listOf(
+        HomeShortcut(
             title = "All Songs",
-            subtitle = if (songs.isEmpty() && loading) "Loading library…"
-            else "${songs.size} song${if (songs.size == 1) "" else "s"} in your library",
-            hint = "Browse, search and sort your full library.",
-            icon = { Icon(Icons.Filled.MusicNote, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+            subtitle = if (songs.isEmpty() && loading) "Loading…"
+            else "${songs.size} song${if (songs.size == 1) "" else "s"}",
+            icon = Icons.Filled.MusicNote,
             onClick = onOpenAllSongs
-        )
-        HomeCard(
-            title = "Daily Mix",
-            subtitle = if (mixSize == null) "Generating your mix…"
-            else "$mixSize songs · $mixDateShort",
-            hint = "Fresh every day.",
-            badge = "Today",
-            icon = { Icon(Icons.Filled.Refresh, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-            onClick = onOpenDailyMix
-        )
-        HomeCard(
+        ),
+        HomeShortcut(
             title = "Artists",
-            subtitle = "${songs.map { it.artist }.distinct().size} artists in your library",
-            hint = "Browse by artist, artwork and play-all.",
-            icon = { Icon(Icons.Filled.Person, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+            subtitle = "$artistCount artist${if (artistCount == 1) "" else "s"}",
+            icon = Icons.Filled.Person,
             onClick = onOpenArtists
-        )
-        HomeCard(
+        ),
+        HomeShortcut(
             title = "Albums",
-            subtitle = "${songs.map { it.album }.distinct().size} albums in your library",
-            hint = "Browse album artwork and track lists.",
-            icon = { Icon(Icons.Filled.Album, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
+            subtitle = "$albumCount album${if (albumCount == 1) "" else "s"}",
+            icon = Icons.Filled.Album,
             onClick = onOpenAlbums
-        )
-        HomeCard(
+        ),
+        HomeShortcut(
             title = "Podcasts",
-            subtitle = if (podcastEpisodes.isEmpty()) "No episodes yet"
+            subtitle = if (podcastEpisodes.isEmpty()) "No episodes"
             else "${podcastEpisodes.size} episode${if (podcastEpisodes.size == 1) "" else "s"}",
-            hint = "Your podcast library, chapters and tags.",
-            icon = { Icon(Icons.Filled.Mic, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-            onClick = onOpenPodcasts,
-            onPlay = podcastEpisodes.firstOrNull()?.let { episode ->
-                { onPlayPodcast(episode) }
-            }
+            icon = Icons.Filled.Mic,
+            onClick = onOpenPodcasts
         )
-        resumeSpot?.let { spot ->
-            val pos = "%d:%02d".format(spot.positionSec.toInt() / 60, spot.positionSec.toInt() % 60)
-            HomeCard(
-                title = "Continue on ${spot.device ?: "another device"}",
-                subtitle = "${resumeTitle ?: spot.file} · $pos",
-                hint = "Resume where you left off.",
-                icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White) },
-                onClick = { onResumeSpot(spot) },
-                onPlay = { onResumeSpot(spot) }
+    )
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 1100.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 20.dp)
+        ) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HeaderIconTile {
+                    Icon(Icons.Filled.Home, contentDescription = null, tint = HathorColors.AccentBright)
+                }
+                Column {
+                    Text("Home", style = MaterialTheme.typography.titleLarge)
+                    Text(dateSubtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+                }
+            }
+
+            // Hero: the mix is the day's primary action.
+            DailyMixHero(
+                mixSize = mixSize,
+                mixDate = mixDateShort,
+                loading = loading,
+                compact = compact,
+                onClick = onOpenDailyMix
+            )
+
+            // Compact library shortcuts: one row on wide screens, 2x2 otherwise.
+            if (wide) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    shortcuts.forEach { shortcut ->
+                        ShortcutCard(
+                            title = shortcut.title,
+                            subtitle = shortcut.subtitle,
+                            icon = shortcut.icon,
+                            onClick = shortcut.onClick,
+                            compact = compact,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    shortcuts.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            row.forEach { shortcut ->
+                                ShortcutCard(
+                                    title = shortcut.title,
+                                    subtitle = shortcut.subtitle,
+                                    icon = shortcut.icon,
+                                    onClick = shortcut.onClick,
+                                    compact = compact,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            resumeSpot?.let { spot ->
+                val pos = "%d:%02d".format(spot.positionSec.toInt() / 60, spot.positionSec.toInt() % 60)
+                ResumeCard(
+                    title = "Continue on ${spot.device ?: "another device"}",
+                    subtitle = "${resumeTitle ?: spot.file} · $pos",
+                    onClick = { onResumeSpot(spot) }
+                )
+            }
+
+            // Recently Played strip
+            StripSection(
+                title = "Recently Played",
+                songs = recent,
+                emptyText = "Nothing played yet — play something and it will show up here.",
+                library = library,
+                loading = loading,
+                nowPlayingFile = nowPlayingFile,
+                isPlaying = isPlaying,
+                onSeeAll = onOpenHistory,
+                onPlay = { song -> onPlay(song, recent, PlaybackSource("recently_played", null)) },
+                onMenu = { song ->
+                    menuSong = Triple(song, recent, PlaybackSource("recently_played", null))
+                }
+            )
+
+            // Recently Downloaded strip
+            StripSection(
+                title = "Recently Downloaded",
+                songs = downloaded,
+                emptyText = "Nothing downloaded yet — grab some music and it will show up here.",
+                library = library,
+                loading = loading,
+                nowPlayingFile = nowPlayingFile,
+                isPlaying = isPlaying,
+                onSeeAll = onOpenHistory,
+                onPlay = { song -> onPlay(song, downloaded, PlaybackSource("recently_downloaded", null)) },
+                onMenu = { song ->
+                    menuSong = Triple(song, downloaded, PlaybackSource("recently_downloaded", null))
+                }
             )
         }
-
-        // Recently Played strip
-        StripSection(
-            title = "Recently Played",
-            songs = recent,
-            emptyText = "Nothing played yet — play something and it will show up here.",
-            library = library,
-            nowPlayingFile = nowPlayingFile,
-            isPlaying = isPlaying,
-            onSeeAll = onOpenHistory,
-            onPlay = { song -> onPlay(song, recent, PlaybackSource("recently_played", null)) },
-            onMenu = { song ->
-                menuSong = Triple(song, recent, PlaybackSource("recently_played", null))
-            }
-        )
-
-        // Recently Downloaded strip
-        StripSection(
-            title = "Recently Downloaded",
-            songs = downloaded,
-            emptyText = "Nothing downloaded yet — grab some music and it will show up here.",
-            library = library,
-            nowPlayingFile = nowPlayingFile,
-            isPlaying = isPlaying,
-            onSeeAll = onOpenHistory,
-            onPlay = { song -> onPlay(song, downloaded, PlaybackSource("recently_downloaded", null)) },
-            onMenu = { song ->
-                menuSong = Triple(song, downloaded, PlaybackSource("recently_downloaded", null))
-            }
-        )
     }
 
     menuSong?.let { (song, visible, source) ->
@@ -290,53 +351,182 @@ fun HomeScreen(
 }
 
 @Composable
-private fun HomeCard(
-    title: String,
-    subtitle: String,
-    hint: String,
-    badge: String? = null,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit,
-    onPlay: (() -> Unit)? = null
+private fun DailyMixHero(
+    mixSize: Int?,
+    mixDate: String,
+    loading: Boolean,
+    compact: Boolean,
+    onClick: () -> Unit
 ) {
+    val subtitle = when {
+        loading -> "Generating your mix…"
+        mixSize == null -> "Mix unavailable"
+        mixSize == 1 -> "1 song · $mixDate"
+        else -> "$mixSize songs · $mixDate"
+    }
     Row(
-        modifier = Modifier.fillMaxWidth().hathorGlass().clickable(onClick = onClick).padding(20.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        HathorColors.Accent.copy(alpha = 0.34f),
+                        HathorColors.AccentDeep.copy(alpha = 0.12f),
+                        HathorColors.SurfaceGlass
+                    )
+                )
+            )
+            .border(
+                1.dp,
+                HathorColors.Accent.copy(alpha = 0.30f),
+                RoundedCornerShape(20.dp)
+            )
+            .hathorPressable(onClick)
+            .padding(if (compact) 12.dp else 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(56.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            modifier = Modifier
+                .size(if (compact) 44.dp else 56.dp)
+                .clip(RoundedCornerShape(if (compact) 14.dp else 18.dp))
                 .background(HathorColors.BrandGradient),
             contentAlignment = Alignment.Center
-        ) { icon() }
+        ) {
+            Icon(
+                Icons.Filled.Refresh,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(if (compact) 22.dp else 28.dp)
+            )
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                badge?.let {
+                Text("Daily Mix", style = MaterialTheme.typography.titleMedium)
+                if (!loading && mixSize != null) {
                     Text(
-                        it.uppercase(),
+                        "TODAY",
                         style = MaterialTheme.typography.bodySmall,
                         color = HathorColors.AccentBright
                     )
                 }
             }
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-            Text(hint, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextBody)
         }
-        if (onPlay != null) {
-            IconButton(onClick = onPlay) {
-                Icon(
-                    Icons.Filled.PlayArrow,
-                    contentDescription = "Play",
-                    tint = HathorColors.AccentBright
-                )
-            }
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = "Open Daily Mix",
+            tint = HathorColors.AccentBright
+        )
+    }
+}
+
+@Composable
+private fun ShortcutCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .height(if (compact) 86.dp else 124.dp)
+            .hathorGlass()
+            .hathorPressable(onClick)
+            .padding(if (compact) 10.dp else 14.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)
+    ) {
+        ShortcutIcon(
+            icon,
+            size = if (compact) 30.dp else 40.dp,
+            iconSize = if (compact) 17.dp else 22.dp,
+            radius = if (compact) 10.dp else 12.dp
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
+    }
+}
+
+@Composable
+private fun ResumeCard(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .hathorGlass()
+            .hathorPressable(onClick)
+            .padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ShortcutIcon(Icons.Filled.PlayArrow)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = "Resume",
+            tint = HathorColors.AccentBright
+        )
+    }
+}
+
+@Composable
+private fun ShortcutIcon(
+    icon: ImageVector,
+    size: Dp = 40.dp,
+    iconSize: Dp = 22.dp,
+    radius: Dp = 12.dp
+) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(radius))
+            .background(HathorColors.AccentFill)
+            .border(1.dp, HathorColors.Accent.copy(alpha = 0.2f), RoundedCornerShape(radius)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = HathorColors.AccentBright,
+            modifier = Modifier.size(iconSize)
+        )
     }
 }
 
@@ -346,6 +536,7 @@ private fun StripSection(
     songs: List<SongMeta>,
     emptyText: String,
     library: MetadataRepository,
+    loading: Boolean = false,
     nowPlayingFile: String?,
     isPlaying: Boolean,
     onSeeAll: () -> Unit,
@@ -367,10 +558,16 @@ private fun StripSection(
                 )
             }
         }
-        if (songs.isEmpty()) {
-            Text(emptyText, style = MaterialTheme.typography.bodySmall, color = HathorColors.TextHint)
-        } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        when {
+            loading -> LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(3) { StripSkeleton() }
+            }
+            songs.isEmpty() -> Text(
+                emptyText,
+                style = MaterialTheme.typography.bodySmall,
+                color = HathorColors.TextHint
+            )
+            else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(songs, key = { it.file }) { song ->
                     StripCard(
                         song = song,
@@ -383,5 +580,44 @@ private fun StripSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StripSkeleton() {
+    val transition = rememberInfiniteTransition(label = "strip-skeleton")
+    val pulse by transition.animateFloat(
+        initialValue = 0.10f,
+        targetValue = 0.24f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "strip-skeleton-alpha"
+    )
+    Column(
+        modifier = Modifier.width(156.dp).hathorGlass().padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(HathorColors.TextHint.copy(alpha = pulse))
+        )
+        Box(
+            modifier = Modifier
+                .height(14.dp)
+                .fillMaxWidth(0.85f)
+                .clip(RoundedCornerShape(4.dp))
+                .background(HathorColors.TextHint.copy(alpha = pulse))
+        )
+        Box(
+            modifier = Modifier
+                .height(10.dp)
+                .fillMaxWidth(0.55f)
+                .clip(RoundedCornerShape(4.dp))
+                .background(HathorColors.TextHint.copy(alpha = pulse))
+        )
     }
 }

@@ -16,6 +16,7 @@ import urllib.parse
 import settings
 
 from .api_config import get_api_config
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi
 from .player_sync import PlayerSync
 
@@ -125,11 +126,16 @@ class AiDjApi:
         self.timeout = timeout
 
     def _client(self, timeout=None):
+        try:
+            session = get_auth_session(self.api.db_path)
+            if session.configured():
+                return session.api_client(timeout=timeout or self.timeout)
+        except Exception:
+            pass
         url, key = get_api_config(self.api.db_path)
         if not url or not key:
             raise AiDjError(
-                "Web API is not configured. Open Settings -> Web API and add "
-                "a key with player:read + player:control."
+                "Web API is not configured. Sign in in Settings -> Web API."
             )
         return HathorApi(url, key, timeout=timeout or self.timeout)
 
@@ -178,10 +184,7 @@ class AiDjApi:
     def clip_url(self, clip_id):
         if not clip_id:
             raise AiDjError("A clip id is required.")
-        url, key = get_api_config(self.api.db_path)
-        if not url or not key:
-            raise AiDjError("Web API is not configured.")
-        client = HathorApi(url, key)
+        client = self._client()
         safe = urllib.parse.quote(str(clip_id))
         return client.media_url(f"/api/v1/ai-dj/clips/{safe}/audio")
 
@@ -242,13 +245,23 @@ class AiDjController:
     def view(self):
         with self._lock:
             state = self._state or {}
-            url, key = get_api_config(self.api.db_path)
+            api_configured = False
+            try:
+                api_configured = bool(get_auth_session(self.api.db_path).configured())
+            except Exception:
+                pass
+            if not api_configured:
+                try:
+                    url, key = get_api_config(self.api.db_path)
+                    api_configured = bool(url and key)
+                except Exception:
+                    pass
             settings = state.get("settings") or {}
             current = self._local_batch if self._active else state.get("currentBatch")
             nxt = self._next_batch if self._active else state.get("nextBatch")
             current_song = self._song_view(self.api.last_song) if self._active else None
             return {
-                "apiConfigured": bool(url and key),
+                "apiConfigured": api_configured,
                 "enabled": bool(state.get("enabled", False)),
                 "configured": bool(state.get("configured", False)),
                 "status": state.get("status", "idle"),

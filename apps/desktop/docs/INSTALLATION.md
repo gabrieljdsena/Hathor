@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers setting up Hathor from source on Windows. The app targets Windows (WebView2/Edge via pywebview, SMTC media controls, Windows-safe filenames), so macOS/Linux support is not guaranteed.
+This guide covers setting up Hathor from source on Windows and Arch Linux. Windows uses pywebview/WebView2 and SMTC media controls; Linux uses GTK 3 + WebKitGTK 4.1 and native window decorations. The Arch package in `packaging/arch/` is the supported Linux distribution path.
 
 ## Prerequisites
 
@@ -9,6 +9,46 @@ This guide covers setting up Hathor from source on Windows. The app targets Wind
 | Python | 3.10+ (tested on 3.11) | Backend runtime |
 | Node.js + npm | 18+ | Tailwind CLI and vendored frontend deps |
 | FFmpeg | latest | Audio extraction/conversion to MP3 |
+
+### Linux (recommended: release installer)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrieljdsena/Hathor/develop/apps/desktop/scripts/install-linux.sh | bash
+```
+
+This installs the newest GitHub desktop release per-user under `~/.local`
+(`~/.local/opt/hathor`, launcher in `~/.local/bin`, menu entry + icon) and
+verifies the release SHA-256. Add `--install-deps` if the system is missing
+GTK 3/WebKitGTK/PyGObject/Python packages. Update and remove with:
+
+```bash
+~/.local/opt/hathor/install-linux.sh --update
+~/.local/opt/hathor/install-linux.sh --uninstall
+```
+
+The installer uses the system Python/GTK/WebKit stack and only creates a
+private venv when pure-Python packages (e.g. `pywebview` on Debian/Fedora) are
+missing. See [LINUX.md](LINUX.md) for the full layout and distro notes.
+
+### Linux (Arch, from source or native package)
+
+```bash
+sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
+  python-pygame python-mutagen python-pillow python-psutil \
+  python-pykakasi python-keyring yt-dlp ffmpeg
+python main.py
+```
+
+For a packaged install:
+
+```bash
+cd packaging/arch
+./build-local.sh
+```
+
+The package launcher sets `HATHOR_PACKAGE_MANAGED=1`; data goes to XDG
+directories and pacman owns updates. Release-installer installs instead use
+`HATHOR_INSTALLER_MANAGED=1` and update via `install-linux.sh --update`.
 
 ## 1. Clone the repository
 

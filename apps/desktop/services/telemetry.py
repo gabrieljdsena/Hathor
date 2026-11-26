@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .api_config import get_api_config
+from .auth_session import get_auth_session
 from .hathor_api import HathorApi
 
 
@@ -135,11 +136,17 @@ class PlaybackTelemetry:
 
     def _send(self, payload):
         try:
-            url, key = get_api_config(self.api.db_path)
-            if not url or not key:
+            session = get_auth_session(self.api.db_path)
+            client = None
+            if session.configured():
+                client = session.api_client(timeout=6)
+            else:
+                url, key = get_api_config(self.api.db_path)
+                if url and key:
+                    client = HathorApi(url, key, timeout=6)
+            if client is None:
                 return
-            HathorApi(url, key, timeout=6).post(
-                "/api/v1/player/playback-events", payload=payload)
+            client.post("/api/v1/player/playback-events", payload=payload)
         except Exception:
             # Telemetry is best-effort and must never surface as a play error.
             pass

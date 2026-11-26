@@ -70,26 +70,12 @@ fun SongCover(
             null
         }
     }
-    Box(
-        modifier = Modifier.size(size).clip(RoundedCornerShape(8.dp)),
-        contentAlignment = Alignment.Center
-    ) {
-        val bmp = bitmap
-        if (bmp != null) {
-            androidx.compose.foundation.Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = "Cover",
-                modifier = Modifier.size(size)
-            )
-        } else {
-            Icon(
-                Icons.Filled.MusicNote,
-                contentDescription = null,
-                tint = HathorColors.AccentBright,
-                modifier = Modifier.size(size * 0.6f)
-            )
-        }
-    }
+    HathorArtwork(
+        bitmap = bitmap,
+        contentDescription = "Cover",
+        modifier = Modifier.size(size),
+        cornerRadius = 10.dp
+    )
 }
 
 /** Full song row (All Songs / Daily Mix / playlist detail / history). */
@@ -122,9 +108,9 @@ fun SongRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isActive && isPlaying) {
-            VisualizerBars(modifier = Modifier.size(48.dp, 20.dp))
+            VisualizerBars(modifier = Modifier.size(52.dp, 20.dp))
         } else {
-            SongCover(repo = repo, fileName = song.file, size = 48.dp, isPodcast = song.isPodcast)
+            SongCover(repo = repo, fileName = song.file, size = 52.dp, isPodcast = song.isPodcast)
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -186,7 +172,7 @@ fun StripCard(
 ) {
     val titleColor = if (isActive) HathorColors.AccentBright else HathorColors.TextPrimary
     Column(
-        modifier = modifier.width(144.dp)
+        modifier = modifier.width(156.dp)
             .hathorGlass()
             .then(
                 if (isActive) Modifier.border(
@@ -204,33 +190,19 @@ fun StripCard(
             var bitmap by remember(song.file, song.isPodcast) { mutableStateOf<android.graphics.Bitmap?>(null) }
             val density = LocalDensity.current
             LaunchedEffect(song.file, song.isPodcast) {
-                val px = with(density) { 144.dp.toPx() }.toInt()
+                val px = with(density) { 140.dp.toPx() }.toInt()
                 bitmap = try {
                     repo.coverForSong(song, px)
                 } catch (_: Exception) {
                     null
                 }
             }
-            val bmp = bitmap
-            Box(
-                modifier = Modifier.size(128.dp).clip(RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (bmp != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = song.title,
-                        modifier = Modifier.size(128.dp)
-                    )
-                } else {
-                    Icon(
-                        Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = HathorColors.AccentBright,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
-            }
+            HathorArtwork(
+                bitmap = bitmap,
+                contentDescription = song.title,
+                modifier = Modifier.size(140.dp),
+                cornerRadius = 12.dp
+            )
             if (isActive) {
                 // Animated visualizer badge (desktop strip-playing-badge).
                 Box(

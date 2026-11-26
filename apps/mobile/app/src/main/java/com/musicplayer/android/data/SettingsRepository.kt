@@ -11,9 +11,11 @@ import com.musicplayer.android.data.local.AppDatabase
 import com.musicplayer.android.data.local.SongEntity
 import com.musicplayer.android.engine.DownloadEngine
 import com.musicplayer.android.playback.PlaybackSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,13 +58,21 @@ class SettingsRepository(
     private val _chapterSkip = MutableStateFlow(prefs.getBoolean(KEY_CHAPTER_SKIP, false))
     val chapterSkip: StateFlow<Boolean> = _chapterSkip.asStateFlow()
 
-    /** Reload every flow from prefs (startup + Settings entry). */
-    suspend fun load() {
+    /**
+     * Reload every flow from prefs. Startup skips the wallpaper decode so a
+     * large background image never delays the first frame; [loadBackground]
+     * runs once the splash is gone.
+     */
+    suspend fun load(includeBackground: Boolean = true) {
         _volume.value = prefs.getFloat(KEY_VOLUME, 0.7f)
         _limit.value = prefs.getInt(KEY_LIMIT, 3).coerceIn(1, 20)
         _crossfadeEnabled.value = prefs.getBoolean(KEY_XFADE_ON, false)
         _crossfadeSeconds.value = prefs.getFloat(KEY_XFADE_SECS, 5f)
         _chapterSkip.value = prefs.getBoolean(KEY_CHAPTER_SKIP, false)
+        if (includeBackground) loadBackground()
+    }
+
+    suspend fun loadBackground() = withContext(Dispatchers.IO) {
         _background.value = decodeBackground(prefs.getString(KEY_BACKGROUND, null))
     }
 

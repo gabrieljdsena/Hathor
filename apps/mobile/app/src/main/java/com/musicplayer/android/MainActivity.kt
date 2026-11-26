@@ -4,10 +4,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
@@ -18,11 +20,14 @@ import com.musicplayer.android.data.api.PlaybackApi
 import com.musicplayer.android.data.api.SyncConfig
 import com.musicplayer.android.data.remote.PullWorker
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -39,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.musicplayer.android.data.ArtworkRepository
@@ -59,9 +65,11 @@ import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.DownloadScreen
 import com.musicplayer.android.ui.HistoryScreen
 import com.musicplayer.android.ui.LyricsScreen
+import com.musicplayer.android.ui.LoginScreen
 import com.musicplayer.android.ui.NowPlayingSheet
 import com.musicplayer.android.ui.PlaylistsScreen
 import com.musicplayer.android.ui.SettingsScreen
+import com.musicplayer.android.ui.StartupSplashScreen
 import com.musicplayer.android.ui.SyncProgress
 import com.musicplayer.android.ui.UpdateDialog
 import com.musicplayer.android.ui.querySyncProgress
@@ -75,6 +83,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 
@@ -120,6 +129,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The native splash only bridges the initial window; the Compose
+        // splash below shows the loading indicator while data warms up.
+        val coldStart = savedInstanceState == null
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         configureSystemBars()
         deviceId = getSharedPreferences("hathor", MODE_PRIVATE).let { prefs ->
@@ -185,7 +198,7 @@ class MainActivity : ComponentActivity() {
         // Settings might never be opened, but the player needs its prefs.
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                settingsRepo.load()
+                settingsRepo.load(includeBackground = false)
                 withContext(Dispatchers.Main) {
                     player.setChapterSkip(settingsRepo.chapterSkip.value)
                     player.setVolume(settingsRepo.volume.value)
@@ -247,6 +260,52 @@ class MainActivity : ComponentActivity() {
         setContent {
             HathorTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
+                    var showSplash by rememberSaveable { mutableStateOf(coldStart) }
+                    var authView by remember { mutableStateOf(SyncConfig.view()) }
+                    val authPrefs = remember { getSharedPreferences("hathor", MODE_PRIVATE) }
+                    var legacyKeyAck by remember {
+                        mutableStateOf(authPrefs.getBoolean("legacy_key_login_ack", false))
+                    }
+                    val authConfigured = authView?.configured == true
+                    val legacyKeyGate = authView?.mode == "key" &&
+                        authView?.keySet == true && !legacyKeyAck
+                    val showLoginGate = !showSplash && (!authConfigured || legacyKeyGate)
+                    // Session can be cleared by a rejected refresh at any
+                    // time; surface the dedicated gate without a restart.
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            authView = SyncConfig.view()
+                            delay(1500)
+                        }
+                    }
+                    LaunchedEffect(showLoginGate) {
+                        if (showLoginGate) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                    }
+                    // Only the library scan blocks the splash. Daily Mix,
+                    // history strips, podcasts and queue restore fill in
+                    // behind Home's skeletons after the first frame.
+                    LaunchedEffect(Unit) {
+                        if (!showSplash) return@LaunchedEffect
+                        val started = System.currentTimeMillis()
+                        // The scan must outlive the splash timeout so a large
+                        // first library still populates the persistent cache.
+                        val refreshJob = CoroutineScope(Dispatchers.IO).launch {
+                            runCatching { metadataRepo.refreshLibraryIfStale() }
+                        }
+                        withTimeoutOrNull(5_000L) { refreshJob.join() }
+                        val elapsed = System.currentTimeMillis() - started
+                        if (elapsed < 500L) delay(500L - elapsed)
+                        android.util.Log.i(
+                            "HathorStartup",
+                            "splash released after ${System.currentTimeMillis() - started} ms"
+                        )
+                        showSplash = false
+                    }
+                    Box(modifier = Modifier.fillMaxSize()) {
                     var dest by remember { mutableStateOf(Dest.Library) }
                     // Deep-link into an artist's songs (e.g. history artist
                     // link); consumed once by the All Songs view.
@@ -258,11 +317,18 @@ class MainActivity : ComponentActivity() {
                     val syncState by syncRepo.state.collectAsState()
                     val updateState by updateRepo.state.collectAsState()
                     val updateDialogVisible by updateRepo.dialogVisible.collectAsState()
+                    val downloaderStatus by PlayerApp.instance.downloaderStatus.collectAsState()
                     val wallpaper by settingsRepo.background.collectAsState()
                     var syncProgress by remember { mutableStateOf<SyncProgress?>(null) }
                     // Manual-only sync elsewhere; the update check is throttled
                     // to 24 h and silently skipped when the Web API is off.
-                    LaunchedEffect(Unit) { updateRepo.checkOnStartup() }
+                    // Both it and the wallpaper decode wait until the splash is gone.
+                    LaunchedEffect(showSplash) {
+                        if (!showSplash) {
+                            updateRepo.checkOnStartup()
+                            settingsRepo.loadBackground()
+                        }
+                    }
                     LaunchedEffect(Unit) {
                         while (true) {
                             syncProgress = withContext(Dispatchers.IO) {
@@ -298,12 +364,14 @@ class MainActivity : ComponentActivity() {
                     // Desktop launch resume: custom manual queue restores
                     // verbatim first, else rebuild from the persisted source,
                     // else the general library. Silent, no autoplay.
-                    LaunchedEffect(Unit) {
-                        launch(Dispatchers.IO) {
-                            try {
-                                restorePlayback()
-                            } catch (e: Exception) {
-                                android.util.Log.w("MainActivity", "restore failed: ${e.message}")
+                    LaunchedEffect(showSplash) {
+                        if (!showSplash) {
+                            launch(Dispatchers.IO) {
+                                try {
+                                    restorePlayback()
+                                } catch (e: Exception) {
+                                    android.util.Log.w("MainActivity", "restore failed: ${e.message}")
+                                }
                             }
                         }
                     }
@@ -658,7 +726,11 @@ class MainActivity : ComponentActivity() {
                                 syncRepo,
                                 podcastRepo,
                                 updateRepo,
-                                onPull = { enqueuePull() }
+                                onPull = { enqueuePull() },
+                                wallpaper = wallpaper,
+                                downloaderStatus = downloaderStatus,
+                                onUpdateDownloader = { PlayerApp.instance.updateDownloaderNow() },
+                                onAuthChanged = { recreate() }
                             )
                             Dest.AiDj -> com.musicplayer.android.ui.AiDjScreen(
                                 controller = aiDjController,
@@ -761,6 +833,27 @@ class MainActivity : ComponentActivity() {
                             onRetry = updateRepo::retry,
                         )
                     }
+                    if (showLoginGate) {
+                        LoginScreen(
+                            initialUrl = authView?.url.orEmpty(),
+                            initialUsername = authView?.username.orEmpty(),
+                            onSignedIn = { recreate() },
+                            allowContinueWithKey = legacyKeyGate,
+                            onContinueWithKey = {
+                                authPrefs.edit()
+                                    .putBoolean("legacy_key_login_ack", true)
+                                    .apply()
+                                legacyKeyAck = true
+                            }
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        exit = fadeOut(animationSpec = tween(400))
+                    ) {
+                        StartupSplashScreen()
+                    }
+                    }
                 }
             }
         }
@@ -812,7 +905,7 @@ class MainActivity : ComponentActivity() {
         }
         if (currentName.isNullOrBlank()) return
         try {
-            metadataRepo.refreshLibrary()
+            metadataRepo.refreshLibraryIfStale()
         } catch (_: Exception) {
         }
         val source = try {

@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -37,6 +39,11 @@ class PlayerApp : Application() {
 
     private val _engineState = MutableStateFlow<EngineState>(EngineState.Starting)
     val engineState: StateFlow<EngineState> = _engineState.asStateFlow()
+
+    private val _downloaderStatus =
+        MutableStateFlow<DownloaderStatus>(DownloaderStatus.Starting)
+    val downloaderStatus: StateFlow<DownloaderStatus> = _downloaderStatus.asStateFlow()
+    private val downloaderMutex = Mutex()
 
     lateinit var downloadEngine: DownloadEngine
         private set
@@ -137,26 +144,17 @@ class PlayerApp : Application() {
             Log.i(TAG, "yt-dlp engine ready")
         } catch (e: YoutubeDLException) {
             Log.e(TAG, "Failed to initialize youtubedl-android", e)
-            _engineState.value = EngineState.Failed(e.message ?: e.toString())
+            val reason = e.message ?: e.toString()
+            _engineState.value = EngineState.Failed(reason)
+            _downloaderStatus.value = DownloaderStatus.Failed(null, reason)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize youtubedl-android", e)
-            _engineState.value = EngineState.Failed(e.message ?: e.toString())
+            val reason = e.message ?: e.toString()
+            _engineState.value = EngineState.Failed(reason)
+            _downloaderStatus.value = DownloaderStatus.Failed(null, reason)
         }
         ytdlpUpdate = appScope.launch {
-            try {
-                val status = YoutubeDL.getInstance().updateYoutubeDL(
-                    this@PlayerApp,
-                    YoutubeDL.UpdateChannel._STABLE
-                )
-                val ver = try {
-                    YoutubeDL.getInstance().version(this@PlayerApp)
-                } catch (_: Exception) {
-                    null
-                }
-                Log.i(TAG, "yt-dlp auto-update: $status (now $ver)")
-            } catch (e: Exception) {
-                Log.w(TAG, "yt-dlp auto-update failed (keeping bundled): ${e.message}")
-            }
+            downloaderMutex.withLock { updateDownloaderLocked() }
         }
         queueRepo = QueueRepository(
             this,
@@ -164,8 +162,11 @@ class PlayerApp : Application() {
             metadata = metadataRepo,
             artwork = artworkRepo,
             startGate = {
-                // Gate the first pump on the updater (max 3 min, then proceed).
-                withTimeoutOrNull(180_000) { ytdlpUpdate.join() }
+                // Gate the first pump on any updater run (max 3 min, then proceed).
+                withTimeoutOrNull(180_000) {
+                    ytdlpUpdate.join()
+                    downloaderMutex.withLock { }
+                }
             }
         )
         syncRepo = SyncRepository(this, downloadEngine)
@@ -176,6 +177,56 @@ class PlayerApp : Application() {
         data object Starting : EngineState
         data class Ready(val ytDlpVersion: String) : EngineState
         data class Failed(val reason: String) : EngineState
+    }
+
+    sealed interface DownloaderStatus {
+        data object Starting : DownloaderStatus
+        data class Updating(val version: String?) : DownloaderStatus
+        data class Ready(val version: String?, val message: String) : DownloaderStatus
+        data class Failed(val version: String?, val message: String) : DownloaderStatus
+    }
+
+    /** Manual Settings action; joins an in-flight startup update instead of stacking one. */
+    fun updateDownloaderNow() {
+        if (::ytdlpUpdate.isInitialized && ytdlpUpdate.isActive) {
+            appScope.launch { ytdlpUpdate.join() }
+            return
+        }
+        appScope.launch {
+            downloaderMutex.withLock { updateDownloaderLocked() }
+        }
+    }
+
+    private suspend fun updateDownloaderLocked() {
+        val before = try {
+            YoutubeDL.getInstance().version(this)
+        } catch (_: Exception) {
+            null
+        }
+        _downloaderStatus.value = DownloaderStatus.Updating(before)
+        try {
+            val result = YoutubeDL.getInstance().updateYoutubeDL(
+                this,
+                YoutubeDL.UpdateChannel._STABLE
+            )
+            val after = try {
+                YoutubeDL.getInstance().version(this)
+            } catch (_: Exception) {
+                before
+            }
+            if (after != null) _engineState.value = EngineState.Ready(after)
+            val message = if (before != null && after != null && before != after) {
+                "Updated from $before."
+            } else {
+                "Already up to date."
+            }
+            _downloaderStatus.value = DownloaderStatus.Ready(after, message)
+            Log.i(TAG, "yt-dlp update: $result (now $after)")
+        } catch (e: Exception) {
+            val message = e.message ?: "Update failed."
+            _downloaderStatus.value = DownloaderStatus.Failed(before, message)
+            Log.w(TAG, "yt-dlp update failed (keeping bundled): $message")
+        }
     }
 
     /** Switch the active music folder (Settings change-folder flow). */

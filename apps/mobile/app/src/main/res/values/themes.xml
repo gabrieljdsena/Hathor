@@ -1,4 +1,10 @@
 <resources>
+    <style name="Theme.AndroidPlayer.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FF09090B</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.AndroidPlayer</item>
+    </style>
+
     <style name="Theme.AndroidPlayer" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">#FF09090B</item>
         <item name="android:colorBackground">#FF09090B</item>

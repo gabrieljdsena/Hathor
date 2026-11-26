@@ -10,7 +10,6 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import com.musicplayer.android.BuildConfig
-import com.musicplayer.android.data.api.SyncConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,8 +45,9 @@ sealed interface UpdateState {
 }
 
 /**
- * App-scoped sideload updater. Owns the 24 h check throttle, downloads,
- * SHA-256 verification and the unknown-sources install retry.
+ * App-scoped sideload updater. Reads public GitHub Releases, owns the 24 h
+ * check throttle, downloads, SHA-256 verification and the unknown-sources
+ * install retry. It does not require a Web API login or API key.
  *
  * All repository methods are safe from the UI thread; the public methods
  * launch on [scope]. The internal suspend methods are used by tests.
@@ -59,8 +59,7 @@ class UpdateRepository(
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
     private val downloadsDir: File = File(context.filesDir, "updates"),
     private val now: () -> Long = { System.currentTimeMillis() },
-    private val apiFactory: (baseUrl: String, token: String) -> UpdateApiClient =
-        { baseUrl, token -> HttpUpdateApi(baseUrl, token) },
+    private val apiFactory: () -> UpdateApiClient = { GitHubUpdateApi() },
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
@@ -68,6 +67,9 @@ class UpdateRepository(
 
     private val _dialogVisible = MutableStateFlow(false)
     val dialogVisible: StateFlow<Boolean> = _dialogVisible.asStateFlow()
+
+    private val _cachedApkBytes = MutableStateFlow(0L)
+    val cachedApkBytes: StateFlow<Long> = _cachedApkBytes.asStateFlow()
 
     private val mutex = Mutex()
 
@@ -77,23 +79,25 @@ class UpdateRepository(
     @Volatile
     private var pendingInstall: File? = null
 
+    init {
+        // A previous install has already replaced this app, so its downloaded
+        // APK is obsolete. Keep only a newer APK that has not been installed.
+        scope.launch {
+            mutex.withLock {
+                cleanupStaleApksLocked()
+                refreshCachedBytes()
+            }
+        }
+    }
+
     /** Startup check: throttled, silent on failures, never blocks the UI. */
     fun checkOnStartup() {
-        if (!SyncConfig.isConfigured()) {
-            _state.value = UpdateState.Disabled
-            return
-        }
         if (!shouldCheck(force = false)) return
         scope.launch { checkLocked(force = false, silent = true) }
     }
 
     /** Manual check (Settings): bypasses the 24 h throttle and shows errors. */
     fun check(force: Boolean = true) {
-        if (!SyncConfig.isConfigured()) {
-            _state.value = UpdateState.Disabled
-            _dialogVisible.value = false
-            return
-        }
         scope.launch { checkLocked(force, silent = false) }
     }
 
@@ -123,6 +127,35 @@ class UpdateRepository(
         _dialogVisible.value = false
     }
 
+    /** Remove a downloaded APK without touching the installed app. */
+    fun removeCachedApk() {
+        scope.launch {
+            mutex.withLock {
+                if (_state.value is UpdateState.Installing) return@withLock
+                downloadsDir.listFiles()?.forEach { file ->
+                    if (file.isFile &&
+                        (file.name.endsWith(".apk", true) || file.name.endsWith(".apk.part", true))
+                    ) {
+                        file.delete()
+                    }
+                }
+                pendingInstall = null
+                when (val current = _state.value) {
+                    is UpdateState.Ready -> {
+                        _state.value = UpdateState.Available(current.info)
+                        _dialogVisible.value = false
+                    }
+                    is UpdateState.NeedsPermission -> {
+                        _state.value = UpdateState.Available(current.info)
+                        _dialogVisible.value = false
+                    }
+                    else -> Unit
+                }
+                refreshCachedBytes()
+            }
+        }
+    }
+
     /** Retry after returning from Settings → Install unknown apps. */
     fun onResume() {
         val file = pendingInstall ?: return
@@ -138,14 +171,10 @@ class UpdateRepository(
         checkLocked(force, silent)
 
     private suspend fun checkLocked(force: Boolean, silent: Boolean): UpdateState {
-        if (!SyncConfig.isConfigured()) {
-            _state.value = UpdateState.Disabled
-            return UpdateState.Disabled
-        }
         if (!force && !shouldCheck(force = false)) return _state.value
         mutex.withLock {
             _state.value = UpdateState.Checking
-            val api = apiFactory(SyncConfig.baseUrl(), SyncConfig.token())
+            val api = apiFactory()
             when (val result = api.latest()) {
                 is LatestResult.Success -> {
                     markChecked()
@@ -191,6 +220,7 @@ class UpdateRepository(
         try {
             downloadsDir.mkdirs()
             cleanup(otherThan = target)
+            refreshCachedBytes()
             if (target.exists() && verifyFile(target, info)) {
                 _state.value = UpdateState.Ready(info, target)
                 _dialogVisible.value = true
@@ -202,7 +232,7 @@ class UpdateRepository(
             _state.value = UpdateState.Downloading(info, 0L, info.sizeBytes)
             _dialogVisible.value = true
             try {
-                apiFactory(SyncConfig.baseUrl(), SyncConfig.token()).download(info, part) { bytes, total ->
+                apiFactory().download(info, part) { bytes, total ->
                     _state.value = UpdateState.Downloading(info, bytes, total)
                 }
                 if (!verifyFile(part, info)) {
@@ -214,6 +244,7 @@ class UpdateRepository(
                     part.delete()
                 }
                 cleanup(otherThan = target)
+                refreshCachedBytes()
                 _state.value = UpdateState.Ready(info, target)
                 _dialogVisible.value = true
             } catch (e: Exception) {
@@ -370,6 +401,26 @@ class UpdateRepository(
                 file.delete()
             }
         }
+    }
+
+    private fun cleanupStaleApksLocked() {
+        downloadsDir.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+            when {
+                file.name.endsWith(".apk.part", true) -> file.delete()
+                file.name.endsWith(".apk", true) -> {
+                    val archive = archiveInfo(context.packageManager, file)
+                    if (archive == null || archive.second <= versionCode) file.delete()
+                }
+            }
+        }
+    }
+
+    private fun refreshCachedBytes() {
+        _cachedApkBytes.value = downloadsDir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".apk", true) }
+            ?.sumOf { it.length() }
+            ?: 0L
     }
 
     private fun safeFileName(info: UpdateInfo): String {

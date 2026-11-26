@@ -1,4 +1,4 @@
-package com.musicplayer.android.data
+﻿package com.musicplayer.android.data
 
 import android.content.Context
 import android.util.Log
@@ -102,7 +102,7 @@ class SyncRepository(
             }
             if (rows.isEmpty()) return@withLock
             try {
-                val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
+                val api = SyncApi()
                 api.postImport(RemoteWriter.historyPayload(rows))
                 db.historySyncQueueDao().clear(rows.map { it.id })
             } catch (e: Exception) {
@@ -114,19 +114,19 @@ class SyncRepository(
 
     suspend fun pushToRemote() {
         if (_state.value is SyncState.Running) return
-        _state.value = SyncState.Running("Connecting to sync server…")
+        _state.value = SyncState.Running("Connecting to sync serverâ€¦")
         try {
             if (!SyncConfig.isConfigured()) {
                 _state.value = SyncState.Error(SyncConfig.NOT_CONFIGURED)
                 return
             }
-            val api = SyncApi(SyncConfig.baseUrl(), SyncConfig.token())
+            val api = SyncApi()
             val songsPushed = withContext(Dispatchers.IO) {
-                _state.value = SyncState.Running("Pushing songs, playlists and lyrics…")
+                _state.value = SyncState.Running("Pushing songs, playlists and lyricsâ€¦")
                 RemoteWriter.pushSongs(db, engine, api)
             }
             val podcastsPushed = withContext(Dispatchers.IO) {
-                _state.value = SyncState.Running("Pushing podcasts and tags…")
+                _state.value = SyncState.Running("Pushing podcasts and tagsâ€¦")
                 RemoteWriter.pushPodcasts(db, engine, api)
             }
             val total = songsPushed.rows + podcastsPushed.rows

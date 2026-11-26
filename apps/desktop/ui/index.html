@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <link href="./output.css" rel="stylesheet">
-    <link href="../notyf.min.css" rel="stylesheet">
-    <script src="../notyf.min.js"></script>
+    <link href="./notyf.min.css" rel="stylesheet">
+    <script src="./notyf.min.js"></script>
     <link rel="stylesheet" href="./css.css">
     <!-- SweetAlert2 (Local) -->
-    <script src="../sweetalert2/dist/sweetalert2.all.min.js"></script>
+    <script src="./sweetalert2/dist/sweetalert2.all.min.js"></script>
     <style>
         /* Global SweetAlert2 Glass Theme */
         .swal2-popup {
@@ -72,7 +72,7 @@
         }
     </style>
     <!-- Alpine.js -->
-    <script defer src="../cdn.min.js"></script>
+    <script defer src="./cdn.min.js"></script>
     <!-- Notyf for notifications -->
 </head>
 
@@ -133,6 +133,23 @@
         @media (min-width: 1280px) {
             #queue-sidebar { height: calc(100vh - 220px); }
         }
+
+        /* Keep nav rows at their natural height; the nav (not each row or the
+           playlist submenu) owns scrolling when the window is short. */
+        #sidebar-content > * { flex-shrink: 0; }
+
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(249,115,22,.45) transparent; }
+        .custom-scrollbar::-webkit-scrollbar { width: 7px; height: 7px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(249,115,22,.35); border-radius: 999px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(249,115,22,.6); }
+
+        /* Fallback for a platform that still uses native decorations. */
+        body.native-decorations #titlebar { cursor: default; }
+        body.native-decorations .win-ctrl-btn { display: none; }
+        body.native-decorations #window-resize-zones { display: none; }
 
         /* ── KDE Plasma / Breeze-style titlebar controls ── */
         .win-ctrl-btn {
@@ -229,9 +246,10 @@
                     <div
                         class="nav-indicator absolute left-0 top-1/4 bottom-1/4 w-1 bg-orange-500 rounded-r-full scale-y-0 group-hover:scale-y-100 group-[.active-nav]:scale-y-100 transition-transform duration-300 origin-center">
                     </div>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
                         class="w-6 h-6 mr-3 flex-shrink-0 transition-transform duration-300 group-hover:scale-110 group-[.active-nav]:scale-110 group-hover:text-orange-400 group-[.active-nav]:text-orange-400">
-                        <path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
                     </svg>
                     <span class="nav-text font-medium tracking-wide">Songs</span>
                 </a>
@@ -258,7 +276,9 @@
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
                         class="w-6 h-6 mr-3 flex-shrink-0 transition-transform duration-300 group-hover:scale-110 group-[.active-nav]:scale-110 group-hover:text-orange-400 group-[.active-nav]:text-orange-400">
                         <path stroke-linecap="round" stroke-linejoin="round"
-                            d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm2.25-11.25-3 6-1.5-3.75-3.75-1.5 6-3 2.25 2.25Z" />
+                            d="M12 21a9 9 0 100-18 9 9 0 000 18z" />
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M14.83 9.17l-1.66 3.66-3.66 1.66 1.66-3.66 3.66-1.67z" />
                     </svg>
                     <span class="nav-text font-medium tracking-wide">Discover</span>
                 </a>
@@ -328,7 +348,7 @@
                     </button>
                 </a>
                 <div id="playlists-submenu"
-                    class="flex flex-col gap-1 pl-6 pr-2 transition-all duration-300 max-h-48 overflow-y-auto custom-scrollbar">
+                    class="flex flex-col gap-1 pl-6 pr-2 transition-all duration-300 shrink-0">
 
                 </div>
                 <a href="#" data-target="history"
@@ -714,6 +734,63 @@
         </div>
     </div>
 
+    <!-- Dedicated login gate: covers the shell until a session or API key exists. -->
+    <div id="login-gate" class="login-gate" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <div class="login-gate__glow login-gate__glow--top"></div>
+        <div class="login-gate__glow login-gate__glow--bottom"></div>
+        <form id="login-form" class="login-card" autocomplete="on">
+            <div class="login-brand">
+                <div class="login-brand__logo" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.5A2.25 2.25 0 0 0 2.25 9.75v4.5a2.25 2.25 0 0 0 2.25 2.25h2.44l4.5 4.5c.944.945 2.56.276 2.56-1.06V4.06ZM18.75 12c0-1.24-.51-2.35-1.34-3.14a.75.75 0 1 0-1.03 1.1c.41.38.67.92.67 1.51s-.26 1.13-.67 1.51a.75.75 0 1 0 1.03 1.1c.83-.79 1.34-1.9 1.34-3.14Zm2.25 0c0-2.32-.94-4.42-2.45-5.94a.75.75 0 1 0-1.06 1.06A6.73 6.73 0 0 1 19.5 12c0 1.91-.79 3.63-2.06 4.88a.75.75 0 1 0 1.06 1.06A8.23 8.23 0 0 0 21 12Z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 id="login-title">Hathor</h1>
+                    <p>Sign in to your library</p>
+                </div>
+            </div>
+
+            <div class="login-field">
+                <label for="login-url">Server</label>
+                <input id="login-url" class="login-input" type="text" inputmode="url"
+                    spellcheck="false" autocapitalize="off" autocomplete="url"
+                    placeholder="https://hathor.example or http://192.168.1.10:5051">
+            </div>
+            <div class="login-field">
+                <label for="login-username">Username</label>
+                <input id="login-username" class="login-input" type="text" spellcheck="false"
+                    autocapitalize="off" autocomplete="username" placeholder="Username">
+            </div>
+            <div class="login-field">
+                <label for="login-password">Password</label>
+                <div class="login-password-wrap">
+                    <input id="login-password" class="login-input" type="password" spellcheck="false"
+                        autocomplete="current-password" placeholder="Password">
+                    <button id="login-reveal" type="button" class="login-reveal"
+                        aria-label="Show password" aria-pressed="false">Show</button>
+                </div>
+            </div>
+
+            <label class="login-remember">
+                <input id="login-remember" type="checkbox" checked>
+                Keep me signed in for 30 days
+            </label>
+
+            <p id="login-status" class="login-status" role="status"></p>
+
+            <button id="login-submit" type="submit" class="login-submit">Sign in</button>
+            <button id="login-continue-key" type="button" class="login-secondary is-hidden">
+                Continue with saved API key
+            </button>
+            <p class="login-note">
+                The password is sent only to your server for this sign-in and is never stored.
+                The rotating refresh token goes to the OS credential store.
+            </p>
+
+        </form>
+    </div>
+
     <!-- Global audio/preview/AI DJ helpers; survive view changes. -->
     <script src="./js/fuzzy.js"></script>
     <script src="./js/download-batch.js"></script>
@@ -722,6 +799,9 @@
     <script src="./js/ai-dj-voice.js"></script>
     <script src="./js/ai-dj-recorder.js"></script>
     <script src="./js/ai-dj-state.js"></script>
+    <script src="./js/app-update.js"></script>
+    <script src="./js/login-gate.js"></script>
+    <script src="./js/platform.js"></script>
 
     <script>
 
@@ -1408,6 +1488,19 @@
             }
         };
 
+        function keepSidebarContextVisible() {
+            const active = document.querySelector(".nav-link.active-nav");
+            if (!active) return;
+            const targetName = active.getAttribute("data-target");
+            const target = (targetName === "playlist_home" || targetName === "playlist_view")
+                ? (document.getElementById("playlists-submenu") || active)
+                : active;
+            if (target && target.scrollIntoView) {
+                target.scrollIntoView({ block: "nearest" });
+            }
+        }
+        window.keepSidebarContextVisible = keepSidebarContextVisible;
+
         window.addEventListener('resize', function () {
             if (window.innerWidth <= 700) {
                 hideSideBar();
@@ -1415,6 +1508,8 @@
             } else {
                 document.getElementById("sidebar-toggle").classList.remove("hidden");
             }
+            clearTimeout(window._sidebarResizeTimer);
+            window._sidebarResizeTimer = setTimeout(keepSidebarContextVisible, 120);
         });
 
         document.getElementById("sidebar-toggle").addEventListener("click", function () {
@@ -1482,6 +1577,7 @@
             // (e.g. home dashboard cards -> all_songs / daily_mix).
             try {
                 const sidebarTarget = (page === "daily_mix") ? "home"
+                    : (page === "playlist_view" || page === "playlist_home") ? "playlist_home"
                     : (page === "artist") ? "artists"
                     : (page === "album") ? "albums"
                     : page;
@@ -1492,6 +1588,7 @@
                         el.classList.remove("active-nav");
                     }
                 });
+                setTimeout(keepSidebarContextVisible, 0);
             } catch (e) {}
 
             setTimeout(async () => {
@@ -1656,13 +1753,21 @@
             }
 
             if (titlebar) {
-                // Hand the drag to Windows (ReleaseCapture + WM_NCLBUTTONDOWN
-                // with HTCAPTION). A JS move_window loop cannot produce Aero
-                // Snap, snap layouts, or edge/corner magnetism; a native
-                // caption drag can. The Python call blocks until the drop, so
-                // it is deliberately not awaited here.
+                // Focus before the press so the first click isn't swallowed by
+                // KWin's inactive-window handling.
+                titlebar.addEventListener('pointerenter', function (e) {
+                    if (e.target.closest('.win-ctrl-btn')) return;
+                    const api = winApi();
+                    if (api && api.activate_window) api.activate_window();
+                });
+
+                // Windows hands the drag to the native caption (ReleaseCapture
+                // + WM_NCLBUTTONDOWN/HTCAPTION) so Aero Snap works. Linux asks
+                // GTK to start a compositor move drag. A JS move loop can't do
+                // either reliably, so the Python call owns the gesture.
                 let lastTitleClick = { t: 0, x: 0, y: 0 };
                 titlebar.addEventListener('mousedown', function (e) {
+                    if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (e.target.closest('.win-ctrl-btn')) return;
                     if (e.button !== 0) return;
                     e.preventDefault();
@@ -1680,12 +1785,13 @@
                         return;
                     }
                     lastTitleClick = { t: now, x: e.screenX, y: e.screenY };
-                    if (api.start_window_drag) api.start_window_drag();
+                    if (api.start_window_drag) api.start_window_drag(e.screenX, e.screenY);
                 });
 
                 // Double-click is handled above before the native drag starts,
                 // so suppress the browser's default activation here.
                 titlebar.addEventListener('dblclick', function (e) {
+                    if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (e.target.closest('.win-ctrl-btn')) return;
                     e.preventDefault();
                 });
@@ -1718,11 +1824,33 @@
                 return false;
             }
             resizeZones.forEach(function (zone) {
+                zone.addEventListener('pointerenter', function () {
+                    const api = winApi();
+                    if (api && api.activate_window) api.activate_window();
+                });
                 zone.addEventListener('pointerdown', async function (e) {
-                    if (resize) return;
+                    // A fresh press always starts a new gesture. Clearing any
+                    // stale state is what stops the "second drag needs another
+                    // click" failure when the previous pointerup was missed
+                    // (for example because the compositor owned the drag).
+                    resize = null;
+                    if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (isOverWinBtn(e.clientX, e.clientY)) return;
+                    const edge = zone.getAttribute('data-edge');
+                    const api = winApi();
                     e.preventDefault();
                     e.stopPropagation();
+                    // Prefer the native compositor resize (Linux). Windows
+                    // returns false and falls through to the JS move/resize
+                    // loop. Trying it directly also covers the moment before
+                    // the platform handshake has populated HathorPlatform.
+                    if (api && api.start_window_resize) {
+                        try {
+                            const handled = await api.start_window_resize(
+                                edge, e.screenX, e.screenY);
+                            if (handled) return;
+                        } catch (err) { }
+                    }
                     await refreshWinFrame();
                     if (!winFrame.known) return;
                     const s = physScale();
@@ -1768,6 +1896,9 @@
             });
             document.addEventListener('pointerup', function () { resize = null; });
             document.addEventListener('pointercancel', function () { resize = null; });
+            window.addEventListener('pointerup', function () { resize = null; }, true);
+            window.addEventListener('pointercancel', function () { resize = null; }, true);
+            window.addEventListener('blur', function () { resize = null; });
         });
 
         let progressTimer = null;

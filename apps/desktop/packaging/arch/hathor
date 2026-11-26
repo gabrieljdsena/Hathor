@@ -1,0 +1,5 @@
+#!/bin/sh
+# System-package launcher. The marker tells the app not to self-update and to
+# keep its data in XDG directories instead of the read-only app directory.
+export HATHOR_PACKAGE_MANAGED=1
+exec /usr/bin/python /usr/lib/hathor/main.py "$@"

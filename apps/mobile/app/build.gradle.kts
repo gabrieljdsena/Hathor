@@ -41,8 +41,8 @@ android {
         applicationId = "com.musicplayer.android"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.4.3-hathor"
+        versionCode = 33
+        versionName = "0.4.30-hathor"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -122,6 +122,7 @@ dependencies {
     coreLibraryDesugaring(libs.desugar.libs)
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.lifecycle.runtime)
     implementation(libs.activity.compose)
     implementation(libs.coroutines.android)

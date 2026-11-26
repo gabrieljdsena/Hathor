@@ -28,6 +28,8 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         self.assertIn("hathor_api_url", columns)
         self.assertIn("hathor_api_key", columns)
+        self.assertIn("hathor_auth_mode", columns)
+        self.assertIn("hathor_auth_username", columns)
         self.assertIn("device_id", columns)
         self.assertIn("device_label", columns)
         self.assertIn("History_Sync_Queue", tables)

@@ -43,7 +43,7 @@ class HathorApiTests(unittest.TestCase):
                 client.get("/api/v1/nope")
 
             self.assertEqual(ctx.exception.status, 401)
-            self.assertIn("rejected the API key", str(ctx.exception))
+            self.assertIn("rejected the credentials", str(ctx.exception))
             self.assertNotIn("hth_bad", str(ctx.exception))
 
     def test_network_error_mentions_base_url(self):
@@ -67,10 +67,14 @@ class HathorApiTests(unittest.TestCase):
             server.add("PUT", "/api/v1/file", json_body={"ok": True})
             client = HathorApi(server.base_url, "hth_secret")
             dest = os.path.join(tmp, "song.mp3")
+            progress = []
 
-            client.stream_to_file("/api/v1/file", dest)
+            client.stream_to_file(
+                "/api/v1/file", dest, progress_cb=lambda done, total: progress.append((done, total))
+            )
             with open(dest, "rb") as fh:
                 self.assertEqual(fh.read(), b"audio-bytes")
+            self.assertEqual(progress[-1], (11, 11))
             self.assertEqual(server.requests[-1]["headers"].get("Authorization"),
                              "Bearer hth_secret")
 

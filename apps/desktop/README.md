@@ -2,9 +2,9 @@
 
 > Part of the [Hathor monorepo](../../README.md) (`apps/desktop`). Web app: `../../web/`, mobile: `../../mobile/`.
 
-A Windows desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can sync your library with the Hathor server for multi-device use.
+A Windows and Linux desktop music player with a native Python backend and a modern web UI. Hathor plays your local MP3 library, downloads songs from YouTube, enriches tags and cover art from iTunes, keeps synced lyrics, and can sync your library with the Hathor server for multi-device use.
 
-![Platform](https://img.shields.io/badge/platform-Windows-0078d6)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Arch%20Linux-0078d6)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![License](https://img.shields.io/badge/license-ISC-blue)
 
@@ -22,6 +22,8 @@ A Windows desktop music player with a native Python backend and a modern web UI.
 - **History** — download history and playback (played songs / played playlists) with pagination, full-tab queues, row action menus and re-download.
 - **Windows media integration** — System Media Transport Controls (SMTC) via `winsdk` for media keys and OS overlay, including album art and play/pause/next/previous.
 - **Visual customization** — set a custom background image (or remove it), window size and position remembered between runs.
+- **Web account login** — sign in with the same username/password as the web app. Short-lived access tokens refresh automatically; the rotating refresh token is stored in the OS credential store, never the password. Existing saved `hth_` keys continue to work.
+- **In-app updates** — checks the Hathor server for a newer packaged build, verifies the SHA-256, stages it, and lets a detached helper replace the app after Hathor exits. The same Web API session powers the channel.
 - **Discover** — server-backed out-of-library recommendations with source filters, YouTube preview queue, feedback/tuning and local downloads. Playback completion/skip segments are reported to the Web API for Discover quality. Configure the Web API in Settings first.
 - **AI DJ (Vohithe)** — server-planned sets with spoken intro/outro commentary, voice ducking, vibe briefs (typed or spoken), batch handoff, feedback and Home/player-bar entry points.
 - **Cross-device playback** — live player-hub polling keeps desktop and web/other clients aligned for play/pause/next/seek/volume, with local audio left untouched when a track is missing. Paused spots from other devices also expose their Up Next queue and resume at the saved position (explicit tap only).
@@ -59,6 +61,59 @@ python main.py
 
 On startup in dev mode, `main.py` compiles `ui/input.css` into `ui/output.css` with the Tailwind CLI automatically.
 
+## Linux / Arch
+
+The Linux path uses the system Python and GTK/WebKitGTK stack rather than a
+vendored PyInstaller bundle. The easiest install is the per-user release
+installer (no sudo for the app itself):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrieljdsena/Hathor/develop/apps/desktop/scripts/install-linux.sh | bash
+```
+
+It downloads the newest `desktop-v*` release, verifies `SHA256SUMS.txt`, and
+installs under `~/.local/opt/hathor` with a launcher and application-menu
+entry. Add `--install-deps` if GTK/WebKitGTK/PyGObject are missing.
+
+```bash
+~/.local/opt/hathor/install-linux.sh --update      # update in place
+~/.local/opt/hathor/install-linux.sh --uninstall   # remove (keeps user data)
+```
+
+You can also install a downloaded zip (`./install-linux.sh --zip <file>`) or
+run straight from the source tree:
+
+```bash
+sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
+  python-pygame python-mutagen python-pillow python-psutil \
+  python-pykakasi python-keyring yt-dlp ffmpeg
+python main.py
+```
+
+The app uses XDG paths on Linux:
+
+```text
+~/.local/share/hathor/music_player.db
+~/.local/state/hathor/hathor.log
+~/.cache/hathor/
+~/Music/Hathor
+~/Music/Hathor Podcasts
+```
+
+Build and install the native Arch package:
+
+```bash
+cd packaging/arch
+./build-local.sh
+```
+
+See [packaging/arch/README.md](packaging/arch/README.md). The package launcher
+sets `HATHOR_PACKAGE_MANAGED=1`, so yt-dlp/FFmpeg and app updates are managed
+by pacman instead of the Windows self-updater. Script installs use
+`HATHOR_INSTALLER_MANAGED=1` and update through `install-linux.sh --update`.
+Both platforms use the same frameless HTML titlebar; Windows adds Aero Snap
+while Linux hands move/resize gestures to the GTK compositor.
+
 ## Building an executable
 
 ```powershell
@@ -66,16 +121,59 @@ pip install pyinstaller
 pyinstaller music_player.spec
 ```
 
-The build is emitted to `dist/Hathor/`. The `.env` file must live next to the executable (never bundled) when running the frozen build.
+The build is emitted to `dist/Hathor/`.
+
+### Release and self-update package
+
+`version.json` is the desktop update channel's source of truth:
+
+```json
+{
+  "versionCode": 8,
+  "versionName": "1.0.8-hathor"
+}
+```
+
+Bump `versionCode` for every published build, then run the release script
+without an SMB destination:
+
+```powershell
+.\scripts\release.ps1
+```
+
+The script runs the Python/JS tests, rebuilds Tailwind, builds the PyInstaller
+folder, copies `version.json` next to `Hathor.exe`, and creates
+`dist/hathor-desktop-<versionCode>-<versionName>.zip`. It refuses to package
+`music_player.db` or `hathor.log`.
+
+Push a `desktop-v<versionName>` tag; the GitHub workflow publishes the zip.
+The app reads the public release feed:
+
+```http
+GET https://api.github.com/repos/gabrieljdsena/Hathor/releases?per_page=30
+```
+
+It considers `desktop-v*` releases on the current **dev** channel (including
+prereleases), verifies the asset `digest`/`SHA256SUMS.txt`, and picks the
+highest `versionCode`. No Web API login or `hth_` key is required.
+
+**Settings → Application** shows the installed version, checks manually,
+downloads with progress, and offers **Install and restart**. The app also
+checks once at startup; the GitHub check is independent of Web API settings.
+
+The old `/api/v1/desktop/latest` and `/api/v1/desktop/download/...` endpoints
+remain for builds older than `1.0.7`; they are no longer used by current
+clients.
+
+Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with
+`HATHOR_UPDATE_DIR`). A detached PowerShell helper waits for Hathor to exit,
+moves the old `Hathor.exe`/`_internal`/`version.json` aside, copies the staged
+build, restarts Hathor, and removes the backup and package. The SQLite DB,
+logs, and library folders are never touched.
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in and configured in **Settings → Web API** (URL + scoped `hth_` key), with a `.env` file next to `main.py` (or the executable) as the fallback:
-
-```env
-HATHOR_API_URL=http://192.168.1.10:5051
-HATHOR_API_KEY=hth_your-device-key
-```
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: the dedicated Hathor login screen asks for the server URL, username and password. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Existing saved API keys continue to work. The server is configured only by signing in — environment variables and `.env` files are ignored.
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 
@@ -87,6 +185,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 - [Architecture & code overview](docs/ARCHITECTURE.md)
 - [Database schema & remote sync](docs/DATABASE.md)
 - [Development & packaging](docs/DEVELOPMENT.md)
+- [Linux / Arch notes](docs/LINUX.md)
 - [Web → desktop parity backlog](WEB_PARITY.md)
 
 ## Project layout
@@ -96,13 +195,20 @@ main.py            App entry point, window creation, startup + first-run flow
 api.py             pywebview JS bridge: every method the UI calls
 Download.py        yt-dlp YouTube downloader + iTunes metadata/artwork lookup
 database.sql       SQLite schema
+version.json      Desktop version/build used by the in-app updater
 services/api_sync.py  Manual sync with the Hathor server (delta pull + import/file push)
 services/history_sync.py  Debounced automatic Music_History outbox flush
+services/app_update.py  Desktop check/download/stage/swap pipeline
+services/auth_session.py  Web login, token refresh, OS-keyring refresh-token storage
+services/platform_support.py  XDG paths, package-managed detection, platform capabilities
+services/window_chrome.py     Isolated Windows snap/drag implementation
 settings.py        Loads persisted settings from the SQLite Settings table
 monitor.py         Debug RAM usage monitor (currently disabled)
 services/          Domain logic: playback (+crossfade), metadata, database, lyrics, windows_media, downloads, apple
 ui/                Frontend: views, modals, Tailwind/compiled CSS, vendored libs
-music_player.spec  PyInstaller build script
+packaging/arch/    PKGBUILD, launcher, desktop entry and icon
+scripts/release.ps1  Build, package and publish a Windows desktop release
+music_player.spec  PyInstaller build script (Windows; Linux uses the Arch package)
 ```
 
 ## License

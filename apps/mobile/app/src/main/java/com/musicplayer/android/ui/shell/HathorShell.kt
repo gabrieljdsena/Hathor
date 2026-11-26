@@ -1,6 +1,12 @@
 package com.musicplayer.android.ui.shell
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -62,9 +69,12 @@ import androidx.compose.ui.unit.dp
 import com.musicplayer.android.playback.PlayerManager
 import com.musicplayer.android.playback.PreviewPlayer
 import com.musicplayer.android.ui.SyncProgress
+import com.musicplayer.android.ui.AnimatedPlayPauseIcon
+import com.musicplayer.android.ui.HathorArtwork
 import com.musicplayer.android.ui.SyncProgressBar
 import com.musicplayer.android.ui.theme.HathorColors
 import com.musicplayer.android.ui.theme.ModernSlider
+import com.musicplayer.android.ui.theme.hathorPressable
 
 /**
  * Destinations mirror the desktop sidebar (Home, Download, Playlists,
@@ -114,78 +124,97 @@ fun HathorShell(
     syncProgress: SyncProgress? = null,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(true) }
+    // The old icon-only "minimized" rail is now the open state. Closing the
+    // sidebar slides the rail away and reveals a small open arrow instead.
+    var sidebarVisible by remember { mutableStateOf(true) }
+    // Keep the content header in the same place while the rail animates.
+    val contentStart by animateDpAsState(
+        targetValue = if (sidebarVisible) 0.dp else 40.dp,
+        animationSpec = tween(durationMillis = 220),
+        label = "content-start"
+    )
 
     Column(modifier = Modifier.fillMaxSize().background(HathorColors.Background)) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            // ---- Sidebar (desktop aside#sidebar, collapsible) ----
-            Column(
-                modifier = Modifier
-                    .width(if (expanded) 88.dp else 60.dp)
-                    .fillMaxHeight()
-                    .background(Color(0x66000000))
-                    .verticalScroll(rememberScrollState())
-                    .padding(vertical = 12.dp, horizontal = if (expanded) 8.dp else 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            AnimatedVisibility(
+                visible = sidebarVisible,
+                enter = expandHorizontally(animationSpec = tween(220)) +
+                    fadeIn(animationSpec = tween(220)),
+                exit = shrinkHorizontally(animationSpec = tween(180)) +
+                    fadeOut(animationSpec = tween(140))
             ) {
-                // Brand tile: the HT app mark on zinc-950, like the launcher icon.
-                Box(
+                // ---- Icon-only rail (the previous minimized layout) ----
+                Column(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF09090B)),
-                    contentAlignment = Alignment.Center
+                        .width(60.dp)
+                        .fillMaxHeight()
+                        .background(Color(0x66000000))
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 12.dp, horizontal = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.musicplayer.android.R.drawable.app_logo),
-                        contentDescription = "Hathor",
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-                if (expanded) {
-                    Text("Hathor", style = MaterialTheme.typography.bodySmall, color = HathorColors.TextBody)
-                }
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        if (expanded) Icons.Filled.ChevronLeft else Icons.Filled.ChevronRight,
-                        contentDescription = if (expanded) "Collapse sidebar" else "Expand sidebar",
-                        tint = HathorColors.TextHint
-                    )
-                }
-                val selectedRail = selected.railActive()
-                Dest.entries.filter { it.inRail }.forEach { dest ->
-                    val active = dest == selectedRail
-                    // Desktop group-[.active-nav] transitions, animated.
-                    val iconTint by androidx.compose.animation.animateColorAsState(
-                        targetValue = if (active) HathorColors.AccentBright else HathorColors.TextHint,
-                        animationSpec = tween(durationMillis = 300),
-                        label = "rail-icon"
-                    )
-                    val labelColor by androidx.compose.animation.animateColorAsState(
-                        targetValue = if (active) Color.White else HathorColors.TextHint,
-                        animationSpec = tween(durationMillis = 300),
-                        label = "rail-label"
-                    )
-                    Column(
+                    // Brand tile: the HT app mark on zinc-950, like the launcher icon.
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (active) HathorColors.AccentFill else Color.Transparent)
-                            .clickable { onSelect(dest) }
-                            .padding(vertical = 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .background(Color(0xFF09090B)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            dest.icon,
-                            contentDescription = dest.label,
-                            tint = iconTint
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.musicplayer.android.R.drawable.app_logo),
+                            contentDescription = "Hathor",
+                            modifier = Modifier.size(28.dp)
                         )
-                        if (expanded) {
-                            Text(
-                                dest.label,
-                                color = labelColor,
-                                style = MaterialTheme.typography.bodySmall
+                    }
+                    IconButton(onClick = { sidebarVisible = false }) {
+                        Icon(
+                            Icons.Filled.ChevronLeft,
+                            contentDescription = "Hide sidebar",
+                            tint = HathorColors.TextHint,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    val selectedRail = selected.railActive()
+                    Dest.entries.filter { it.inRail }.forEach { dest ->
+                        val active = dest == selectedRail
+                        // Desktop group-[.active-nav] transitions, animated.
+                        val iconTint by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (active) HathorColors.AccentBright else HathorColors.TextHint,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "rail-icon"
+                        )
+                        val itemBackground by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (active) HathorColors.AccentFill else Color.Transparent,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "rail-background"
+                        )
+                        val indicatorColor by androidx.compose.animation.animateColorAsState(
+                            targetValue = if (active) HathorColors.AccentBright else Color.Transparent,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "rail-indicator"
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(itemBackground)
+                                .hathorPressable { onSelect(dest) }
+                                .padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                dest.icon,
+                                contentDescription = dest.label,
+                                tint = iconTint
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(indicatorColor)
                             )
                         }
                     }
@@ -228,11 +257,37 @@ fun HathorShell(
                         )
                 )
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // Reserve the open-arrow's leading slot so the
+                            // screen header sits on the same row, never under it.
+                            .padding(start = contentStart)
+                    ) {
                         if (syncProgress?.running == true) {
                             SyncProgressBar(syncProgress)
                         }
                         Box(modifier = Modifier.weight(1f)) { content() }
+                    }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !sidebarVisible,
+                        enter = fadeIn(animationSpec = tween(200, delayMillis = 120)),
+                        exit = fadeOut(animationSpec = tween(80)),
+                        modifier = Modifier.align(Alignment.TopStart)
+                    ) {
+                        Box(modifier = Modifier.padding(start = 4.dp, top = 16.dp)) {
+                            IconButton(
+                                onClick = { sidebarVisible = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.ChevronRight,
+                                    contentDescription = "Show sidebar",
+                                    tint = HathorColors.TextBody,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -352,18 +407,17 @@ private fun PlayerBar(
                     .background(HathorColors.AccentFill),
                 contentAlignment = Alignment.Center
             ) {
-                // Playing: visualizer bars; paused with art: the cover;
-                // otherwise the note glyph.
+                // Playing: visualizer bars; otherwise crossfading cover art
+                // with the shared accent placeholder.
                 if (playing) {
                     com.musicplayer.android.ui.VisualizerBars()
-                } else if (cover != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = cover.asImageBitmap(),
-                        contentDescription = "Cover",
-                        modifier = Modifier.size(44.dp)
-                    )
                 } else {
-                    Icon(Icons.Filled.MusicNote, contentDescription = null, tint = HathorColors.AccentBright)
+                    HathorArtwork(
+                        bitmap = cover,
+                        contentDescription = "Cover",
+                        modifier = Modifier.size(44.dp),
+                        cornerRadius = 8.dp
+                    )
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -386,9 +440,8 @@ private fun PlayerBar(
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", tint = HathorColors.TextPrimary)
             }
             IconButton(onClick = { player.toggle() }) {
-                Icon(
-                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (playing) "Pause" else "Play",
+                AnimatedPlayPauseIcon(
+                    playing = playing,
                     tint = HathorColors.TextPrimary
                 )
             }

@@ -2,7 +2,6 @@ package com.musicplayer.android.data.update
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import com.musicplayer.android.data.api.SyncConfig
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -65,14 +64,12 @@ class UpdateRepositoryTest {
         sizeBytes = payload.size.toLong(),
         sha256 = sha(payload),
         publishedAtUtc = "2026-11-21T01:00:00+00:00",
-        downloadPath = "/api/v1/app/download/hathor-$code-0.4.3-hathor.apk",
+        downloadPath = "https://github.com/gabrieljdsena/Hathor/releases/download/android-v0.4.3/hathor-$code-0.4.3-hathor.apk",
     )
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        SyncConfig.init(context)
-        SyncConfig.save("http://127.0.0.1:1", "test-token")
         prefsName = "update-test-${UUID.randomUUID()}"
         downloads = File(context.cacheDir, "update-test-${UUID.randomUUID()}")
         api = FakeApi(LatestResult.NotFound)
@@ -83,7 +80,7 @@ class UpdateRepositoryTest {
             prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE),
             downloadsDir = downloads,
             now = { clock },
-            apiFactory = { _, _ -> api },
+            apiFactory = { api },
         )
     }
 
@@ -91,7 +88,6 @@ class UpdateRepositoryTest {
     fun tearDown() {
         downloads.deleteRecursively()
         context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).edit().clear().commit()
-        SyncConfig.clearRuntime()
     }
 
     @Test

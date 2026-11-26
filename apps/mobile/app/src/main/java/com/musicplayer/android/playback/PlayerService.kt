@@ -62,6 +62,11 @@ class PlayerService : Service() {
             })
             isActive = true
         }
+        // startForegroundService() gives the service a short window to promote
+        // itself. Post a placeholder immediately; metadata/play state updates
+        // arrive moments later. Without this, a cold start can be killed with
+        // ForegroundServiceDidNotStartInTime while tags/artwork resolve.
+        startForeground(NOTIF_ID, buildNotification(player.playing.value))
         scope.launch { player.playing.collect { onPlaybackChanged(it) } }
         scope.launch {
             player.current.collect { file ->

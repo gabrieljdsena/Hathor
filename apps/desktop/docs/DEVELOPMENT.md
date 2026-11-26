@@ -25,7 +25,7 @@ services/
   player_sync.py      Server player queue/play/pause/seek/volume bridge
   player_hub.py       Cross-device polling reconciliation and local publish
   telemetry.py        Playback segment observer → /player/playback-events
-  api_config.py       Runtime Web API URL/key (SQLite + .env fallback)
+  api_config.py       Web API URL/key saved by the login screen (SQLite)
   hathor_api.py       Shared authenticated HTTP client
   apple.py            AppleService — artist/album artwork lookups
   startup_maintenance.py  FFmpeg auto-download + yt-dlp update checks
@@ -89,15 +89,65 @@ pip install pyinstaller
 pyinstaller music_player.spec
 ```
 
-Output: `dist/MusicPlayer/`.
+Output: `dist/Hathor/`.
 
-The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `node_modules/`, and `pykakasi` data files. Important details:
+The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, and `pykakasi` data files. Runtime frontend assets (SweetAlert2, Notyf, Alpine) live under `ui/`; `node_modules/` is only needed for the Tailwind dev build. Important details:
 
-- **`.env` is not bundled** — it must sit next to `MusicPlayer.exe` (runtime reads `os.path.dirname(sys.executable)`).
-- The SQLite DB, `.env`, and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen.
+- **Refresh tokens** live in OS credential storage through `keyring`; PyInstaller collects its backend modules explicitly. Passwords are never stored.
+- The SQLite DB and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen. The server is configured only by signing in.
 - Console is disabled (`console=False`), so stdout logs are invisible in the shipped app.
+- `version.json` is copied to the app root for the updater; the PyInstaller copy under `_internal` is only a fallback.
 
 > `dist/` and `build/` are git-ignored.
+
+### Publishing an update
+
+Bump `versionCode` in `version.json`, then run:
+
+```powershell
+.\scripts\release.ps1
+```
+
+`-SkipTests` and `-SkipTailwind` speed up local builds. The script emits
+`dist/hathor-desktop-<versionCode>-<versionName>.zip`; push a
+`desktop-v<versionName>` tag so the GitHub workflow publishes it. Current
+clients read the public GitHub release feed, verify the asset digest, and stage
+updates under `%LOCALAPPDATA%\Hathor\updates` using `services/app_update.py`
+plus a detached PowerShell helper for the swap. The old server endpoint remains
+for builds older than `1.0.3`. Never edit a published zip or reuse a
+`versionCode`.
+
+## Linux / Arch package
+
+The Linux build is a normal Arch package using system Python, GTK 3 and
+WebKitGTK 4.1; PyInstaller is not used. Build it inside Arch:
+
+```bash
+cd packaging/arch
+./build-local.sh
+```
+
+`build-local.sh` packages the current `apps/desktop` tree and runs
+`makepkg -si`. The installed launcher sets `HATHOR_PACKAGE_MANAGED=1`, which
+disables pip/self-update behavior and selects XDG data/config/cache/state
+paths. Runtime files go to `/usr/lib/hathor`; user data never does.
+
+### Linux release installer
+
+`scripts/install-linux.sh` is the per-user release installer/updater. It is
+bundled into the Linux zip by `scripts/package-linux.sh` and also published as
+a standalone release asset. It installs under `~/.local/opt/hathor`, writes a
+launcher + desktop entry, prefers the system Python/GTK/WebKitGTK stack, and
+falls back to a `--system-site-packages` venv for pip-only modules. Script
+installs set `HATHOR_INSTALLER_MANAGED=1` (plus `HATHOR_PACKAGE_MANAGED=1` for
+older builds), so `main.py` skips the Tailwind `npx` step and the Settings
+update card points at `install-linux.sh --update`.
+
+Build the zip locally with `bash scripts/package-linux.sh`; it emits
+`dist/hathor-linux-<versionCode>-<versionName>.zip`.
+
+PyInstaller cannot cross-compile from Windows, and bundling WebKitGTK is not
+the supported Linux path. Use an Arch VM/container for package builds.
 
 ## Code conventions
 

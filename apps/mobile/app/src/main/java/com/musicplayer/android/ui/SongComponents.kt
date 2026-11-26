@@ -31,6 +31,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -80,22 +82,27 @@ fun SortHeader(
     ) {
         keys.forEach { key ->
             val active = sortKey == key
-            TextButton(onClick = { onPick(key) }) {
-                Text(
-                    key,
-                    color = if (active) com.musicplayer.android.ui.theme.HathorColors.AccentBright
-                        else com.musicplayer.android.ui.theme.HathorColors.TextHint,
-                    style = MaterialTheme.typography.bodySmall
+            FilterChip(
+                selected = active,
+                onClick = { onPick(key) },
+                label = { Text(key, style = MaterialTheme.typography.bodySmall) },
+                leadingIcon = if (active) {
+                    {
+                        Icon(
+                            if (ascending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                            contentDescription = if (ascending) "Ascending" else "Descending",
+                            tint = com.musicplayer.android.ui.theme.HathorColors.AccentBright,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                } else null,
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = Color.Transparent,
+                    labelColor = com.musicplayer.android.ui.theme.HathorColors.TextHint,
+                    selectedContainerColor = com.musicplayer.android.ui.theme.HathorColors.AccentFill,
+                    selectedLabelColor = com.musicplayer.android.ui.theme.HathorColors.AccentBright
                 )
-                if (active) {
-                    Icon(
-                        if (ascending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
-                        contentDescription = if (ascending) "Ascending" else "Descending",
-                        tint = com.musicplayer.android.ui.theme.HathorColors.AccentBright,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-            }
+            )
         }
     }
 }
