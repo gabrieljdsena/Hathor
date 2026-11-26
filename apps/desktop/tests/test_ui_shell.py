@@ -58,6 +58,32 @@ class ShellScaffoldingTests(unittest.TestCase):
                 (self.root / "ui" / "views" / view).read_text(encoding="utf-8"),
             )
 
+    def _nav_block(self, index, target):
+        start = index.index(f'data-target="{target}"')
+        end = index.index("</a>", start)
+        return index[start:end]
+
+    def test_sidebar_songs_and_discover_icons_render_as_strokes(self):
+        index = (self.root / "ui" / "index.html").read_text(encoding="utf-8")
+        songs = self._nav_block(index, "all_songs")
+        self.assertIn('fill="none"', songs)
+        self.assertIn('stroke="currentColor"', songs)
+        self.assertNotIn('fill="currentColor"', songs)
+        self.assertIn(
+            "M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z",
+            songs,
+        )
+
+        discover = self._nav_block(index, "discover")
+        self.assertIn('fill="none"', discover)
+        self.assertIn('stroke="currentColor"', discover)
+        self.assertIn("M12 21a9 9 0 100-18 9 9 0 000 18z", discover)
+        self.assertIn(
+            "M14.83 9.17l-1.66 3.66-3.66 1.66 1.66-3.66 3.66-1.67z",
+            discover,
+        )
+        self.assertNotIn("M12 21a9 9 0 1 0 0-18", discover)
+
     def test_settings_exposes_connection_status_and_update_controls(self):
         settings = (self.root / "ui" / "views" / "settings.html").read_text(encoding="utf-8")
         for element_id in (
