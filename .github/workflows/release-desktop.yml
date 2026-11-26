@@ -95,6 +95,13 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Stage Linux installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp apps/desktop/scripts/install-linux.sh release-assets/install-linux.sh
+          chmod 755 release-assets/install-linux.sh
+
       - name: Checksums
         shell: bash
         run: |
@@ -109,11 +116,20 @@ jobs:
           body: |
             Hathor desktop release.
 
+            Linux (recommended, one command; installs under ~/.local):
+
+                curl -fsSL https://github.com/gabrieljdsena/Hathor/releases/download/${{ steps.tag.outputs.tag }}/install-linux.sh | bash
+
+            Add `--install-deps` if GTK/WebKitGTK/PyGObject packages are missing.
+            Update later with `~/.local/opt/hathor/install-linux.sh --update`.
+
             - Windows: portable `hathor-desktop-*.zip` (sideload updater package)
-            - Linux: portable `hathor-linux-*.zip` (system Python/GTK/WebKitGTK; see README-LINUX.txt)
+            - Linux: `hathor-linux-*.zip` (offline bundle; `./install-linux.sh` or `./run.sh`)
+            - Linux: `install-linux.sh` (standalone installer)
             - `SHA256SUMS.txt` contains checksums.
           files: |
             release-assets/*.zip
+            release-assets/install-linux.sh
             release-assets/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: true

@@ -14,7 +14,8 @@ _runtime_dirs = platform_support.ensure_runtime_dirs()
 _migration = platform_support.migrate_legacy_data()
 
 if (not platform_support.is_frozen()
-        and not platform_support.package_managed()
+        and not platform_support.externally_managed()
+        and not os.getenv("HATHOR_SKIP_TAILWIND")
         and shutil.which("npx")):
     print(" [Dev] Compiling Tailwind CSS...")
     current_dir = str(platform_support.app_root())
@@ -53,9 +54,9 @@ def _setup_file_logging():
 _setup_file_logging()
 _log = logging.getLogger('hathor')
 _log.info("=== Hathor starting ===")
-_log.info("platform=%s package_managed=%s update_mode=%s",
+_log.info("platform=%s package_managed=%s installer_managed=%s update_mode=%s",
           platform_support.platform_key(), platform_support.package_managed(),
-          platform_support.update_mode())
+          platform_support.installer_managed(), platform_support.update_mode())
 for _name, _path in _runtime_dirs.items():
     if str(_path).startswith("error:"):
         _log.warning("Could not create %s dir: %s", _name, _path)

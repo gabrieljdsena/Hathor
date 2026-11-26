@@ -133,6 +133,20 @@ cd packaging/arch
 disables pip/self-update behavior and selects XDG data/config/cache/state
 paths. Runtime files go to `/usr/lib/hathor`; user data never does.
 
+### Linux release installer
+
+`scripts/install-linux.sh` is the per-user release installer/updater. It is
+bundled into the Linux zip by `scripts/package-linux.sh` and also published as
+a standalone release asset. It installs under `~/.local/opt/hathor`, writes a
+launcher + desktop entry, prefers the system Python/GTK/WebKitGTK stack, and
+falls back to a `--system-site-packages` venv for pip-only modules. Script
+installs set `HATHOR_INSTALLER_MANAGED=1` (plus `HATHOR_PACKAGE_MANAGED=1` for
+older builds), so `main.py` skips the Tailwind `npx` step and the Settings
+update card points at `install-linux.sh --update`.
+
+Build the zip locally with `bash scripts/package-linux.sh`; it emits
+`dist/hathor-linux-<versionCode>-<versionName>.zip`.
+
 PyInstaller cannot cross-compile from Windows, and bundling WebKitGTK is not
 the supported Linux path. Use an Arch VM/container for package builds.
 

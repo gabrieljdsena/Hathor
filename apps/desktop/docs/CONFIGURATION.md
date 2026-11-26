@@ -110,6 +110,12 @@ On Arch/Linux package installs (`HATHOR_PACKAGE_MANAGED=1` or a
 updates are managed by the system package manager. Use `pacman -Syu`; the
 Windows zip/PowerShell updater is never used against `/usr/lib/hathor`.
 
+Installations made by the release installer (`install-linux.sh`, env
+`HATHOR_INSTALLER_MANAGED=1` or a `.installer-managed` marker) take precedence:
+the card reports that the installer owns updates and points at
+`~/.local/opt/hathor/install-linux.sh --update`. Check, download and install
+buttons stay hidden; user data is untouched by updates.
+
 Downloaded packages and the staged copy live under
 `%LOCALAPPDATA%\Hathor\updates`. Set `HATHOR_UPDATE_DIR` to use another folder.
 The installer helper waits for Hathor to close, swaps `Hathor.exe`,

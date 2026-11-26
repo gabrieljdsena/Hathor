@@ -93,7 +93,7 @@ class PlatformPathTests(unittest.TestCase):
             self.assertEqual(ps.state_dir(), self.install)
 
     def test_package_managed_by_env_or_marker(self):
-        self._clear("HATHOR_PACKAGE_MANAGED")
+        self._clear("HATHOR_PACKAGE_MANAGED", "HATHOR_INSTALLER_MANAGED")
         with mock.patch.object(ps, "app_root", return_value=self.app):
             self.assertFalse(ps.package_managed())
             (self.app / ps.PACKAGE_MARKER).write_text("", encoding="utf-8")
@@ -101,26 +101,53 @@ class PlatformPathTests(unittest.TestCase):
         os.environ["HATHOR_PACKAGE_MANAGED"] = "1"
         self.assertTrue(ps.package_managed())
 
+    def test_installer_managed_by_env_or_marker(self):
+        self._clear("HATHOR_PACKAGE_MANAGED", "HATHOR_INSTALLER_MANAGED")
+        with mock.patch.object(ps, "app_root", return_value=self.app):
+            self.assertFalse(ps.installer_managed())
+            self.assertFalse(ps.externally_managed())
+            (self.app / ps.INSTALLER_MARKER).write_text("", encoding="utf-8")
+            self.assertTrue(ps.installer_managed())
+            self.assertTrue(ps.externally_managed())
+        os.environ["HATHOR_INSTALLER_MANAGED"] = "1"
+        self.assertTrue(ps.installer_managed())
+
     def test_python_self_update_policy(self):
         with mock.patch.object(ps, "IS_WINDOWS", True), \
                 mock.patch.object(ps, "is_frozen", return_value=False), \
+                mock.patch.object(ps, "installer_managed", return_value=False), \
                 mock.patch.object(ps, "package_managed", return_value=False):
             self.assertTrue(ps.python_self_update_allowed())
         with mock.patch.object(ps, "IS_WINDOWS", False), \
                 mock.patch.object(ps, "is_frozen", return_value=False), \
+                mock.patch.object(ps, "installer_managed", return_value=False), \
                 mock.patch.object(ps, "package_managed", return_value=False), \
                 mock.patch.object(ps.sys, "prefix", "C:/Python"), \
                 mock.patch.object(ps.sys, "base_prefix", "C:/Python"):
             self.assertFalse(ps.python_self_update_allowed())
         with mock.patch.object(ps, "IS_WINDOWS", False), \
                 mock.patch.object(ps, "is_frozen", return_value=False), \
+                mock.patch.object(ps, "installer_managed", return_value=False), \
                 mock.patch.object(ps, "package_managed", return_value=False), \
                 mock.patch.object(ps.sys, "prefix", "C:/venv"), \
                 mock.patch.object(ps.sys, "base_prefix", "C:/Python"):
             self.assertTrue(ps.python_self_update_allowed())
+        # Installer-managed: only the private venv may pip-update.
+        with mock.patch.object(ps, "is_frozen", return_value=False), \
+                mock.patch.object(ps, "installer_managed", return_value=True), \
+                mock.patch.object(ps, "package_managed", return_value=True), \
+                mock.patch.object(ps.sys, "prefix", "/usr/lib/python3.14"), \
+                mock.patch.object(ps.sys, "base_prefix", "/usr/lib/python3.14"):
+            self.assertFalse(ps.python_self_update_allowed())
+        with mock.patch.object(ps, "is_frozen", return_value=False), \
+                mock.patch.object(ps, "installer_managed", return_value=True), \
+                mock.patch.object(ps, "package_managed", return_value=True), \
+                mock.patch.object(ps.sys, "prefix", "/home/u/.local/opt/hathor/venv"), \
+                mock.patch.object(ps.sys, "base_prefix", "/usr/lib/python3.14"):
+            self.assertTrue(ps.python_self_update_allowed())
 
     def test_update_mode_and_window_capabilities(self):
-        self._clear("HATHOR_PACKAGE_MANAGED")
+        self._clear("HATHOR_PACKAGE_MANAGED", "HATHOR_INSTALLER_MANAGED")
         with mock.patch.object(ps, "IS_WINDOWS", True), \
                 mock.patch.object(ps, "app_root", return_value=self.app):
             self.assertEqual(ps.update_mode(), "self")
@@ -139,6 +166,8 @@ class PlatformPathTests(unittest.TestCase):
             self.assertEqual(ps.webview_gui(), "gtk")
         os.environ["HATHOR_PACKAGE_MANAGED"] = "1"
         self.assertEqual(ps.update_mode(), "package")
+        os.environ["HATHOR_INSTALLER_MANAGED"] = "1"
+        self.assertEqual(ps.update_mode(), "installer")
 
     def test_default_library_directories(self):
         os.environ["XDG_CONFIG_HOME"] = str(self.root / "config")

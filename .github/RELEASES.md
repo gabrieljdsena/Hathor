@@ -35,14 +35,33 @@ Artifacts:
 
 - `hathor-desktop-<versionCode>-<versionName>.zip` — Windows sideload/updater
   package.
-- `hathor-linux-<versionName>.zip` — portable Linux runtime bundle using the
-  system Python/GTK/WebKitGTK stack; contains `run.sh`, a README and the Arch
-  `packaging-arch/` directory.
+- `hathor-linux-<versionCode>-<versionName>.zip` — portable Linux runtime
+  bundle using the system Python/GTK/WebKitGTK stack; contains `install-linux.sh`,
+  `run.sh`, a README and the Arch `packaging-arch/` directory.
+- `install-linux.sh` — standalone per-user installer/updater.
 - `SHA256SUMS.txt`.
+
+Recommended Linux install (per-user, no sudo for the app):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrieljdsena/Hathor/develop/apps/desktop/scripts/install-linux.sh | bash
+```
+
+The one-liner resolves the newest `desktop-v*` release (including prereleases),
+verifies `SHA256SUMS.txt`, and installs to `~/.local/opt/hathor`. It prefers
+the system Python/GTK/WebKitGTK stack and creates a `--system-site-packages`
+venv only when pure-Python modules are missing. Add `--install-deps` to let it
+install distro packages.
+
+Updates for script installs:
+
+```bash
+~/.local/opt/hathor/install-linux.sh --update
+```
 
 The Linux zip is not a self-contained WebKit distribution. Arch remains the
 native package path (`packaging/arch/PKGBUILD`); the zip is for machines that
-already have the dependencies.
+already have the dependencies or use `install-linux.sh --install-deps`.
 
 ## Android release
 

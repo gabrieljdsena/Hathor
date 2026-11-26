@@ -64,12 +64,29 @@ On startup in dev mode, `main.py` compiles `ui/input.css` into `ui/output.css` w
 ## Linux / Arch
 
 The Linux path uses the system Python and GTK/WebKitGTK stack rather than a
-vendored PyInstaller bundle. On Arch:
+vendored PyInstaller bundle. The easiest install is the per-user release
+installer (no sudo for the app itself):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrieljdsena/Hathor/develop/apps/desktop/scripts/install-linux.sh | bash
+```
+
+It downloads the newest `desktop-v*` release, verifies `SHA256SUMS.txt`, and
+installs under `~/.local/opt/hathor` with a launcher and application-menu
+entry. Add `--install-deps` if GTK/WebKitGTK/PyGObject are missing.
+
+```bash
+~/.local/opt/hathor/install-linux.sh --update      # update in place
+~/.local/opt/hathor/install-linux.sh --uninstall   # remove (keeps user data)
+```
+
+You can also install a downloaded zip (`./install-linux.sh --zip <file>`) or
+run straight from the source tree:
 
 ```bash
 sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
   python-pygame python-mutagen python-pillow python-psutil \
-  python-pykakasi python-dotenv yt-dlp ffmpeg
+  python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg
 python main.py
 ```
 
@@ -93,8 +110,10 @@ cd packaging/arch
 
 See [packaging/arch/README.md](packaging/arch/README.md). The package launcher
 sets `HATHOR_PACKAGE_MANAGED=1`, so yt-dlp/FFmpeg and app updates are managed
-by pacman instead of the Windows self-updater. Linux uses native GTK window
-decorations; the Windows frameless titlebar and Aero Snap code stays Windows-only.
+by pacman instead of the Windows self-updater. Script installs use
+`HATHOR_INSTALLER_MANAGED=1` and update through `install-linux.sh --update`.
+Linux uses native GTK window decorations; the Windows frameless titlebar and
+Aero Snap code stays Windows-only.
 
 ## Building an executable
 

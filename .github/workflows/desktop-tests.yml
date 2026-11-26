@@ -55,3 +55,23 @@ jobs:
         working-directory: apps/desktop
         run: npx --yes @tailwindcss/cli@4.3.3 -i ./ui/input.css -o ./ui/output.css
 
+  linux-scripts:
+    name: Linux installer scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bash syntax check
+        run: |
+          bash -n apps/desktop/scripts/install-linux.sh
+          bash -n apps/desktop/scripts/package-linux.sh
+
+      - name: ShellCheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck apps/desktop/scripts/install-linux.sh apps/desktop/scripts/package-linux.sh
+

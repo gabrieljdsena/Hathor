@@ -54,6 +54,28 @@ class PackagingTests(unittest.TestCase):
             self.assertIn(asset, index)
         self.assertNotIn('src="../cdn.min.js"', index)
 
+    def test_linux_installer_is_bundled_with_releases(self):
+        installer = self.root / "scripts" / "install-linux.sh"
+        self.assertTrue(installer.is_file(), "install-linux.sh is missing")
+        text = installer.read_text(encoding="utf-8")
+        for marker in (
+            "HATHOR_INSTALLER_MANAGED=1",
+            "--update",
+            "--uninstall",
+            "--install-deps",
+            "SHA256SUMS.txt",
+            "/usr/bin/python3",
+        ):
+            self.assertIn(marker, text)
+
+        packager = (self.root / "scripts" / "package-linux.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("install-linux.sh", packager)
+        self.assertIn("versionCode", packager)
+        self.assertIn("/usr/bin/python3", packager)
+        self.assertIn("README-LINUX.txt", packager)
+
     def test_arch_package_uses_system_python_and_webkit(self):
         arch = self.root / "packaging" / "arch"
         pkgbuild = (arch / "PKGBUILD").read_text(encoding="utf-8")

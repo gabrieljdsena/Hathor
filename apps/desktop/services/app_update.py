@@ -578,9 +578,17 @@ class AppUpdateService:
         except Exception:
             return False
 
+    def _managed_update_message(self) -> str:
+        if platform_support.installer_managed():
+            return (
+                "Updates are installed with the Hathor Linux installer "
+                "(install-linux.sh --update)."
+            )
+        return "Updates are managed by your system package manager."
+
     def status(self) -> dict:
         with self._lock:
-            managed = platform_support.package_managed()
+            managed = platform_support.externally_managed()
             package = None if managed else self._find_package()
             latest = dict(self._latest) if self._latest else None
             if latest is None and package:
@@ -607,7 +615,7 @@ class AppUpdateService:
             result = self._last_result
             failed_result = bool(result and not result.get("ok", False))
             if managed:
-                message = "Updates are managed by your system package manager."
+                message = self._managed_update_message()
             elif failed_result:
                 message = "Last update attempt failed: " + str(
                     result.get("message") or "unknown error"
@@ -645,6 +653,8 @@ class AppUpdateService:
 
     def _install_hint(self, installable, managed=False):
         if managed:
+            if platform_support.installer_managed():
+                return "Run install-linux.sh --update to update Hathor."
             return "Use your system package manager to update Hathor."
         if not self.frozen:
             return "Update installs are available in the packaged Hathor build."
@@ -656,10 +666,10 @@ class AppUpdateService:
 
     # -- check ----------------------------------------------------------
     def check(self, url=None, key=None) -> dict:
-        if platform_support.package_managed():
+        if platform_support.externally_managed():
             with self._lock:
                 self._last_error = None
-                self._message = "Updates are managed by your system package manager."
+                self._message = self._managed_update_message()
             return self.status()
         if url is None and key is None:
             try:
@@ -761,11 +771,9 @@ class AppUpdateService:
 
     # -- download/stage -------------------------------------------------
     def download(self, progress_cb=None) -> dict:
-        if platform_support.package_managed():
+        if platform_support.externally_managed():
             with self._lock:
-                self._last_error = (
-                    "Updates are managed by your system package manager."
-                )
+                self._last_error = self._managed_update_message()
             return self.status()
         if not self._download_lock.acquire(blocking=False):
             with self._lock:
@@ -944,11 +952,9 @@ class AppUpdateService:
 
     # -- install/remove -------------------------------------------------
     def install(self) -> dict:
-        if platform_support.package_managed():
+        if platform_support.externally_managed():
             with self._lock:
-                self._last_error = (
-                    "Updates are managed by your system package manager."
-                )
+                self._last_error = self._managed_update_message()
             return self.status()
         with self._lock:
             package = self._find_package()
@@ -1061,7 +1067,7 @@ class AppUpdateService:
         )
 
     def remove(self) -> dict:
-        if platform_support.package_managed():
+        if platform_support.externally_managed():
             return self.status()
         with self._download_lock:
             self._remove_packages()
@@ -1101,7 +1107,7 @@ class AppUpdateService:
 
     # -- startup cleanup ------------------------------------------------
     def cleanup(self):
-        if platform_support.package_managed():
+        if platform_support.externally_managed():
             return
         try:
             self.updates_dir.mkdir(parents=True, exist_ok=True)

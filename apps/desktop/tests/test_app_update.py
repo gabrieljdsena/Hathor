@@ -113,6 +113,22 @@ class AppUpdateServiceTests(unittest.TestCase):
         self.assertFalse(installed["ok"])
         self.assertIn("package manager", installed["message"])
 
+    def test_installer_managed_install_uses_installer_hint(self):
+        with mock.patch("services.platform_support.installer_managed",
+                        return_value=True), \
+                mock.patch("services.platform_support.package_managed",
+                           return_value=False):
+            service = self.service()
+            status = service.status()
+            checked = service.check()
+            installed = service.install()
+        self.assertTrue(status["managed"])
+        self.assertEqual(status["updateMode"], "installer")
+        self.assertIn("installer", status["message"].lower())
+        self.assertIn("install-linux.sh --update", status["installHint"])
+        self.assertTrue(checked["managed"])
+        self.assertIn("installer", installed["message"].lower())
+
     def test_check_reports_update_and_sends_auth(self):
         package = make_package()
         payload = release_payload(package)

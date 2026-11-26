@@ -299,9 +299,13 @@ def ensure_libraries_updated(progress_cb=None):
     """Check PyPI and pip-upgrade outdated YouTube libs (dev mode only)."""
     packages = installed_youtube_libs()
     if not platform_support.python_self_update_allowed():
-        managed = platform_support.package_managed()
-        detail = ('Use pacman/your package manager to update.' if managed
-                  else 'Use your Python environment/package manager to update.')
+        if platform_support.installer_managed():
+            detail = ('Use your distro package manager, or re-run '
+                      'install-linux.sh --update.')
+        elif platform_support.package_managed():
+            detail = 'Use pacman/your package manager to update.'
+        else:
+            detail = 'Use your Python environment/package manager to update.'
         _emit(progress_cb, 'libs', 'Libraries managed by the environment',
               percent=100, detail=detail, status='skipped')
         return [

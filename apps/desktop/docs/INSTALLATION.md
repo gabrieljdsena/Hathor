@@ -10,12 +10,32 @@ This guide covers setting up Hathor from source on Windows and Arch Linux. Windo
 | Node.js + npm | 18+ | Tailwind CLI and vendored frontend deps |
 | FFmpeg | latest | Audio extraction/conversion to MP3 |
 
-### Linux (Arch)
+### Linux (recommended: release installer)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrieljdsena/Hathor/develop/apps/desktop/scripts/install-linux.sh | bash
+```
+
+This installs the newest GitHub desktop release per-user under `~/.local`
+(`~/.local/opt/hathor`, launcher in `~/.local/bin`, menu entry + icon) and
+verifies the release SHA-256. Add `--install-deps` if the system is missing
+GTK 3/WebKitGTK/PyGObject/Python packages. Update and remove with:
+
+```bash
+~/.local/opt/hathor/install-linux.sh --update
+~/.local/opt/hathor/install-linux.sh --uninstall
+```
+
+The installer uses the system Python/GTK/WebKit stack and only creates a
+private venv when pure-Python packages (e.g. `pywebview` on Debian/Fedora) are
+missing. See [LINUX.md](LINUX.md) for the full layout and distro notes.
+
+### Linux (Arch, from source or native package)
 
 ```bash
 sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
   python-pygame python-mutagen python-pillow python-psutil \
-  python-pykakasi python-dotenv yt-dlp ffmpeg
+  python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg
 python main.py
 ```
 
@@ -27,7 +47,8 @@ cd packaging/arch
 ```
 
 The package launcher sets `HATHOR_PACKAGE_MANAGED=1`; data goes to XDG
-directories and pacman owns updates.
+directories and pacman owns updates. Release-installer installs instead use
+`HATHOR_INSTALLER_MANAGED=1` and update via `install-linux.sh --update`.
 
 ## 1. Clone the repository
 

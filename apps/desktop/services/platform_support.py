@@ -17,6 +17,7 @@ APP_NAME = "hathor"
 DB_NAME = "music_player.db"
 LOG_NAME = "hathor.log"
 PACKAGE_MARKER = ".package-managed"
+INSTALLER_MARKER = ".installer-managed"
 
 IS_WINDOWS = sys.platform.startswith("win")
 IS_LINUX = sys.platform.startswith("linux")
@@ -77,6 +78,27 @@ def package_managed() -> bool:
         return (app_root() / PACKAGE_MARKER).is_file()
     except OSError:
         return False
+
+
+def installer_managed() -> bool:
+    """Installed by scripts/install-linux.sh (per-user bundle, not a package).
+
+    Lives under ``~/.local/opt/hathor`` and is updated by re-running the
+    installer with ``--update``. The launcher also exports
+    ``HATHOR_PACKAGE_MANAGED`` for releases that predate this mode, so this
+    check must win over :func:`package_managed` when both are set.
+    """
+    if _enabled("HATHOR_INSTALLER_MANAGED"):
+        return True
+    try:
+        return (app_root() / INSTALLER_MARKER).is_file()
+    except OSError:
+        return False
+
+
+def externally_managed() -> bool:
+    """True when the app must not use the Windows self-updater."""
+    return installer_managed() or package_managed()
 
 
 def _home() -> Path:
@@ -271,8 +293,16 @@ def migrate_legacy_data() -> dict:
 
 
 def python_self_update_allowed() -> bool:
-    """pip self-updates are safe on Windows/dev venvs, not system packages."""
-    if package_managed() or is_frozen():
+    """pip self-updates are safe on Windows/dev venvs, not system packages.
+
+    Installer-managed builds may ship a private venv (Debian/Fedora path) or
+    use the distro Python (Arch path). Only the venv case may pip-update.
+    """
+    if is_frozen():
+        return False
+    if installer_managed():
+        return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    if package_managed():
         return False
     if is_windows():
         return True
@@ -291,6 +321,8 @@ def device_label() -> str:
 
 
 def update_mode() -> str:
+    if installer_managed():
+        return "installer"
     if package_managed():
         return "package"
     if is_windows():
@@ -314,5 +346,6 @@ def window_capabilities() -> dict:
         "frameless": custom,
         "customResize": custom,
         "packageManaged": package_managed(),
+        "installerManaged": installer_managed(),
         "updateMode": update_mode(),
     }
