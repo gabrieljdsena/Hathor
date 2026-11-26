@@ -22,7 +22,6 @@ depends=(
   python-pillow
   python-psutil
   python-pykakasi
-  python-dotenv
   python-keyring
   yt-dlp
   ffmpeg

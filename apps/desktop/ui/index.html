@@ -134,7 +134,19 @@
             #queue-sidebar { height: calc(100vh - 220px); }
         }
 
-        /* Linux uses native GTK decorations; the header stays as branding. */
+        /* Keep nav rows at their natural height; the nav (not each row or the
+           playlist submenu) owns scrolling when the window is short. */
+        #sidebar-content > * { flex-shrink: 0; }
+
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(249,115,22,.45) transparent; }
+        .custom-scrollbar::-webkit-scrollbar { width: 7px; height: 7px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(249,115,22,.35); border-radius: 999px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(249,115,22,.6); }
+
+        /* Fallback for a platform that still uses native decorations. */
         body.native-decorations #titlebar { cursor: default; }
         body.native-decorations .win-ctrl-btn { display: none; }
         body.native-decorations #window-resize-zones { display: none; }
@@ -336,7 +348,7 @@
                     </button>
                 </a>
                 <div id="playlists-submenu"
-                    class="flex flex-col gap-1 pl-6 pr-2 transition-all duration-300 max-h-48 overflow-y-auto custom-scrollbar">
+                    class="flex flex-col gap-1 pl-6 pr-2 transition-all duration-300 shrink-0">
 
                 </div>
                 <a href="#" data-target="history"
@@ -748,7 +760,7 @@
             <div class="login-field">
                 <label for="login-username">Username</label>
                 <input id="login-username" class="login-input" type="text" spellcheck="false"
-                    autocapitalize="off" autocomplete="username" placeholder="Web username">
+                    autocapitalize="off" autocomplete="username" placeholder="Username">
             </div>
             <div class="login-field">
                 <label for="login-password">Password</label>
@@ -1476,6 +1488,19 @@
             }
         };
 
+        function keepSidebarContextVisible() {
+            const active = document.querySelector(".nav-link.active-nav");
+            if (!active) return;
+            const targetName = active.getAttribute("data-target");
+            const target = (targetName === "playlist_home" || targetName === "playlist_view")
+                ? (document.getElementById("playlists-submenu") || active)
+                : active;
+            if (target && target.scrollIntoView) {
+                target.scrollIntoView({ block: "nearest" });
+            }
+        }
+        window.keepSidebarContextVisible = keepSidebarContextVisible;
+
         window.addEventListener('resize', function () {
             if (window.innerWidth <= 700) {
                 hideSideBar();
@@ -1483,6 +1508,8 @@
             } else {
                 document.getElementById("sidebar-toggle").classList.remove("hidden");
             }
+            clearTimeout(window._sidebarResizeTimer);
+            window._sidebarResizeTimer = setTimeout(keepSidebarContextVisible, 120);
         });
 
         document.getElementById("sidebar-toggle").addEventListener("click", function () {
@@ -1550,6 +1577,7 @@
             // (e.g. home dashboard cards -> all_songs / daily_mix).
             try {
                 const sidebarTarget = (page === "daily_mix") ? "home"
+                    : (page === "playlist_view" || page === "playlist_home") ? "playlist_home"
                     : (page === "artist") ? "artists"
                     : (page === "album") ? "albums"
                     : page;
@@ -1560,6 +1588,7 @@
                         el.classList.remove("active-nav");
                     }
                 });
+                setTimeout(keepSidebarContextVisible, 0);
             } catch (e) {}
 
             setTimeout(async () => {
@@ -1724,11 +1753,18 @@
             }
 
             if (titlebar) {
-                // Hand the drag to Windows (ReleaseCapture + WM_NCLBUTTONDOWN
-                // with HTCAPTION). A JS move_window loop cannot produce Aero
-                // Snap, snap layouts, or edge/corner magnetism; a native
-                // caption drag can. The Python call blocks until the drop, so
-                // it is deliberately not awaited here.
+                // Focus before the press so the first click isn't swallowed by
+                // KWin's inactive-window handling.
+                titlebar.addEventListener('pointerenter', function (e) {
+                    if (e.target.closest('.win-ctrl-btn')) return;
+                    const api = winApi();
+                    if (api && api.activate_window) api.activate_window();
+                });
+
+                // Windows hands the drag to the native caption (ReleaseCapture
+                // + WM_NCLBUTTONDOWN/HTCAPTION) so Aero Snap works. Linux asks
+                // GTK to start a compositor move drag. A JS move loop can't do
+                // either reliably, so the Python call owns the gesture.
                 let lastTitleClick = { t: 0, x: 0, y: 0 };
                 titlebar.addEventListener('mousedown', function (e) {
                     if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
@@ -1749,7 +1785,7 @@
                         return;
                     }
                     lastTitleClick = { t: now, x: e.screenX, y: e.screenY };
-                    if (api.start_window_drag) api.start_window_drag();
+                    if (api.start_window_drag) api.start_window_drag(e.screenX, e.screenY);
                 });
 
                 // Double-click is handled above before the native drag starts,
@@ -1788,12 +1824,33 @@
                 return false;
             }
             resizeZones.forEach(function (zone) {
+                zone.addEventListener('pointerenter', function () {
+                    const api = winApi();
+                    if (api && api.activate_window) api.activate_window();
+                });
                 zone.addEventListener('pointerdown', async function (e) {
-                    if (resize) return;
+                    // A fresh press always starts a new gesture. Clearing any
+                    // stale state is what stops the "second drag needs another
+                    // click" failure when the previous pointerup was missed
+                    // (for example because the compositor owned the drag).
+                    resize = null;
                     if (window.HathorPlatform && window.HathorPlatform.customChrome === false) return;
                     if (isOverWinBtn(e.clientX, e.clientY)) return;
+                    const edge = zone.getAttribute('data-edge');
+                    const api = winApi();
                     e.preventDefault();
                     e.stopPropagation();
+                    // Prefer the native compositor resize (Linux). Windows
+                    // returns false and falls through to the JS move/resize
+                    // loop. Trying it directly also covers the moment before
+                    // the platform handshake has populated HathorPlatform.
+                    if (api && api.start_window_resize) {
+                        try {
+                            const handled = await api.start_window_resize(
+                                edge, e.screenX, e.screenY);
+                            if (handled) return;
+                        } catch (err) { }
+                    }
                     await refreshWinFrame();
                     if (!winFrame.known) return;
                     const s = physScale();
@@ -1839,6 +1896,9 @@
             });
             document.addEventListener('pointerup', function () { resize = null; });
             document.addEventListener('pointercancel', function () { resize = null; });
+            window.addEventListener('pointerup', function () { resize = null; }, true);
+            window.addEventListener('pointercancel', function () { resize = null; }, true);
+            window.addEventListener('blur', function () { resize = null; });
         });
 
         let progressTimer = null;

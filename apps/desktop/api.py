@@ -624,11 +624,20 @@ class Api:
     def enable_windows_snap(self):
         return self._window_chrome.enable_snap(self._window)
 
-    def start_window_drag(self):
-        result = self._window_chrome.start_drag(self._window)
+    def enable_linux_chrome(self):
+        return self._window_chrome.enable_linux_chrome(self._window)
+
+    def activate_window(self):
+        return self._window_chrome.activate(self._window)
+
+    def start_window_drag(self, x=None, y=None):
+        result = self._window_chrome.start_drag(self._window, x, y)
         if result:
             self._sync_native_state()
         return result
+
+    def start_window_resize(self, edge, x=None, y=None):
+        return self._window_chrome.start_resize(self._window, edge, x, y)
 
     def _sync_native_state(self):
         self._is_maximized = self._window_chrome.sync_native_state(
@@ -649,10 +658,15 @@ class Api:
         if not self._window:
             return False
         try:
-            # The native state can change via Aero Snap, so don't trust a
-            # previously cached flag here.
+            # The native state can change via Aero Snap / window manager, so
+            # don't trust a previously cached flag here.
             maximized = self.is_window_maximized()
-            if maximized:
+            if platform_support.is_linux():
+                # pywebview's restore() only deiconifies; GTK knows how to
+                # unmaximize, so let window_chrome drive the toggle.
+                if not self._window_chrome.toggle_maximize(self._window):
+                    return False
+            elif maximized:
                 self._window.restore()
             else:
                 self._window.maximize()

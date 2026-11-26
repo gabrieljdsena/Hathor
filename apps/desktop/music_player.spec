@@ -24,7 +24,6 @@ a = Analysis(
         'pygame',
         'yt_dlp',
         'mutagen',
-        'dotenv',
         # services/__init__.py resolves these lazily; PyInstaller cannot see
         # string-based import_module calls.
         'services.playback',

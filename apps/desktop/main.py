@@ -2,13 +2,8 @@ import os
 import shutil
 import sys
 import subprocess
-from dotenv import load_dotenv
 
 from services import platform_support
-
-# First match wins (python-dotenv default): cwd, user config, bundle, exe dir.
-for _env_file in platform_support.env_files():
-    load_dotenv(_env_file)
 
 _runtime_dirs = platform_support.ensure_runtime_dirs()
 _migration = platform_support.migrate_legacy_data()
@@ -24,6 +19,11 @@ if (not platform_support.is_frozen()
     subprocess.run(f"npx @tailwindcss/cli -i \"{input_css}\" -o \"{output_css}\"", shell=True)
 
 import webview
+
+if platform_support.is_linux():
+    from services.window_chrome import install_linux_frameless_workaround
+    install_linux_frameless_workaround()
+
 import threading
 import sqlite3
 import json
@@ -62,8 +62,6 @@ for _name, _path in _runtime_dirs.items():
         _log.warning("Could not create %s dir: %s", _name, _path)
 if _migration.get("migrated_db"):
     _log.info("Migrated legacy database from %s", _migration["migrated_db"])
-if _migration.get("migrated_env"):
-    _log.info("Migrated legacy .env from %s", _migration["migrated_env"])
 
 
 def _log_uncaught(exc_type, exc_value, exc_tb):
@@ -148,7 +146,7 @@ window = webview.create_window(
     x=center_x,
     y=center_y,
     min_size=(895, 400),
-    # Windows uses the custom titlebar; Linux uses native GTK decorations.
+    # Windows and Linux both use the custom HTML titlebar (frameless).
     frameless=window_caps['frameless'],
     background_color='#09090b',
     # The app implements its own titlebar drag (pointer events + move_window).
@@ -190,7 +188,7 @@ def on_resized(width, height):
 from services.api_sync import sync_backend as _sync_backend
 remote_configured = _sync_backend() == "api"
 if not remote_configured:
-    print(" [Sync] No sync server configured in Settings -> Web API or .env, sync disabled.")
+    print(" [Sync] No sync server configured; sign in from the login screen.")
 
 def _run_startup_maintenance(window):
     """Background FFmpeg auto-download + YouTube-lib update checks.
@@ -278,6 +276,20 @@ def _enable_windows_snap_when_ready(window):
         print(f" [Python] Could not enable Windows snap: {e}")
 
 
+def _enable_linux_chrome_when_ready(window):
+    """Attach the GTK button tracker used by compositor move/resize drags."""
+    if not platform_support.is_linux():
+        return
+    try:
+        if not window.events.shown.wait(15):
+            print(" [Python] Window did not show; Linux window chrome not enabled.")
+            return
+        if not api.enable_linux_chrome():
+            print(" [Python] Linux window chrome tracker was not enabled.")
+    except Exception as e:
+        print(f" [Python] Could not enable Linux window chrome: {e}")
+
+
 def on_start(window):
     try:
         pygame.init()
@@ -292,6 +304,10 @@ def on_start(window):
     if platform_support.is_windows():
         threading.Thread(
             target=_enable_windows_snap_when_ready, args=(window,), daemon=True
+        ).start()
+    elif platform_support.is_linux():
+        threading.Thread(
+            target=_enable_linux_chrome_when_ready, args=(window,), daemon=True
         ).start()
 
     # Startup maintenance (FFmpeg + yt-dlp updates) in the background.

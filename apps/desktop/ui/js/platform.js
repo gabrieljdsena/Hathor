@@ -1,5 +1,5 @@
-/* Platform handshake: Windows keeps the custom frameless chrome, Linux uses
- * native GTK decorations. The Python bridge owns the decision.
+/* Platform handshake: the Python bridge decides whether this platform uses
+ * the custom frameless chrome (Windows/Linux) or native decorations (fallback).
  */
 (function () {
     'use strict';

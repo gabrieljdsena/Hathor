@@ -75,7 +75,7 @@ These are working and should be preserved:
 
 | ID | Feature | Web source | Desktop status | Phase |
 |---|---|---|---|---|
-| D1 | **Runtime Web API configuration** — server URL + Web login, legacy API key fallback, Save/Test, scope hints, `.env` fallback | mobile P4.1; web auth/settings | Done — Web login + API key under Advanced | 0 |
+| D1 | **Runtime Web API configuration** — server URL + Web login on the dedicated login screen, legacy API key fallback, Test/scope hints (no `.env`) | mobile P4.1; web auth/settings | Done — Web login + API key under Advanced | 0 |
 | D2 | **Shared Web API client** — one base URL/auth/error layer for sync, Discover, AI DJ, player sync | `api/client.ts` | Done — `hathor_api.py` + `auth_session.py` | 0 |
 | D3 | **Discover** — out-of-library recommendations, source filters, search, refresh, dismiss/feedback, downloads | `views/Discover.tsx` | Done | 1 |
 | D4 | **Discover preview queue** — Play all, per-card play, prev/next, queue popover, seek, statuses, cross-view persistence | `hooks/useDiscoverPreviewQueue.ts`, `DiscoverPreviewPlayer.tsx` | Done | 1 |
@@ -148,9 +148,9 @@ independent of each other.
   - Make sync, resume spots and new clients read the runtime config without a
     restart.
   - Acceptance: pointing at a server works immediately; bad URL/key produces a
-    clear message; `.env` still works; the full key is never logged.
+    clear message; the login screen is the only server source; the full key is never logged.
   - Tests: persistence/fallback/masking; fake-server connection test.
-  - **Done:** `services/api_config.py` reads the SQLite fields before `.env`,
+  - **Done:** `services/api_config.py` reads only the SQLite login fields,
     masks the key for the bridge, and exposes Test. Settings -> Web API has
     URL/key/Save/Test/Clear. `database.sql` and `api._ensure_schema` carry the
     new columns. Live connection test against the LAN server passed.
@@ -662,7 +662,7 @@ python -m pytest -q
 Manual smoke pass on Windows (WebView2):
 
 1. Settings → Web API: Save/Test against the real server; restart and verify
-   the values persist; `.env` fallback still works.
+   the values persist; environment/.env is ignored.
 2. Discover: load, filter, dismiss, refresh, play a preview, change tabs,
    seek, start a main song (preview must stop), start a preview while a main
    song plays (main must pause), download and verify the owned guard.

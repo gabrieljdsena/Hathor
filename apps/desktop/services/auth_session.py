@@ -130,14 +130,6 @@ class AuthSession:
         username = data.get("username") or ""
         source = "settings" if (url or key or mode or username) else "none"
 
-        # Legacy .env fallback when the local Settings row has no URL/key.
-        if not url and not mode:
-            info = api_config.get_api_config_info(self.db_path)
-            if info.url:
-                url = info.url
-                source = info.source
-            if not key and info.key:
-                key = info.key
         try:
             url = api_config.normalize_url(url) if url else ""
         except ValueError:

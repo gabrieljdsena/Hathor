@@ -88,7 +88,6 @@ The app itself is installed under ~/.local/opt/hathor (no sudo). User data
 uses the normal XDG paths:
 
   ~/.local/share/hathor/    (SQLite database)
-  ~/.config/hathor/         (.env fallback)
   ~/.local/state/hathor/    (log)
   ~/.cache/hathor/          (updates/cache)
   ~/Music/Hathor            (default songs folder)

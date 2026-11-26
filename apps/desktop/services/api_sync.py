@@ -51,15 +51,13 @@ import urllib.parse
 
 from contextlib import closing
 
-from .api_config import API_KEY_ENV, API_URL_ENV
 from .auth_session import get_auth_session
 from .hathor_api import HathorApi, HathorApiError
 
 _log = logging.getLogger("hathor.sync")
 
 NOT_CONFIGURED = (
-    "No sync server configured. Open Settings -> Web API "
-    f"(or set {API_URL_ENV}/{API_KEY_ENV} in .env)."
+    "No sync server configured. Sign in on the Hathor login screen."
 )
 SERVER_MISSING = (
     "Sync server does not speak the sync-file endpoints yet "

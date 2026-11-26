@@ -606,7 +606,7 @@ package_plan() {
     case "$PKG_FAMILY" in
         arch)
             REQUIRED_PKGS=(python python-pywebview python-gobject webkit2gtk-4.1 python-pygame)
-            OPTIONAL_PKGS=(python-mutagen python-pillow python-psutil python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg)
+            OPTIONAL_PKGS=(python-mutagen python-pillow python-psutil python-pykakasi python-keyring yt-dlp ffmpeg)
             INSTALL_CMD_HINT="sudo pacman -S --needed ${REQUIRED_PKGS[*]} ${OPTIONAL_PKGS[*]}"
             ;;
         debian)
@@ -730,7 +730,6 @@ import mutagen  # noqa: F401
 import PIL  # noqa: F401
 import psutil  # noqa: F401
 import pykakasi  # noqa: F401
-import dotenv  # noqa: F401
 import keyring  # noqa: F401
 import yt_dlp  # noqa: F401
 import webview  # noqa: F401

@@ -25,7 +25,7 @@ services/
   player_sync.py      Server player queue/play/pause/seek/volume bridge
   player_hub.py       Cross-device polling reconciliation and local publish
   telemetry.py        Playback segment observer → /player/playback-events
-  api_config.py       Runtime Web API URL/key (SQLite + .env fallback)
+  api_config.py       Web API URL/key saved by the login screen (SQLite)
   hathor_api.py       Shared authenticated HTTP client
   apple.py            AppleService — artist/album artwork lookups
   startup_maintenance.py  FFmpeg auto-download + yt-dlp update checks
@@ -93,9 +93,8 @@ Output: `dist/Hathor/`.
 
 The spec bundles `ui/`, `ffmpeg/`, `database.sql`, `version.json`, and `pykakasi` data files. Runtime frontend assets (SweetAlert2, Notyf, Alpine) live under `ui/`; `node_modules/` is only needed for the Tailwind dev build. Important details:
 
-- **`.env` is not bundled** — it must sit next to `Hathor.exe` (runtime reads `os.path.dirname(sys.executable)`).
 - **Refresh tokens** live in OS credential storage through `keyring`; PyInstaller collects its backend modules explicitly. Passwords are never stored.
-- The SQLite DB, `.env`, and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen.
+- The SQLite DB and library folder all live in `get_data_path()` (`sys.executable` dir) when frozen. The server is configured only by signing in.
 - Console is disabled (`console=False`), so stdout logs are invisible in the shipped app.
 - `version.json` is copied to the app root for the updater; the PyInstaller copy under `_internal` is only a fallback.
 

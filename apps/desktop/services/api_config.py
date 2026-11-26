@@ -1,9 +1,9 @@
 """Runtime Hathor Web API configuration.
 
-The desktop app used to read HATHOR_API_URL/HATHOR_API_KEY from .env only,
-which meant restarting the app to point it at another server. Settings ->
-Web API now stores the same pair in SQLite and this module reads it before
-falling back to the environment.
+The server is entered on the dedicated login screen and persisted in the
+local Settings row (URL, auth mode, username, refresh-token-backed session).
+There is deliberately no environment/.env fallback: a machine only talks to
+the server the user signed in to.
 
 The API key is a scoped hth_ token, never a login password. It stays in the
 local database and is masked before it reaches the webview.
@@ -15,13 +15,6 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
-
-API_URL_ENV = "HATHOR_API_URL"
-API_KEY_ENV = "HATHOR_API_KEY"
-# Compatibility aliases used by some local setups.
-WEB_API_ENV = "WEB_API"
-API_URL_ENV_ALIASES = (API_URL_ENV, "WEB_API_URL")
-API_KEY_ENV_ALIASES = (API_KEY_ENV,)
 
 REQUIRED_SCOPES = (
     "library:read",
@@ -51,7 +44,7 @@ def ensure_settings_columns(conn):
 class ApiConfig:
     url: str = ""
     key: str = ""
-    source: str = "none"  # settings | env | none
+    source: str = "none"  # settings | none
 
     @property
     def configured(self):
@@ -195,44 +188,12 @@ def write_auth_settings(url, key="", mode="", username="", db_path=None):
     _write_auth_settings(db_path or _default_db_path(), url, key, mode, username)
 
 
-def _first_env(names):
-    for name in names:
-        value = (os.getenv(name) or "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _env_api_config():
-    """Read canonical env vars plus the single-line WEB_API compatibility alias."""
-    raw_url = _first_env(API_URL_ENV_ALIASES)
-    raw_key = _first_env(API_KEY_ENV_ALIASES)
-    web_api = (os.getenv(WEB_API_ENV) or "").strip()
-    if web_api:
-        lowered = web_api.lower()
-        if not raw_key and lowered.startswith("hth_"):
-            raw_key = web_api
-        elif not raw_url and lowered.startswith(("http://", "https://")):
-            raw_url = web_api
-    try:
-        env_url = normalize_url(raw_url)
-    except ValueError:
-        # A malformed .env value must not prevent the app from starting.
-        env_url = ""
-    env_key = raw_key
-    return env_url, env_key
-
-
 def get_api_config_info(db_path=None):
-    """Return the effective config, preferring runtime settings over .env."""
+    """Return the config saved by the login screen. Environment is ignored."""
     db_path = db_path or _default_db_path()
     db_url, db_key = _read_db_config(db_path)
     if db_url or db_key:
         return ApiConfig(db_url, db_key, "settings")
-
-    env_url, env_key = _env_api_config()
-    if env_url or env_key:
-        return ApiConfig(env_url, env_key, "env")
     return ApiConfig()
 
 
@@ -272,7 +233,7 @@ def save_api_config(url, key="", db_path=None):
 
 
 def clear_api_config(db_path=None):
-    """Clear stored values; .env remains the fallback if it is configured."""
+    """Clear stored values so the app runs fully local until the next login."""
     db_path = db_path or _default_db_path()
     _write_db_config(db_path, "", "")
     return get_api_config_view(db_path)

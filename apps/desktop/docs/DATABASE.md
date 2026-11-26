@@ -148,7 +148,7 @@ pushes retry on the next play or app start. This path never blocks playback.
 
 ### Connections
 
-- Stdlib `urllib` over HTTP to `HATHOR_API_URL` with `Bearer HATHOR_API_KEY`; no DB driver.
+- Stdlib `urllib` over HTTP to the server saved by the login screen, using the authenticated session; no DB driver.
 - 401 → the key is wrong or lacks scope; unreachable → "is the server running?".
 - Sync failures return message strings — they never crash the app.
 

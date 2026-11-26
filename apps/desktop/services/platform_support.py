@@ -1,9 +1,9 @@
 """Platform paths and capabilities for the desktop app.
 
-The Windows build keeps its portable layout: the database, logs and `.env`
-live next to the executable. Linux installs are read-only system packages, so
-user data goes to XDG directories instead. This module is deliberately
-stdlib-only so it can be imported before pygame/pywebview.
+The Windows build keeps its portable layout: the database and logs live next
+to the executable. Linux installs are read-only system packages, so user data
+goes to XDG directories instead. This module is deliberately stdlib-only so it
+can be imported before pygame/pywebview.
 """
 
 from __future__ import annotations
@@ -218,28 +218,6 @@ def default_podcasts_dir() -> Path:
     return _linux_music_base() / "Hathor Podcasts"
 
 
-def env_files() -> list[Path]:
-    """Ordered `.env` candidates; first value wins (python-dotenv default)."""
-    candidates = [
-        Path.cwd() / ".env",
-        config_dir() / ".env",
-        app_root() / ".env",
-        install_dir() / ".env",
-    ]
-    seen = set()
-    result = []
-    for path in candidates:
-        try:
-            key = str(path.resolve())
-        except OSError:
-            key = str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(path)
-    return result
-
-
 def ensure_runtime_dirs() -> dict:
     """Create writable application directories. Never raises."""
     created = {}
@@ -258,8 +236,8 @@ def ensure_runtime_dirs() -> dict:
 
 
 def migrate_legacy_data() -> dict:
-    """Copy a portable DB/.env from an old Linux tarball into XDG folders."""
-    result = {"migrated_db": None, "migrated_env": None}
+    """Copy a portable DB from an old Linux tarball into XDG folders."""
+    result = {"migrated_db": None}
     if is_windows():
         return result
     target_db = db_path()
@@ -274,18 +252,6 @@ def migrate_legacy_data() -> dict:
                     target_db.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target_db)
                     result["migrated_db"] = str(source)
-                    break
-            except OSError:
-                continue
-
-    target_env = config_dir() / ".env"
-    if not target_env.exists():
-        for source in (install_dir() / ".env", app_root() / ".env"):
-            try:
-                if source.is_file() and source.resolve() != target_env.resolve():
-                    target_env.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, target_env)
-                    result["migrated_env"] = str(source)
                     break
             except OSError:
                 continue
@@ -338,7 +304,9 @@ def webview_gui() -> str | None:
 
 
 def window_capabilities() -> dict:
-    custom = is_windows()
+    # Both desktop targets use the same HTML titlebar; Linux goes frameless
+    # too and hands drag/resize gestures to the compositor via GTK.
+    custom = is_windows() or is_linux()
     return {
         "platform": platform_key(),
         "customChrome": custom,

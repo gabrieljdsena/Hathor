@@ -160,9 +160,10 @@ class PlatformPathTests(unittest.TestCase):
                 mock.patch.object(ps, "app_root", return_value=self.app):
             self.assertEqual(ps.update_mode(), "manual")
             caps = ps.window_capabilities()
-            self.assertFalse(caps["customChrome"])
-            self.assertTrue(caps["nativeDecorations"])
-            self.assertFalse(caps["frameless"])
+            self.assertTrue(caps["customChrome"])
+            self.assertFalse(caps["nativeDecorations"])
+            self.assertTrue(caps["frameless"])
+            self.assertTrue(caps["customResize"])
             self.assertEqual(ps.webview_gui(), "gtk")
         os.environ["HATHOR_PACKAGE_MANAGED"] = "1"
         self.assertEqual(ps.update_mode(), "package")
@@ -180,20 +181,7 @@ class PlatformPathTests(unittest.TestCase):
                 self.home / "Music" / "Hathor Podcasts",
             )
 
-    def test_env_files_are_unique_and_user_config_precedes_bundle(self):
-        config = self.root / "config"
-        os.environ["XDG_CONFIG_HOME"] = str(config)
-        self._clear("HATHOR_CONFIG_DIR", "HATHOR_PORTABLE")
-        with mock.patch.object(ps, "IS_WINDOWS", False), \
-                mock.patch.object(ps, "app_root", return_value=self.app), \
-                mock.patch.object(ps, "install_dir", return_value=self.install), \
-                mock.patch.object(ps, "config_dir", return_value=config / "hathor"):
-            files = ps.env_files()
-        self.assertEqual(len(files), len({str(p.resolve()) for p in files}))
-        self.assertLess(files.index(config / "hathor" / ".env"),
-                        files.index(self.app / ".env"))
-
-    def test_migrates_legacy_db_and_env(self):
+    def test_migrates_legacy_db_without_env(self):
         old_db = self.install / "music_player.db"
         old_db.write_bytes(b"legacy-db")
         old_env = self.install / ".env"
@@ -201,14 +189,13 @@ class PlatformPathTests(unittest.TestCase):
         target_root = self.root / "target"
         with mock.patch.object(ps, "IS_WINDOWS", False), \
                 mock.patch.object(ps, "db_path", return_value=target_root / "music_player.db"), \
-                mock.patch.object(ps, "config_dir", return_value=target_root / "config"), \
                 mock.patch.object(ps, "app_root", return_value=self.app), \
                 mock.patch.object(ps, "install_dir", return_value=self.install):
             result = ps.migrate_legacy_data()
         self.assertEqual((target_root / "music_player.db").read_bytes(), b"legacy-db")
-        self.assertTrue((target_root / "config" / ".env").is_file())
+        self.assertFalse((target_root / "config" / ".env").exists())
         self.assertEqual(result["migrated_db"], str(old_db))
-        self.assertEqual(result["migrated_env"], str(old_env))
+        self.assertNotIn("migrated_env", result)
 
     def test_ensure_runtime_dirs_creates_targets(self):
         data = self.root / "data"

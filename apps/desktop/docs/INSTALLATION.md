@@ -35,7 +35,7 @@ missing. See [LINUX.md](LINUX.md) for the full layout and distro notes.
 ```bash
 sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
   python-pygame python-mutagen python-pillow python-psutil \
-  python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg
+  python-pykakasi python-keyring yt-dlp ffmpeg
 python main.py
 ```
 

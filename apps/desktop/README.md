@@ -86,7 +86,7 @@ run straight from the source tree:
 ```bash
 sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
   python-pygame python-mutagen python-pillow python-psutil \
-  python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg
+  python-pykakasi python-keyring yt-dlp ffmpeg
 python main.py
 ```
 
@@ -94,7 +94,6 @@ The app uses XDG paths on Linux:
 
 ```text
 ~/.local/share/hathor/music_player.db
-~/.config/hathor/.env
 ~/.local/state/hathor/hathor.log
 ~/.cache/hathor/
 ~/Music/Hathor
@@ -112,8 +111,8 @@ See [packaging/arch/README.md](packaging/arch/README.md). The package launcher
 sets `HATHOR_PACKAGE_MANAGED=1`, so yt-dlp/FFmpeg and app updates are managed
 by pacman instead of the Windows self-updater. Script installs use
 `HATHOR_INSTALLER_MANAGED=1` and update through `install-linux.sh --update`.
-Linux uses native GTK window decorations; the Windows frameless titlebar and
-Aero Snap code stays Windows-only.
+Both platforms use the same frameless HTML titlebar; Windows adds Aero Snap
+while Linux hands move/resize gestures to the GTK compositor.
 
 ## Building an executable
 
@@ -122,7 +121,7 @@ pip install pyinstaller
 pyinstaller music_player.spec
 ```
 
-The build is emitted to `dist/Hathor/`. The `.env` file must live next to the executable (never bundled) when running the frozen build.
+The build is emitted to `dist/Hathor/`.
 
 ### Release and self-update package
 
@@ -145,7 +144,7 @@ without an SMB destination:
 The script runs the Python/JS tests, rebuilds Tailwind, builds the PyInstaller
 folder, copies `version.json` next to `Hathor.exe`, and creates
 `dist/hathor-desktop-<versionCode>-<versionName>.zip`. It refuses to package
-`music_player.db`, `.env`, or `hathor.log`.
+`music_player.db` or `hathor.log`.
 
 Push a `desktop-v<versionName>` tag; the GitHub workflow publishes the zip.
 The app reads the public release feed:
@@ -170,18 +169,11 @@ Updates are staged under `%LOCALAPPDATA%\Hathor\updates` (override with
 `HATHOR_UPDATE_DIR`). A detached PowerShell helper waits for Hathor to exit,
 moves the old `Hathor.exe`/`_internal`/`version.json` aside, copies the staged
 build, restarts Hathor, and removes the backup and package. The SQLite DB,
-`.env`, logs, and library folders are never touched.
+logs, and library folders are never touched.
 
 ## Configuration
 
-All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: the dedicated Hathor login screen asks for the server URL, username and password. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Existing saved API keys continue to work, and `.env` remains a fallback.
-
-A `.env` file next to `main.py` (or the executable) remains a fallback for the server URL and a scoped API key:
-
-```env
-HATHOR_API_URL=http://192.168.1.10:5051
-HATHOR_API_KEY=hth_your-device-key
-```
+All settings are stored in the local `music_player.db` (SQLite) and can be changed from the in-app settings view. Server sync is opt-in: the dedicated Hathor login screen asks for the server URL, username and password. The password is never stored; the refresh token goes to Windows Credential Manager or the Linux Secret Service. Existing saved API keys continue to work. The server is configured only by signing in — environment variables and `.env` files are ignored.
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for full details.
 

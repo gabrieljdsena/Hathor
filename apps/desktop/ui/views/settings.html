@@ -531,9 +531,7 @@
                     : 'hth_... (optional)';
             }
             if (sourceEl) {
-                sourceEl.textContent = cfg.source === 'settings'
-                    ? 'saved locally'
-                    : cfg.source === 'env' ? '.env fallback' : '';
+                sourceEl.textContent = cfg.source === 'settings' ? 'saved locally' : '';
             }
             if (logoutBtn) logoutBtn.classList.toggle('hidden', !cfg.signedIn);
             if (cfg.signedIn) {

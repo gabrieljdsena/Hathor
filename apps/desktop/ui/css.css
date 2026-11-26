@@ -389,7 +389,7 @@ body.auth-locked { overflow: hidden; }
 
 .is-hidden { display: none !important; }
 
-/* Keep the custom Windows titlebar/controls reachable while the gate is open. */
+/* Keep the custom titlebar/controls reachable while the gate is open. */
 .login-gate { top: 40px; }
 body.native-decorations .login-gate { top: 0; }
 

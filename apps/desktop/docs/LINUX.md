@@ -49,7 +49,7 @@ installer owns updates instead of the Windows self-updater.
 ```bash
 sudo pacman -S python python-pywebview python-gobject webkit2gtk-4.1 \
   python-pygame python-mutagen python-pillow python-psutil \
-  python-pykakasi python-dotenv python-keyring yt-dlp ffmpeg
+  python-pykakasi python-keyring yt-dlp ffmpeg
 ```
 
 Web account sign-in stores only the refresh token, using Secret Service
@@ -66,15 +66,15 @@ The source bundle in each GitHub release also contains `run.sh`, which picks a
 Python that can import GTK/WebKitGTK instead of blindly using PATH.
 
 `pywebview` is forced to the GTK backend on Linux, even on KDE where it would
-otherwise prefer Qt. The window uses native server-side decorations; the
-custom frameless titlebar and Aero Snap code remain Windows-only.
+otherwise prefer Qt. The window uses the same frameless HTML titlebar as
+Windows; GTK/compositor drags provide move and resize (Aero Snap stays
+Windows-only).
 
 ## XDG paths
 
 | Data | Path |
 | --- | --- |
 | SQLite DB | `~/.local/share/hathor/music_player.db` |
-| `.env` fallback | `~/.config/hathor/.env` |
 | Log | `~/.local/state/hathor/hathor.log` |
 | Cache/updates | `~/.cache/hathor/` |
 | Default songs | `~/Music/Hathor` |
@@ -84,8 +84,8 @@ Override with `HATHOR_DATA_DIR`, `HATHOR_CONFIG_DIR`, `HATHOR_CACHE_DIR`, and
 `HATHOR_STATE_DIR`. `HATHOR_PORTABLE=1` restores the old "everything next to
 the app" layout.
 
-The first Linux launch copies a legacy `music_player.db`/`.env` from the
-application directory into the XDG locations if one exists.
+The first Linux launch copies a legacy `music_player.db` from the
+application directory into the XDG location if one exists.
 
 ## Package vs self-update
 
