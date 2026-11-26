@@ -186,9 +186,11 @@ class LinuxWindowChromeTests(unittest.TestCase):
         self.assertEqual(wc._edge_for_point(997, 697, 1000, 700), "se")
         self.assertIsNone(wc._edge_for_point(5, 5, 20, 20))
 
-    def test_top_right_control_band_is_not_a_resize_edge(self):
+    def test_top_right_control_band_allows_only_the_corner(self):
         self.assertIsNone(wc._edge_for_point(997, 20, 1000, 700))
-        self.assertIsNone(wc._edge_for_point(997, 3, 1000, 700))
+        self.assertIsNone(wc._edge_for_point(989, 3, 1000, 700))
+        self.assertEqual(wc._edge_for_point(997, 3, 1000, 700), "ne")
+        self.assertEqual(wc._edge_for_point(995, 5, 1000, 700), "ne")
         self.assertEqual(wc._edge_for_point(997, 300, 1000, 700), "e")
 
     def test_edge_press_starts_native_resize_synchronously(self):

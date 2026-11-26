@@ -154,7 +154,10 @@ def _edge_for_point(x, y, width, height, margin=10,
     if width <= 2 * margin or height <= 2 * margin:
         return None
     if 0 <= y < titlebar_height and x > width - control_band:
-        return None
+        # Keep the titlebar buttons clickable, but the outer corner is still
+        # a resize handle.
+        if not (x >= width - margin and y <= margin):
+            return None
     left = x <= margin
     right = x >= width - margin
     top = y <= margin
