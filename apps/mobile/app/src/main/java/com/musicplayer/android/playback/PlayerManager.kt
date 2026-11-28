@@ -506,6 +506,28 @@ class PlayerManager(appContext: Context, private val musicDir: () -> File) {
         }
     }
 
+    /**
+     * Re-read the live MediaPlayer position. Used when the Activity resumes so
+     * the visible bar cannot stay on a stale pre-background value.
+     */
+    fun refreshPosition() {
+        val p = player ?: return
+        val pos = try {
+            p.currentPosition
+        } catch (_: Exception) {
+            return
+        }
+        if (pos >= 0) {
+            _positionMs.value = pos
+            val dur = try {
+                p.duration
+            } catch (_: Exception) {
+                0
+            }
+            if (dur > 0) _durationMs.value = dur
+        }
+    }
+
     fun release() {
         notifyPlaybackStopped()
         switchingTrack = false

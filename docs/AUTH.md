@@ -74,7 +74,7 @@ Client tests:
   checks.
 - Desktop `desktop-v1.0.7` — build 8, `1.0.7-hathor`; dedicated login screen and
   GitHub Releases update checks.
-- Android `android-v0.4.30` — code 33, `0.4.30-hathor`; dedicated login screen,
+- Android `android-v0.4.31` — code 34, `0.4.31-hathor`; dedicated login screen,
   show/hide password, and GitHub Releases updates.
   Older clients keep the server/SMB channel.
 

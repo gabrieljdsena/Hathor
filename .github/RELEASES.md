@@ -66,8 +66,8 @@ already have the dependencies or use `install-linux.sh --install-deps`.
 ## Android release
 
 ```bash
-git tag android-v0.4.30
-git push origin android-v0.4.30
+git tag android-v0.4.31
+git push origin android-v0.4.31
 ```
 
 Or run **Actions → Release Android → Run workflow**.

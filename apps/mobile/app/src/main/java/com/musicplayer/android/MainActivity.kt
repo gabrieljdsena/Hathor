@@ -868,6 +868,9 @@ class MainActivity : ComponentActivity() {
      * Corrupt/legacy rows degrade gracefully, never crash.
      */
     private suspend fun restorePlayback() {
+        // Activity recreation must not tear down an already-live queue that
+        // the foreground service is still playing.
+        if (player.current.value != null) return
         val dir = engine.outputDir()
         val podDir = try {
             PlayerApp.instance.podcastsDir
@@ -1088,6 +1091,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Activity recreation/backgrounding must not leave the player bar on
+        // its last pre-background frame.
+        if (::player.isInitialized) {
+            player.refreshPosition()
+        }
         // The unknown-apps settings page has no result callback; retry when
         // the user returns and the permission is now granted.
         if (::updateRepo.isInitialized) updateRepo.onResume()

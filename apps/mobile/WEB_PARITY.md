@@ -553,3 +553,5 @@ Decided 2026-11-14 (P0.3). Revisit only if the product direction changes.
 | 2026-11-23 | **Release** | Android `0.4.24-hathor` (27) published with both auth modes; auth edge-case fixes in `0.4.25-hathor` (28). |
 | 2026-11-23 | **GitHub update source** | Mobile `0.4.26` and desktop `1.0.3` read public GitHub Releases (`android-v*` / `desktop-v*`, dev channel), pick the highest `versionCode`, and verify the asset digest/SHA256SUMS. The old server/SMB channel remains for older clients. |
 | 2026-11-23 | **Dedicated login screens** | Desktop gets the web-styled full-screen gate; Android gets a matching Compose gate with the app logo. Both add show/hide password, Keystore/keyring token storage, and move sign-in out of Settings. |
+
+| 2026-11-28 | **Media notification progress** | Publish MediaSession playback position about once per second (and immediately on seeks) so the notification/media control bar tracks the app; refresh the player position when the Activity resumes. |

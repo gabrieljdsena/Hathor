@@ -40,6 +40,8 @@ class PlayerService : Service() {
     private var cachedArtist: String? = null
     private var cachedArt: Bitmap? = null
     private var lastPlaying: Boolean? = null
+    private var lastSessionPositionUpdate = 0L
+    private var lastSessionPosition = -1
 
     override fun onCreate() {
         super.onCreate()
@@ -68,6 +70,21 @@ class PlayerService : Service() {
         // ForegroundServiceDidNotStartInTime while tags/artwork resolve.
         startForeground(NOTIF_ID, buildNotification(player.playing.value))
         scope.launch { player.playing.collect { onPlaybackChanged(it) } }
+        // Keep the system media control/notification progress moving. The
+        // MediaSession only sees state snapshots, so publishing just on
+        // play/pause/track changes leaves the notification bar at 0:00.
+        scope.launch {
+            player.positionMs.collect { pos ->
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastSessionPositionUpdate >= 1000 ||
+                    kotlin.math.abs(pos - lastSessionPosition) >= 1500
+                ) {
+                    lastSessionPositionUpdate = now
+                    lastSessionPosition = pos
+                    updateSession()
+                }
+            }
+        }
         scope.launch {
             player.current.collect { file ->
                 scope.launch(Dispatchers.IO) {
